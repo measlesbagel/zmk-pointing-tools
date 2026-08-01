@@ -1,0 +1,40 @@
+:root {
+  color-scheme: dark;
+  --bg: #101216;
+  --panel: #171a20;
+  --line: #2a3039;
+  --text: #eef1f5;
+  --muted: #929ba8;
+  --accent: #78d6b0;
+  --warning: #e8c477;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+main { width: min(1100px, calc(100% - 32px)); margin: 36px auto 64px; }
+header, .panel-heading, .actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
+h2 { margin-bottom: 0; font-size: 17px; }
+.eyebrow { margin-bottom: 4px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.status { border: 1px solid var(--line); padding: 6px 10px; color: var(--muted); }
+.status.live { color: var(--accent); border-color: var(--accent); }
+.actions { justify-content: flex-start; flex-wrap: wrap; margin: 28px 0 16px; }
+button { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 9px 13px; cursor: pointer; font: inherit; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #07120e; font-weight: 700; }
+.notice { color: var(--muted); }
+.notice.error { color: var(--warning); }
+.panel { margin-top: 20px; padding: 18px; border: 1px solid var(--line); background: var(--panel); }
+.panel-heading { margin-bottom: 14px; }
+.panel-heading span, .muted { color: var(--muted); }
+canvas { width: 100%; height: min(50vh, 480px); display: block; background: #0a0c0f; border: 1px solid var(--line); }
+.streams { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.stream { border-left: 3px solid var(--stream-color); background: #11141a; padding: 12px; }
+.stream h3 { margin: 0 0 8px; font-size: 14px; }
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.metrics strong { color: var(--text); font-weight: 500; text-align: right; }
+summary { cursor: pointer; font-weight: 650; }
+code { color: var(--accent); }
+@media (max-width: 650px) { header, .panel-heading { align-items: flex-start; flex-direction: column; } }

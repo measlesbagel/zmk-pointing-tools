@@ -1,0 +1,9 @@
+{
+  "name": "zmk-pointing-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test web/*.test.js",
+    "check": "node --check web/app.js && node --check web/protocol.js"
+  }
+}
