@@ -1,0 +1,5 @@
+require_version: "2.2.0"
+
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/nixos-unstable

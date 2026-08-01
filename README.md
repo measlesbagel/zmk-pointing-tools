@@ -31,8 +31,21 @@ See [`docs/architecture.md`](docs/architecture.md) for the initial design.
 
 ## Status
 
-Architecture and module scaffolding. No processors or host service are enabled
-yet.
+The first development milestone provides a pass-through trace processor, an
+opt-in USB serial telemetry service, and a local static trace viewer. Runtime
+tuning and semantic processors remain under development.
+
+## Local tuner
+
+With Devenv 2.2 installed:
+
+```console
+devenv up
+```
+
+Then open <http://localhost:8787> in desktop Chrome. The simulator works without
+hardware. Serving from localhost is required because Web Serial is unavailable
+to pages opened directly from the filesystem.
 
 ## License
 

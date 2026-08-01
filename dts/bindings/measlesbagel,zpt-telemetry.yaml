@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+
+description: Host-facing USB serial telemetry service for ZMK Pointing Tools
+
+compatible: "measlesbagel,zpt-telemetry"

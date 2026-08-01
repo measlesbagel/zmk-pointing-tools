@@ -1,0 +1,45 @@
+#include <behaviors.dtsi>
+
+/ {
+    zpt_test_raw: zpt_test_raw {
+        compatible = "measlesbagel,zpt-input-processor-trace";
+        #input-processor-cells = <0>;
+        pointing-device-id = <1>;
+        stage = <0>;
+        label = "Test raw";
+    };
+
+    zpt_test_output: zpt_test_output {
+        compatible = "measlesbagel,zpt-input-processor-trace";
+        #input-processor-cells = <0>;
+        pointing-device-id = <1>;
+        stage = <1>;
+        label = "Test output";
+    };
+
+    zpt_telemetry {
+        compatible = "measlesbagel,zpt-telemetry";
+    };
+
+    chosen {
+        measlesbagel,zpt-telemetry-uart = &zpt_acm;
+    };
+
+    keymap {
+        compatible = "zmk,keymap";
+        base {
+            bindings = <
+                &none &none &none &none &none &none   &none &none &none &none &none &none
+                &none &none &none &none &none &none   &none &none &none &none &none &none
+                &none &none &none &none &none &none   &none &none &none &none &none &none
+                                  &none &none &none   &none &none &none
+            >;
+        };
+    };
+};
+
+&zephyr_udc0 {
+    zpt_acm: zpt_acm {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};

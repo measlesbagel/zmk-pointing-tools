@@ -1,13 +1,43 @@
-menuconfig ZMK_POINTING_TOOLS
-    bool "ZMK Pointing Tools"
-    default n
+DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
+DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
+
+menu "ZMK Pointing Tools"
+
+config ZMK_POINTING_TOOLS_TRACE
+    bool "Pass-through pointing trace processor"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TRACE))
+    depends on ZMK_POINTING
     help
-      Enable reusable pointing-device processors and optional runtime tooling.
+      Observe complete relative-input frames without modifying their output.
 
-if ZMK_POINTING_TOOLS
+config ZMK_POINTING_TOOLS_TELEMETRY
+    bool "USB serial pointing telemetry service"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TELEMETRY))
+    depends on ZMK_POINTING_TOOLS_TRACE
+    depends on SERIAL
+    depends on UART_INTERRUPT_DRIVEN
+    help
+      Expose trace streams over a dedicated USB CDC-ACM serial interface.
 
-module = ZMK_POINTING_TOOLS
-module-str = zmk-pointing-tools
-source "subsys/logging/Kconfig.template.log_config"
+if ZMK_POINTING_TOOLS_TELEMETRY
+
+config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE
+    int "Maximum queued telemetry samples"
+    default 64
+    range 8 512
+
+config ZMK_POINTING_TOOLS_TELEMETRY_THREAD_STACK_SIZE
+    int "Telemetry worker stack size"
+    default 1536
+    range 1024 4096
+
+config ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS
+    int "Host heartbeat timeout"
+    default 5000
+    range 1000 60000
+    help
+      Stop telemetry if the host disappears without disabling it cleanly.
 
 endif
+
+endmenu

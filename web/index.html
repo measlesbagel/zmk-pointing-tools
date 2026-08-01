@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZMK Pointing Trace</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">ZMK Pointing Tools</p>
+          <h1>Movement trace</h1>
+        </div>
+        <span id="status" class="status">Disconnected</span>
+      </header>
+
+      <section class="actions" aria-label="Connection controls">
+        <button id="connect" class="primary">Connect keyboard</button>
+        <button id="telemetry" disabled>Start telemetry</button>
+        <button id="simulate">Simulate</button>
+        <button id="clear">Clear</button>
+        <button id="export" disabled>Export JSON</button>
+      </section>
+
+      <p id="notice" class="notice">
+        Connect the central half over USB using desktop Chrome, or use the simulator without hardware.
+      </p>
+
+      <section class="panel trace-panel">
+        <div class="panel-heading">
+          <h2>Gesture path</h2>
+          <span>Raw and processed streams are drawn independently from the center.</span>
+        </div>
+        <canvas id="trace" width="960" height="480"></canvas>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Streams</h2>
+          <span id="sample-count">0 samples</span>
+        </div>
+        <div id="streams" class="streams">
+          <p class="muted">No stream description received.</p>
+        </div>
+      </section>
+
+      <details class="panel">
+        <summary>Connection diagnostics</summary>
+        <ul>
+          <li>The page must be served from <code>localhost</code> or HTTPS; opening it as a file will not work.</li>
+          <li>On Arch-derived systems, serial devices normally use the <code>uucp</code> group.</li>
+          <li>The central half must produce a <code>/dev/ttyACM*</code> device when connected.</li>
+          <li>Only one browser tab or native process can own the serial port.</li>
+        </ul>
+      </details>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

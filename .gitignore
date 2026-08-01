@@ -1,3 +1,5 @@
 .west/
 build/
 node_modules/
+.devenv/
+.direnv/

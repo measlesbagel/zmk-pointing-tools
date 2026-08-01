@@ -1,0 +1,16 @@
+name: Build module smoke firmware
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: urob/zmk-actions/.github/workflows/build-user-config.yml@6371e2a5b911be56e9a495cf1692fb066cbfff0c
+    with:
+      toolchain: zephyr
