@@ -1,0 +1,4 @@
+name: zmk-pointing-tools
+build:
+  cmake: .
+  kconfig: Kconfig

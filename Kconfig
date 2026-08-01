@@ -1,0 +1,13 @@
+menuconfig ZMK_POINTING_TOOLS
+    bool "ZMK Pointing Tools"
+    default n
+    help
+      Enable reusable pointing-device processors and optional runtime tooling.
+
+if ZMK_POINTING_TOOLS
+
+module = ZMK_POINTING_TOOLS
+module-str = zmk-pointing-tools
+source "subsys/logging/Kconfig.template.log_config"
+
+endif
