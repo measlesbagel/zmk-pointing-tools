@@ -1,0 +1,5 @@
+if(CONFIG_ZMK_POINTING_TOOLS)
+  zephyr_library()
+  zephyr_include_directories(include)
+  add_subdirectory(src)
+endif()
