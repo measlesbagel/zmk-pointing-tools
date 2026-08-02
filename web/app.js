@@ -1,10 +1,15 @@
 import {
   FrameDecoder,
   MESSAGE,
+  TUNING,
   encodeFrame,
+  encodeTuningSet,
   parseAck,
   parseDescribe,
   parseSample,
+  parseTuningDescription,
+  parseTuningResult,
+  parseTuningTargets,
 } from "./protocol.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
@@ -12,7 +17,7 @@ const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"
 const MAX_SAMPLES = 20_000;
 
 const elements = Object.fromEntries(
-  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count"].map(
+  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -25,6 +30,7 @@ let telemetryEnabled = false;
 let simulator;
 let heartbeat;
 let streams = new Map();
+let tuningTargets = new Map();
 let samples = [];
 let decoder = new FrameDecoder();
 
@@ -41,6 +47,14 @@ function notice(text, error = false) {
 function streamColor(key) {
   const keys = [...streams.keys()];
   return COLORS[Math.max(0, keys.indexOf(key)) % COLORS.length];
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function setDescription(description) {
@@ -76,7 +90,7 @@ function renderStreams() {
       const average = stream.count > 1 ? stream.totalDt / (stream.count - 1) : 0;
       const latest = stream.latest;
       return `<article class="stream" style="--stream-color:${streamColor(stream.key)}">
-        <h3>${stream.label}</h3>
+        <h3>${escapeHtml(stream.label)}</h3>
         <div class="metrics">
           <span>Frames</span><strong>${stream.count}</strong>
           <span>Mean interval</span><strong>${average.toFixed(1)} ms</strong>
@@ -88,6 +102,49 @@ function renderStreams() {
     })
     .join("");
   elements["sample-count"].textContent = `${samples.length.toLocaleString()} samples`;
+}
+
+function renderTuning() {
+  elements["reset-all"].disabled = tuningTargets.size === 0;
+  if (!tuningTargets.size) {
+    elements.tuning.innerHTML = '<p class="muted">Connect protocol v2 firmware to discover tunable processors.</p>';
+    return;
+  }
+
+  elements.tuning.innerHTML = [...tuningTargets.values()]
+    .map((target) => `<article class="tuning-target">
+      <div class="tuning-target-heading">
+        <div><h3>${escapeHtml(target.label)}</h3><span>Temporary preview values</span></div>
+        <button data-reset-target="${target.id}" ${target.parameters.length ? "" : "disabled"}>Reset target</button>
+      </div>
+      ${target.parameters.length ? `<div class="parameters">${target.parameters.map((parameter) => {
+        const changed = parameter.current !== parameter.compiled;
+        const control = parameter.type === TUNING.BOOLEAN
+          ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
+          : `<input type="number" data-value value="${parameter.current}" min="${parameter.minimum}" max="${parameter.maximum}" step="${parameter.step}">`;
+        return `<div class="parameter ${changed ? "changed" : ""}" data-target="${target.id}" data-parameter="${parameter.id}">
+          <label>${escapeHtml(parameter.label)}${parameter.unit ? ` <span>(${escapeHtml(parameter.unit)})</span>` : ""}</label>
+          <div class="parameter-control">${control}<button data-preview>Preview</button></div>
+          <small>Compiled: ${parameter.compiled}${parameter.unit ? ` ${escapeHtml(parameter.unit)}` : ""}${changed ? " · modified" : ""}</small>
+        </div>`;
+      }).join("")}</div>` : '<p class="muted">Loading parameters…</p>'}
+    </article>`)
+    .join("");
+}
+
+function setTuningTargets(targets, requestDescriptions = true) {
+  tuningTargets = new Map(targets.map((target) => [target.id, target]));
+  renderTuning();
+  if (requestDescriptions) {
+    for (const target of targets) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+  }
+}
+
+function setTuningDescription(description) {
+  const target = tuningTargets.get(description.targetId);
+  if (!target) return;
+  target.parameters = description.parameters;
+  renderTuning();
 }
 
 function draw() {
@@ -136,7 +193,11 @@ async function send(type, payload) {
 }
 
 function handleFrame(frame) {
-  if (frame.type === MESSAGE.DESCRIBE_RESPONSE) setDescription(parseDescribe(frame.payload));
+  if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
+    const description = parseDescribe(frame.payload);
+    setDescription(description);
+    if (description.version >= 2) send(MESSAGE.TUNING_TARGETS_REQUEST);
+  }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
     telemetryEnabled = ack.enabled;
@@ -145,6 +206,28 @@ function handleFrame(frame) {
     if (!ack.enabled && heartbeat) { clearInterval(heartbeat); heartbeat = undefined; }
     notice(`Telemetry ${ack.enabled ? "active" : "stopped"}; ${ack.dropped} device samples dropped.`);
   } else if (frame.type === MESSAGE.SAMPLE) addSample(parseSample(frame.payload));
+  else if (frame.type === MESSAGE.TUNING_TARGETS_RESPONSE) {
+    setTuningTargets(parseTuningTargets(frame.payload));
+  } else if (frame.type === MESSAGE.TUNING_DESCRIBE_RESPONSE) {
+    setTuningDescription(parseTuningDescription(frame.payload));
+  } else if (frame.type === MESSAGE.TUNING_RESULT) {
+    const result = parseTuningResult(frame.payload);
+    const target = tuningTargets.get(result.targetId);
+    if (result.status !== TUNING.STATUS_OK) {
+      const messages = ["success", "unknown target", "unknown parameter", "invalid value", "internal error"];
+      notice(`Preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
+      if (target) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+    } else if (result.requestType === MESSAGE.TUNING_SET_REQUEST && target) {
+      const parameter = target.parameters.find(({ id }) => id === result.parameterId);
+      if (parameter) parameter.current = result.value;
+      renderTuning();
+      notice(`${target.label} preview updated. Changes remain temporary until reboot.`);
+    } else if (result.requestType === MESSAGE.TUNING_RESET_REQUEST) {
+      const resetTargets = result.targetId === TUNING.ALL_TARGETS ? [...tuningTargets.values()] : [target].filter(Boolean);
+      for (const item of resetTargets) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
+      notice(result.targetId === TUNING.ALL_TARGETS ? "All compiled defaults restored." : `${target?.label ?? "Target"} defaults restored.`);
+    }
+  }
 }
 
 async function readLoop() {
@@ -179,6 +262,8 @@ async function disconnect() {
   elements.telemetry.disabled = true;
   elements.simulate.disabled = false;
   elements.telemetry.textContent = "Start telemetry";
+  tuningTargets = new Map();
+  renderTuning();
   setStatus("Disconnected");
 }
 
@@ -198,9 +283,11 @@ async function connect() {
     elements.telemetry.disabled = false;
     elements.simulate.disabled = true;
     streams = new Map();
+    tuningTargets = new Map();
     samples = [];
     decoder = new FrameDecoder();
     renderStreams();
+    renderTuning();
     setStatus("Connected", true);
     await send(MESSAGE.DESCRIBE_REQUEST);
   } catch (error) {
@@ -219,12 +306,19 @@ function startSimulator() {
     simulator = undefined;
     elements.simulate.textContent = "Simulate";
     setStatus(port ? "Connected" : "Disconnected", Boolean(port));
+    tuningTargets = new Map();
+    renderTuning();
     return;
   }
-  setDescription({ version: 1, streams: [
+  setDescription({ version: 2, streams: [
     { deviceId: 1, stage: 0, key: "1:0", label: "Simulated raw" },
     { deviceId: 1, stage: 1, key: "1:1", label: "Simulated output" },
   ] });
+  setTuningTargets([{ id: 0, kind: 1, label: "Simulated adaptive scroll", parameters: [
+    { id: 6, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts" },
+    { id: 9, type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 75, current: 75, label: "Physical keypress guard", unit: "ms" },
+    { id: 10, type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "" },
+  ] }], false);
   let tick = 0;
   simulator = setInterval(() => {
     const raw = { deviceId: 1, stage: 0, key: "1:0", timestamp: tick * 8, sequence: tick * 2, x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1), wheel: 0, hWheel: 0 };
@@ -249,5 +343,53 @@ elements.export.addEventListener("click", () => {
   URL.revokeObjectURL(link.href);
 });
 
+elements.tuning.addEventListener("click", async (event) => {
+  const preview = event.target.closest("[data-preview]");
+  const reset = event.target.closest("[data-reset-target]");
+  if (preview) {
+    const row = preview.closest("[data-target][data-parameter]");
+    const targetId = Number(row.dataset.target);
+    const parameterId = Number(row.dataset.parameter);
+    const target = tuningTargets.get(targetId);
+    const parameter = target?.parameters.find(({ id }) => id === parameterId);
+    const input = row.querySelector("[data-value]");
+    const value = parameter?.type === TUNING.BOOLEAN ? Number(input.checked) : Number(input.value);
+    if (!parameter || !Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum) {
+      notice("Enter a whole value within the advertised range.", true);
+      return;
+    }
+    if (simulator) {
+      parameter.current = value;
+      renderTuning();
+      notice(`${target.label} simulator preview updated.`);
+    } else if (writer) {
+      await writer.write(encodeTuningSet(targetId, parameterId, value));
+    }
+  } else if (reset) {
+    const targetId = Number(reset.dataset.resetTarget);
+    if (simulator) {
+      const target = tuningTargets.get(targetId);
+      for (const parameter of target.parameters) parameter.current = parameter.compiled;
+      renderTuning();
+      notice(`${target.label} simulator defaults restored.`);
+    } else {
+      await send(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
+    }
+  }
+});
+
+elements["reset-all"].addEventListener("click", async () => {
+  if (simulator) {
+    for (const target of tuningTargets.values()) {
+      for (const parameter of target.parameters) parameter.current = parameter.compiled;
+    }
+    renderTuning();
+    notice("All simulator defaults restored.");
+  } else {
+    await send(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
+  }
+});
+
 navigator.serial?.addEventListener("disconnect", (event) => { if (event.target === port) disconnect(); });
 renderLoop();
+renderTuning();

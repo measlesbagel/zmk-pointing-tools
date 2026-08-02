@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ZMK Pointing Trace</title>
+    <title>ZMK Pointing Tuner</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -11,7 +11,7 @@
       <header>
         <div>
           <p class="eyebrow">ZMK Pointing Tools</p>
-          <h1>Movement trace</h1>
+          <h1>Pointing tuner</h1>
         </div>
         <span id="status" class="status">Disconnected</span>
       </header>
@@ -27,6 +27,22 @@
       <p id="notice" class="notice">
         Connect the central half over USB using desktop Chrome, or use the simulator without hardware.
       </p>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Runtime tuning</h2>
+            <span>Preview values in RAM without changing firmware or writing flash.</span>
+          </div>
+          <button id="reset-all" disabled>Reset all defaults</button>
+        </div>
+        <div class="temporary-warning">
+          Preview values remain active until reset or keyboard reboot. They are never saved automatically.
+        </div>
+        <div id="tuning" class="tuning">
+          <p class="muted">Connect protocol v2 firmware to discover tunable processors.</p>
+        </div>
+      </section>
 
       <section class="panel trace-panel">
         <div class="panel-heading">

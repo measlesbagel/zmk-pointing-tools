@@ -7,6 +7,11 @@ compatible: "measlesbagel,zpt-input-processor-scroll"
 include: ip_one_param.yaml
 
 properties:
+  tuning-label:
+    type: string
+    default: "Scroll"
+    description: Host-facing name used by the optional runtime tuner
+
   scale-multiplier:
     type: int
     required: true

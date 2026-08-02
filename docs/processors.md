@@ -26,6 +26,7 @@ listener:
     my_scroll: my_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;
+        tuning-label = "Left scroll";
         scale-multiplier = <1>;
         scale-divisor = <8>;
         report-interval-ms = <16>;
@@ -71,6 +72,12 @@ magnitude to reject typing vibration. For a dedicated scroll device, this can
 be used without `discard-unclassified` so fine movement remains available when
 the keyboard is idle. A held modifier only suppresses the beginning of a
 gesture; scrolling resumes when the configured interval has elapsed.
+
+When the USB telemetry service is enabled, every scroll instance is also
+available as a temporary runtime tuning target. `tuning-label` gives it a
+human-readable identity. Scale, timing, axis-intent, keypress-guard, and
+unclassified-motion settings can be previewed in RAM and reset to these
+compiled devicetree values. Runtime previews never write flash.
 
 ## Text navigation
 

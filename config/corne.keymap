@@ -21,6 +21,7 @@
     zpt_test_scroll: zpt_test_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;
+        tuning-label = "Test scroll";
         scale-multiplier = <1>;
         scale-divisor = <8>;
         report-interval-ms = <16>;

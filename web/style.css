@@ -37,4 +37,19 @@ canvas { width: 100%; height: min(50vh, 480px); display: block; background: #0a0
 .metrics strong { color: var(--text); font-weight: 500; text-align: right; }
 summary { cursor: pointer; font-weight: 650; }
 code { color: var(--accent); }
+.temporary-warning { margin-bottom: 16px; border-left: 3px solid var(--warning); padding: 9px 12px; background: #211f18; color: #d8ccb0; }
+.tuning { display: grid; gap: 14px; }
+.tuning-target { border: 1px solid var(--line); background: #11141a; padding: 14px; }
+.tuning-target-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.tuning-target-heading h3 { margin: 0; font-size: 16px; }
+.tuning-target-heading span { color: var(--muted); font-size: 13px; }
+.parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 10px; }
+.parameter { border: 1px solid var(--line); padding: 10px; }
+.parameter.changed { border-color: var(--warning); }
+.parameter label { display: block; margin-bottom: 7px; font-weight: 650; }
+.parameter label span, .parameter small { color: var(--muted); font-weight: 400; }
+.parameter small { display: block; margin-top: 5px; }
+.parameter-control { display: flex; align-items: center; gap: 8px; }
+.parameter-control input[type="number"] { min-width: 0; width: 100%; border: 1px solid var(--line); background: #090b0e; color: var(--text); padding: 8px; font: inherit; font-variant-numeric: tabular-nums; }
+.parameter-control input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
 @media (max-width: 650px) { header, .panel-heading { align-items: flex-start; flex-direction: column; } }
