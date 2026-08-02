@@ -47,6 +47,11 @@
         engage-ratio-percent = <150>;
     };
 
+    zpt_test_sign_extend: zpt_test_sign_extend {
+        compatible = "measlesbagel,zpt-input-processor-sign-extend-xy";
+        #input-processor-cells = <0>;
+    };
+
     zpt_telemetry {
         compatible = "measlesbagel,zpt-telemetry";
     };

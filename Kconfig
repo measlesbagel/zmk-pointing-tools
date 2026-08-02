@@ -2,6 +2,7 @@ DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
 DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
+DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
 
 menu "ZMK Pointing Tools"
 
@@ -28,6 +29,14 @@ config ZMK_POINTING_TOOLS_TEXT_NAV
     help
       Convert complete relative movement gestures into directional behavior
       taps while retaining one axis until the gesture becomes idle.
+
+config ZMK_POINTING_TOOLS_SIGN_EXTEND_XY
+    bool "Sign-extend packed split X/Y values"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_SIGN_EXTEND_XY))
+    depends on ZMK_POINTING
+    help
+      Restore negative signed 16-bit relative axes after unpacking a combined
+      split-transport event that represented its fields as unsigned values.
 
 config ZMK_POINTING_TOOLS_TELEMETRY
     bool "USB serial pointing telemetry service"
