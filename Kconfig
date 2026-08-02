@@ -1,5 +1,7 @@
 DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
+DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
+DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
 
 menu "ZMK Pointing Tools"
 
@@ -9,6 +11,23 @@ config ZMK_POINTING_TOOLS_TRACE
     depends on ZMK_POINTING
     help
       Observe complete relative-input frames without modifying their output.
+
+config ZMK_POINTING_TOOLS_SCROLL
+    bool "Frame-aware synchronized scroll processor"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_SCROLL))
+    depends on ZMK_POINTING
+    help
+      Coalesce complete X/Y frames and emit synchronized horizontal and
+      vertical scrolling with free, adaptive, or forced axis policies.
+
+config ZMK_POINTING_TOOLS_TEXT_NAV
+    bool "Gesture-locked text navigation processor"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TEXT_NAV))
+    depends on ZMK_POINTING
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    help
+      Convert complete relative movement gestures into directional behavior
+      taps while retaining one axis until the gesture becomes idle.
 
 config ZMK_POINTING_TOOLS_TELEMETRY
     bool "USB serial pointing telemetry service"

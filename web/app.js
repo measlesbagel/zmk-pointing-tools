@@ -177,6 +177,7 @@ async function disconnect() {
   heartbeat = undefined;
   elements.connect.textContent = "Connect keyboard";
   elements.telemetry.disabled = true;
+  elements.simulate.disabled = false;
   elements.telemetry.textContent = "Start telemetry";
   setStatus("Disconnected");
 }
@@ -187,6 +188,7 @@ async function connect() {
     return;
   }
   try {
+    if (simulator) startSimulator();
     port = await navigator.serial.requestPort({ filters: USB_FILTERS });
     await port.open({ baudRate: 115200 });
     writer = port.writable.getWriter();
@@ -194,6 +196,11 @@ async function connect() {
     readLoop();
     elements.connect.textContent = "Disconnect";
     elements.telemetry.disabled = false;
+    elements.simulate.disabled = true;
+    streams = new Map();
+    samples = [];
+    decoder = new FrameDecoder();
+    renderStreams();
     setStatus("Connected", true);
     await send(MESSAGE.DESCRIBE_REQUEST);
   } catch (error) {
@@ -203,6 +210,10 @@ async function connect() {
 }
 
 function startSimulator() {
+  if (port) {
+    notice("Disconnect the keyboard before starting the simulator.", true);
+    return;
+  }
   if (simulator) {
     clearInterval(simulator);
     simulator = undefined;
