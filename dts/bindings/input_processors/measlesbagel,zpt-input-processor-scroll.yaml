@@ -47,3 +47,6 @@ properties:
     required: true
     description: Dominant-to-minor ratio below which an axis lock is released
 
+  discard-unclassified:
+    type: boolean
+    description: Discard short gestures that end before activation distance is reached

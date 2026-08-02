@@ -34,6 +34,8 @@ listener:
         activation-distance = <16>;
         engage-ratio-percent = <300>;
         release-ratio-percent = <180>;
+        /* Optional for an always-on dedicated scroll device. */
+        discard-unclassified;
     };
 
     my_scroll_output: my_scroll_output {
@@ -56,6 +58,12 @@ short movements that end between physical sensor frames.
 `engage-ratio-percent` should be greater than
 `release-ratio-percent`. The gap provides hysteresis so noisy frames do not
 rapidly enter and leave an axis lock.
+
+`discard-unclassified` turns `activation-distance` into a motion gate: a
+gesture that ends before classification produces no scroll output. This is
+useful for an always-on dedicated scroll device where typing vibration should
+not move the document. Leave it unset for a momentary Scroll layer where very
+short intentional gestures should be preserved.
 
 ## Text navigation
 
