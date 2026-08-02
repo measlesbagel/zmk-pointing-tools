@@ -29,6 +29,7 @@
         activation-distance = <16>;
         engage-ratio-percent = <300>;
         release-ratio-percent = <180>;
+        suppress-after-keypress-ms = <75>;
     };
 
     zpt_test_scroll_output: zpt_test_scroll_output {
