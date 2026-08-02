@@ -8,9 +8,12 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
 #include <drivers/input_processor.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/position_state_changed.h>
 
 #include <zmk/pointing_tools/axis_intent.h>
 
@@ -19,6 +22,7 @@ struct zpt_scroll_config {
     uint16_t scale_divisor;
     uint16_t report_interval_ms;
     uint16_t idle_timeout_ms;
+    uint16_t suppress_after_keypress_ms;
     bool discard_unclassified;
     struct zpt_axis_intent_config intent;
 };
@@ -41,6 +45,22 @@ struct zpt_scroll_data {
     bool have_last_frame;
     bool flush_armed;
 };
+
+static atomic_t zpt_scroll_keypress_seen;
+static atomic_t zpt_scroll_last_keypress_ms;
+
+static int zpt_scroll_key_activity_listener(const zmk_event_t *event) {
+    const struct zmk_position_state_changed *position = as_zmk_position_state_changed(event);
+    if (position != NULL && position->state) {
+        atomic_set(&zpt_scroll_last_keypress_ms, (atomic_val_t)k_uptime_get_32());
+        atomic_set(&zpt_scroll_keypress_seen, 1);
+    }
+
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(zpt_scroll_key_activity, zpt_scroll_key_activity_listener);
+ZMK_SUBSCRIPTION(zpt_scroll_key_activity, zmk_position_state_changed);
 
 static int32_t clamp_add(int32_t lhs, int32_t rhs) {
     int64_t result = (int64_t)lhs + rhs;
@@ -119,6 +139,18 @@ static void process_frame(const struct device *dev, int32_t x, int32_t y,
     uint32_t now = k_uptime_get_32();
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
+
+    if (config->suppress_after_keypress_ms > 0U && atomic_get(&zpt_scroll_keypress_seen) != 0 &&
+        now - (uint32_t)atomic_get(&zpt_scroll_last_keypress_ms) <
+            config->suppress_after_keypress_ms) {
+        zpt_axis_intent_reset(&data->intent);
+        data->undecided_x = data->undecided_y = 0;
+        data->pending_x = data->pending_y = 0;
+        data->have_last_frame = false;
+        k_spin_unlock(&data->lock, key);
+        return;
+    }
+
     uint32_t elapsed = data->have_last_frame ? now - data->last_frame_ms : 0U;
 
     if (!data->have_last_frame || elapsed >= config->idle_timeout_ms || policy != data->policy) {
@@ -218,6 +250,7 @@ static int zpt_scroll_init(const struct device *dev) {
         .scale_divisor = DT_INST_PROP(inst, scale_divisor),                                        \
         .report_interval_ms = DT_INST_PROP(inst, report_interval_ms),                              \
         .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                                    \
+        .suppress_after_keypress_ms = DT_INST_PROP_OR(inst, suppress_after_keypress_ms, 0),        \
         .discard_unclassified = DT_INST_PROP(inst, discard_unclassified),                          \
         .intent = {.engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),               \
                    .release_ratio_percent = DT_INST_PROP(inst, release_ratio_percent),             \

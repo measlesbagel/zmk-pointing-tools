@@ -36,6 +36,7 @@ listener:
         release-ratio-percent = <180>;
         /* Optional for an always-on dedicated scroll device. */
         discard-unclassified;
+        suppress-after-keypress-ms = <75>;
     };
 
     my_scroll_output: my_scroll_output {
@@ -64,6 +65,12 @@ gesture that ends before classification produces no scroll output. This is
 useful for an always-on dedicated scroll device where typing vibration should
 not move the document. Leave it unset for a momentary Scroll layer where very
 short intentional gestures should be preserved.
+
+`suppress-after-keypress-ms` uses actual matrix key presses instead of motion
+magnitude to reject typing vibration. For a dedicated scroll device, this can
+be used without `discard-unclassified` so fine movement remains available when
+the keyboard is idle. A held modifier only suppresses the beginning of a
+gesture; scrolling resumes when the configured interval has elapsed.
 
 ## Text navigation
 

@@ -50,3 +50,7 @@ properties:
   discard-unclassified:
     type: boolean
     description: Discard short gestures that end before activation distance is reached
+
+  suppress-after-keypress-ms:
+    type: int
+    description: Ignore movement for this duration after each physical key press
