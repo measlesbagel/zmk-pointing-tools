@@ -37,6 +37,7 @@ struct zpt_scroll_data {
     int32_t remainder_y;
     uint32_t last_frame_ms;
     bool have_last_frame;
+    bool flush_armed;
 };
 
 static int32_t clamp_add(int32_t lhs, int32_t rhs) {
@@ -75,6 +76,7 @@ static void zpt_scroll_flush(struct k_work *work) {
     int16_t vertical;
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
+    data->flush_armed = false;
 
     /* Preserve very short gestures that ended before adaptive intent engaged. */
     if (data->undecided_x != 0 || data->undecided_y != 0) {
@@ -99,7 +101,8 @@ static void zpt_scroll_flush(struct k_work *work) {
 }
 
 static void schedule_flush(struct zpt_scroll_data *data, uint16_t interval_ms) {
-    if (!k_work_delayable_is_pending(&data->flush_work)) {
+    if (!data->flush_armed) {
+        data->flush_armed = true;
         k_work_schedule(&data->flush_work, K_MSEC(interval_ms));
     }
 }
