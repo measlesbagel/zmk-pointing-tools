@@ -27,8 +27,8 @@
         idle-timeout-ms = <120>;
         intent-window-ms = <64>;
         activation-distance = <16>;
-        engage-ratio-percent = <220>;
-        release-ratio-percent = <150>;
+        engage-ratio-percent = <300>;
+        release-ratio-percent = <180>;
     };
 
     zpt_test_scroll_output: zpt_test_scroll_output {

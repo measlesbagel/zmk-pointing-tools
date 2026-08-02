@@ -7,16 +7,19 @@ This project is being developed initially for a wireless Bridges V2 split with
 two PAW3222 trackballs, but its firmware APIs and host protocol are intended to
 work with arbitrary ZMK pointing devices.
 
-## Planned capabilities
+## Capabilities
 
-- Frame-aware movement coalescing for split pointing devices
+- Frame-aware movement coalescing
 - Synchronized two-axis scrolling with fractional accumulation
-- Adaptive, vertical-only, horizontal-only, and free axis policies
-- Generic movement-to-behavior processing for text navigation
+- Adaptive, vertical-only, horizontal-only, and free scroll policies
+- Gesture-locked movement-to-behavior processing for text navigation
+- Pass-through staged motion telemetry and trace recording
+- An offline, repository-owned Web Serial trace viewer
+
+Planned capabilities include:
+
 - Threshold-aware optional automatic mouse layers
 - Runtime preview and introspection of tunable parameters
-- Opt-in motion telemetry and trace recording
-- An offline, repository-owned Web Serial tuning interface
 - Experimental motion-derived gestures such as tap-to-click
 
 ## Repository boundaries
@@ -31,9 +34,11 @@ See [`docs/architecture.md`](docs/architecture.md) for the initial design.
 
 ## Status
 
-The first development milestone provides a pass-through trace processor, an
-opt-in USB serial telemetry service, and a local static trace viewer. Runtime
-tuning and semantic processors remain under development.
+The current milestone provides pass-through telemetry, synchronized adaptive
+scrolling, gesture-locked text navigation, and a local static trace viewer.
+Runtime tuning remains under development.
+
+See [`docs/processors.md`](docs/processors.md) for devicetree usage.
 
 ## Local tuner
 
