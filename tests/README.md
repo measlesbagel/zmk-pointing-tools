@@ -1,4 +1,5 @@
 # Tests
 
-Tests will include processor trace fixtures, protocol fixtures, representative
-ZMK build configurations, and frontend protocol parsing.
+Host tests exercise the reusable axis-intent model. The CI smoke firmware
+instantiates every processor binding, while browser tests cover protocol frame
+parsing and fragmented serial input.

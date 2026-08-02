@@ -1,4 +1,5 @@
 #include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
 
 / {
     zpt_test_raw: zpt_test_raw {
@@ -15,6 +16,35 @@
         pointing-device-id = <1>;
         stage = <1>;
         label = "Test output";
+    };
+
+    zpt_test_scroll: zpt_test_scroll {
+        compatible = "measlesbagel,zpt-input-processor-scroll";
+        #input-processor-cells = <1>;
+        scale-multiplier = <1>;
+        scale-divisor = <8>;
+        report-interval-ms = <16>;
+        idle-timeout-ms = <120>;
+        intent-window-ms = <64>;
+        activation-distance = <16>;
+        engage-ratio-percent = <220>;
+        release-ratio-percent = <150>;
+    };
+
+    zpt_test_scroll_output: zpt_test_scroll_output {
+        compatible = "zmk,input-listener";
+        device = <&zpt_test_scroll>;
+        input-processors = <&zpt_test_output>;
+    };
+
+    zpt_test_text_nav: zpt_test_text_nav {
+        compatible = "measlesbagel,zpt-input-processor-text-nav";
+        #input-processor-cells = <2>;
+        bindings = <&kp LEFT>, <&kp RIGHT>, <&kp UP>, <&kp DOWN>;
+        tap-ms = <5>;
+        idle-timeout-ms = <120>;
+        activation-distance = <12>;
+        engage-ratio-percent = <150>;
     };
 
     zpt_telemetry {

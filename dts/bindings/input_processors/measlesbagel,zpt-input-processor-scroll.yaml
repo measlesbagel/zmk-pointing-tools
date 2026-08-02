@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT
+
+description: Frame-aware synchronized X/Y to horizontal/vertical scroll processor
+
+compatible: "measlesbagel,zpt-input-processor-scroll"
+
+include: ip_one_param.yaml
+
+properties:
+  scale-multiplier:
+    type: int
+    required: true
+    description: Numerator used to scale accumulated movement into wheel movement
+
+  scale-divisor:
+    type: int
+    required: true
+    description: Denominator used to scale accumulated movement into wheel movement
+
+  report-interval-ms:
+    type: int
+    required: true
+    description: Interval over which physical frames are coalesced
+
+  idle-timeout-ms:
+    type: int
+    required: true
+    description: Inactivity duration that starts a new directional gesture
+
+  intent-window-ms:
+    type: int
+    required: true
+    description: Decaying time window used for adaptive directional classification
+
+  activation-distance:
+    type: int
+    required: true
+    description: Accumulated movement required before adaptive classification
+
+  engage-ratio-percent:
+    type: int
+    required: true
+    description: Dominant-to-minor ratio that engages an axis lock
+
+  release-ratio-percent:
+    type: int
+    required: true
+    description: Dominant-to-minor ratio below which an axis lock is released
+

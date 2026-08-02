@@ -1,7 +1,13 @@
-if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR CONFIG_ZMK_POINTING_TOOLS_TELEMETRY)
+if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
+   CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
+   CONFIG_ZMK_POINTING_TOOLS_SCROLL OR
+   CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV)
   zephyr_library()
   zephyr_include_directories(include)
   zephyr_include_directories(${APPLICATION_SOURCE_DIR}/include)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TRACE src/input_processor_trace.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY src/telemetry.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/axis_intent.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/input_processor_scroll.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV src/input_processor_text_nav.c)
 endif()

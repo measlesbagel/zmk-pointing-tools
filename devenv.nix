@@ -5,6 +5,7 @@
     pkgs.nodejs
     pkgs.python3
     pkgs.shellcheck
+    pkgs.gcc
   ];
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
@@ -19,11 +20,15 @@
       description = "Run host protocol parser tests";
       exec = "npm test";
     };
+    "processor:test" = {
+      description = "Run host-side processor model tests";
+      exec = "tests/run-host-tests.sh";
+    };
 
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
-      after = [ "web:check" "web:test" ];
+      after = [ "web:check" "web:test" "processor:test" ];
       before = [ "devenv:enterTest" ];
     };
   };
