@@ -28,7 +28,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #error "measlesbagel,zpt-telemetry-uart chosen node is required"
 #endif
 
-#define ZPT_PROTOCOL_VERSION (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING) ? 2 : 1)
+#define ZPT_PROTOCOL_VERSION (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING) ? 3 : 1)
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -39,11 +39,13 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_TUNING_DESCRIBE 0x05
 #define ZPT_REQ_TUNING_SET 0x06
 #define ZPT_REQ_TUNING_RESET 0x07
+#define ZPT_REQ_TUNING_HELP 0x08
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
 #define ZPT_RESP_TUNING_DESCRIBE 0x84
 #define ZPT_RESP_TUNING_RESULT 0x85
+#define ZPT_RESP_TUNING_HELP 0x86
 #define ZPT_EVENT_SAMPLE 0x90
 
 #define ZPT_MAX_REQUEST_PAYLOAD 8
@@ -275,6 +277,28 @@ static void zpt_handle_tuning_reset(const uint8_t *payload, uint16_t length) {
     zpt_send_tuning_result(ZPT_REQ_TUNING_RESET, ret, target_id, UINT8_MAX, 0);
 }
 
+static void zpt_send_tuning_help(uint8_t target_id, uint8_t parameter_id) {
+    const struct zpt_tuning_target *target = zpt_tuning_target_get(target_id);
+    if (target == NULL) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_HELP, -ENODEV, target_id, parameter_id, 0);
+        return;
+    }
+
+    const struct zpt_tuning_parameter *parameter = zpt_tuning_parameter_get(target, parameter_id);
+    if (parameter == NULL) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_HELP, -ENOENT, target_id, parameter_id, 0);
+        return;
+    }
+
+    uint8_t payload[256];
+    const size_t description_length = MIN(strlen(parameter->description), sizeof(payload) - 4);
+    payload[0] = target_id;
+    payload[1] = parameter_id;
+    sys_put_le16((uint16_t)description_length, &payload[2]);
+    memcpy(&payload[4], parameter->description, description_length);
+    zpt_send_frame(ZPT_RESP_TUNING_HELP, payload, (uint16_t)(4 + description_length));
+}
+
 #endif /* CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING */
 
 static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) {
@@ -317,6 +341,14 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
     case ZPT_REQ_TUNING_RESET:
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         zpt_handle_tuning_reset(payload, length);
+        break;
+    case ZPT_REQ_TUNING_HELP:
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        if (length == 2) {
+            zpt_send_tuning_help(payload[0], payload[1]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
         break;
 #endif
     default:

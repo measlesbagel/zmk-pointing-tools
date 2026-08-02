@@ -22,6 +22,7 @@ struct zpt_tuning_parameter {
     int32_t step;
     const char *label;
     const char *unit;
+    const char *description;
 };
 
 struct zpt_tuning_target {

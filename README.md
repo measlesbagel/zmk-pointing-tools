@@ -16,6 +16,7 @@ work with arbitrary ZMK pointing devices.
 - Pass-through staged motion telemetry and trace recording
 - An offline, repository-owned Web Serial trace viewer
 - Discoverable, validated scroll tuning previews that never write flash
+- Firmware-provided hover/focus explanations for tuning parameters
 
 Planned capabilities include:
 

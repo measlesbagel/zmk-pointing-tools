@@ -46,9 +46,13 @@ code { color: var(--accent); }
 .parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 10px; }
 .parameter { border: 1px solid var(--line); padding: 10px; }
 .parameter.changed { border-color: var(--warning); }
-.parameter label { display: block; margin-bottom: 7px; font-weight: 650; }
-.parameter label span, .parameter small { color: var(--muted); font-weight: 400; }
-.parameter small { display: block; margin-top: 5px; }
+.parameter label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-weight: 650; }
+.parameter label small, .parameter > small { color: var(--muted); font-weight: 400; }
+.parameter > small { display: block; margin-top: 5px; }
+.parameter-help { position: relative; display: inline-grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--accent); font-size: 12px; cursor: help; }
+.parameter-help:hover, .parameter-help:focus { border-color: var(--accent); outline: none; }
+.parameter-help::after { position: absolute; z-index: 10; right: -7px; bottom: calc(100% + 9px); width: min(300px, 75vw); border: 1px solid var(--accent); background: #090b0e; color: var(--text); padding: 9px 11px; box-shadow: 0 8px 24px #0009; content: attr(data-tooltip); font-size: 13px; font-weight: 400; line-height: 1.4; opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity .12s, transform .12s; }
+.parameter-help:hover::after, .parameter-help:focus::after { opacity: 1; transform: translateY(0); }
 .parameter-control { display: flex; align-items: center; gap: 8px; }
 .parameter-control input[type="number"] { min-width: 0; width: 100%; border: 1px solid var(--line); background: #090b0e; color: var(--text); padding: 8px; font: inherit; font-variant-numeric: tabular-nums; }
 .parameter-control input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }

@@ -17,6 +17,13 @@ int zpt_tuning_register(const struct zpt_tuning_target *target) {
         return -EINVAL;
     }
 
+    for (size_t i = 0; i < target->parameter_count; i++) {
+        if (target->parameters[i].label == NULL || target->parameters[i].unit == NULL ||
+            target->parameters[i].description == NULL) {
+            return -EINVAL;
+        }
+    }
+
     for (size_t i = 0; i < zpt_tuning_targets_count; i++) {
         if (zpt_tuning_targets[i] == target) {
             return (int)i;

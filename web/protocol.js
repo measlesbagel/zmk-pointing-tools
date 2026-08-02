@@ -6,11 +6,13 @@ export const MESSAGE = Object.freeze({
   TUNING_DESCRIBE_REQUEST: 0x05,
   TUNING_SET_REQUEST: 0x06,
   TUNING_RESET_REQUEST: 0x07,
+  TUNING_HELP_REQUEST: 0x08,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
   TUNING_DESCRIBE_RESPONSE: 0x84,
   TUNING_RESULT: 0x85,
+  TUNING_HELP_RESPONSE: 0x86,
   SAMPLE: 0x90,
 });
 
@@ -170,6 +172,17 @@ export function parseTuningResult(payload) {
     targetId: payload[2],
     parameterId: payload[3],
     value: view.getInt32(4, true),
+  };
+}
+
+export function parseTuningHelp(payload) {
+  requireBytes(payload, 0, 4, "tuning help");
+  const length = payload[2] | (payload[3] << 8);
+  requireBytes(payload, 4, length, "tuning help text");
+  return {
+    targetId: payload[0],
+    parameterId: payload[1],
+    description: new TextDecoder().decode(payload.slice(4, 4 + length)),
   };
 }
 
