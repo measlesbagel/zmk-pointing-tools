@@ -10,6 +10,7 @@ import {
   parseDescribe,
   parseSample,
   parseTuningDescription,
+  parseTuningHelp,
   parseTuningResult,
   parseTuningTargets,
 } from "./protocol.js";
@@ -121,5 +122,15 @@ test("encodes tuning previews and parses results", () => {
     targetId: 2,
     parameterId: 9,
     value: 60,
+  });
+});
+
+test("parses on-demand tuning help", () => {
+  const description = new TextEncoder().encode("Rejects typing vibration.");
+  const payload = Uint8Array.of(2, 9, description.length, 0, ...description);
+  assert.deepEqual(parseTuningHelp(payload), {
+    targetId: 2,
+    parameterId: 9,
+    description: "Rejects typing vibration.",
   });
 });

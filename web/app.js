@@ -8,6 +8,7 @@ import {
   parseDescribe,
   parseSample,
   parseTuningDescription,
+  parseTuningHelp,
   parseTuningResult,
   parseTuningTargets,
 } from "./protocol.js";
@@ -27,6 +28,7 @@ let reader;
 let writer;
 let readActive = false;
 let telemetryEnabled = false;
+let protocolVersion = 0;
 let simulator;
 let heartbeat;
 let streams = new Map();
@@ -58,6 +60,7 @@ function escapeHtml(value) {
 }
 
 function setDescription(description) {
+  protocolVersion = description.version;
   streams = new Map(
     description.streams.map((stream) => [stream.key, { ...stream, count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} }]),
   );
@@ -122,8 +125,11 @@ function renderTuning() {
         const control = parameter.type === TUNING.BOOLEAN
           ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
           : `<input type="number" data-value value="${parameter.current}" min="${parameter.minimum}" max="${parameter.maximum}" step="${parameter.step}">`;
+        const help = parameter.description
+          ? `<span class="parameter-help" tabindex="0" role="img" aria-label="${escapeHtml(parameter.description)}" data-tooltip="${escapeHtml(parameter.description)}">?</span>`
+          : "";
         return `<div class="parameter ${changed ? "changed" : ""}" data-target="${target.id}" data-parameter="${parameter.id}">
-          <label>${escapeHtml(parameter.label)}${parameter.unit ? ` <span>(${escapeHtml(parameter.unit)})</span>` : ""}</label>
+          <label><span>${escapeHtml(parameter.label)}${parameter.unit ? ` <small>(${escapeHtml(parameter.unit)})</small>` : ""}</span>${help}</label>
           <div class="parameter-control">${control}<button data-preview>Preview</button></div>
           <small>Compiled: ${parameter.compiled}${parameter.unit ? ` ${escapeHtml(parameter.unit)}` : ""}${changed ? " · modified" : ""}</small>
         </div>`;
@@ -144,6 +150,19 @@ function setTuningDescription(description) {
   const target = tuningTargets.get(description.targetId);
   if (!target) return;
   target.parameters = description.parameters;
+  renderTuning();
+  if (protocolVersion >= 3) {
+    for (const parameter of target.parameters) {
+      send(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
+    }
+  }
+}
+
+function setTuningHelp(help) {
+  const target = tuningTargets.get(help.targetId);
+  const parameter = target?.parameters.find(({ id }) => id === help.parameterId);
+  if (!parameter) return;
+  parameter.description = help.description;
   renderTuning();
 }
 
@@ -210,6 +229,8 @@ function handleFrame(frame) {
     setTuningTargets(parseTuningTargets(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_DESCRIBE_RESPONSE) {
     setTuningDescription(parseTuningDescription(frame.payload));
+  } else if (frame.type === MESSAGE.TUNING_HELP_RESPONSE) {
+    setTuningHelp(parseTuningHelp(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
     const target = tuningTargets.get(result.targetId);
@@ -256,6 +277,7 @@ async function disconnect() {
   try { if (port) await port.close(); } catch {}
   port = writer = undefined;
   telemetryEnabled = false;
+  protocolVersion = 0;
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
   elements.connect.textContent = "Connect keyboard";
@@ -310,14 +332,14 @@ function startSimulator() {
     renderTuning();
     return;
   }
-  setDescription({ version: 2, streams: [
+  setDescription({ version: 3, streams: [
     { deviceId: 1, stage: 0, key: "1:0", label: "Simulated raw" },
     { deviceId: 1, stage: 1, key: "1:1", label: "Simulated output" },
   ] });
   setTuningTargets([{ id: 0, kind: 1, label: "Simulated adaptive scroll", parameters: [
-    { id: 6, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts" },
-    { id: 9, type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 75, current: 75, label: "Physical keypress guard", unit: "ms" },
-    { id: 10, type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "" },
+    { id: 6, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
+    { id: 9, type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
+    { id: 10, type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "", description: "Drops motion that ends before adaptive classification." },
   ] }], false);
   let tick = 0;
   simulator = setInterval(() => {

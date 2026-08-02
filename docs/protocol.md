@@ -23,11 +23,13 @@ has explicitly enabled telemetry.
 | `0x05` | host → device | Describe tuning target | `target-id:u8` |
 | `0x06` | host → device | Preview tuning value | `target-id:u8, parameter-id:u8, value:i32` |
 | `0x07` | host → device | Reset tuning target | `target-id:u8`; `0xff` resets all |
+| `0x08` | host → device | Get parameter help | `target-id:u8, parameter-id:u8` |
 | `0x81` | device → host | Describe response | described below |
 | `0x82` | device → host | Acknowledgement | `enabled:u8, dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
+| `0x86` | device → host | Parameter help | described below |
 | `0x90` | device → host | Trace sample | described below |
 
 ### Describe response
@@ -118,4 +120,20 @@ effective current value.
 
 Runtime values live only in RAM. They remain active when the web page
 disconnects, but reset explicitly or on keyboard reboot. No command in protocol
-version 2 writes settings to flash.
+versions 2 or 3 writes settings to flash.
+
+### Parameter help
+
+Protocol version 3 adds on-demand human-readable help without changing the
+version 2 target-description format:
+
+```text
+target-id:u8
+parameter-id:u8
+description-length:u16
+description:utf8[description-length]
+```
+
+Fetching help separately keeps target discovery compact and lets generic host
+interfaces explain processor-defined settings without embedding a matching
+catalog of parameter IDs.

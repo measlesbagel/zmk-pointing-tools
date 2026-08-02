@@ -64,6 +64,10 @@ validated temporary updates, and reset operations. Persistence is intentionally
 absent from protocol version 2 so experimentation cannot cause hidden flash
 writes or make the repository disagree with keyboard behavior.
 
+Parameter explanations are owned by the processor and fetched on demand in
+protocol version 3. Host tools therefore remain generic as new processor types
+and settings are added.
+
 ## Telemetry
 
 Telemetry is opt-in and active only during a tuning session. It should expose
