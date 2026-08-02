@@ -162,16 +162,23 @@ static int zpt_scroll_handle_event(const struct device *dev, struct input_event 
         k_spinlock_key_t key = k_spin_lock(&data->lock);
         data->frame_x = clamp_add(data->frame_x, event->value);
         k_spin_unlock(&data->lock, key);
-        return ZMK_INPUT_PROC_STOP;
+        event->value = 0;
+        return ZMK_INPUT_PROC_CONTINUE;
     }
 
+    int32_t y = event->value;
     k_spinlock_key_t key = k_spin_lock(&data->lock);
     int32_t x = data->frame_x;
     data->frame_x = 0;
     k_spin_unlock(&data->lock, key);
 
-    process_frame(dev, x, event->value, (enum zpt_axis_policy)param1);
-    return ZMK_INPUT_PROC_STOP;
+    process_frame(dev, x, y, (enum zpt_axis_policy)param1);
+
+    /* ZMK intentionally consumes STOP inside a layer override before its HID
+     * listener sees it. Zero the source event instead so semantic output does
+     * not also leak through as cursor movement. */
+    event->value = 0;
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
 static const struct zmk_input_processor_driver_api zpt_scroll_driver_api = {
