@@ -30,6 +30,7 @@ struct zpt_scroll_data {
     struct zpt_axis_intent_state intent;
     enum zpt_axis_policy policy;
     int32_t frame_x;
+    int32_t frame_y;
     int32_t undecided_x;
     int32_t undecided_y;
     int32_t pending_x;
@@ -162,21 +163,26 @@ static int zpt_scroll_handle_event(const struct device *dev, struct input_event 
     }
 
     struct zpt_scroll_data *data = dev->data;
-    if (event->code == INPUT_REL_X) {
-        k_spinlock_key_t key = k_spin_lock(&data->lock);
-        data->frame_x = clamp_add(data->frame_x, event->value);
-        k_spin_unlock(&data->lock, key);
-        event->value = 0;
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
+    int32_t x = 0;
+    int32_t y = 0;
+    bool complete = event->sync;
 
-    int32_t y = event->value;
     k_spinlock_key_t key = k_spin_lock(&data->lock);
-    int32_t x = data->frame_x;
-    data->frame_x = 0;
+    if (event->code == INPUT_REL_X) {
+        data->frame_x = clamp_add(data->frame_x, event->value);
+    } else {
+        data->frame_y = clamp_add(data->frame_y, event->value);
+    }
+    if (complete) {
+        x = data->frame_x;
+        y = data->frame_y;
+        data->frame_x = data->frame_y = 0;
+    }
     k_spin_unlock(&data->lock, key);
 
-    process_frame(dev, x, y, (enum zpt_axis_policy)param1);
+    if (complete) {
+        process_frame(dev, x, y, (enum zpt_axis_policy)param1);
+    }
 
     /* ZMK intentionally consumes STOP inside a layer override before its HID
      * listener sees it. Zero the source event instead so semantic output does
