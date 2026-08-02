@@ -95,3 +95,20 @@ independent horizontal and vertical step distances:
 Once selected, the axis remains locked until `idle-timeout-ms` elapses. At
 most one behavior tap is emitted per physical input frame, preventing a fast
 sensor report from enqueueing a large burst of arrows at once.
+
+## Signed packed split axes
+
+Some packed X/Y processors transport each axis as a 16-bit field but unpack it
+without sign extension. Place a sign-extension processor immediately after the
+unpacker so negative movement does not appear as values near 65535:
+
+```dts
+my_sign_extend: my_sign_extend {
+    compatible = "measlesbagel,zpt-input-processor-sign-extend-xy";
+    #input-processor-cells = <0>;
+};
+
+&my_central_split_listener {
+    input-processors = <&my_xy_unpack>, <&my_sign_extend>, <&my_semantic_processor>;
+};
+```

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+
+description: Restore signed 16-bit X/Y values after a packed split transport
+
+compatible: "measlesbagel,zpt-input-processor-sign-extend-xy"
+
+include: ip_zero_param.yaml
