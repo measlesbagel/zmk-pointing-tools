@@ -19,6 +19,7 @@ struct zpt_scroll_config {
     uint16_t scale_divisor;
     uint16_t report_interval_ms;
     uint16_t idle_timeout_ms;
+    bool discard_unclassified;
     struct zpt_axis_intent_config intent;
 };
 
@@ -78,9 +79,12 @@ static void zpt_scroll_flush(struct k_work *work) {
     k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->flush_armed = false;
 
-    /* Preserve very short gestures that ended before adaptive intent engaged. */
+    /* A dedicated always-on scroll device can discard pre-activation motion
+     * to reject typing vibration. Momentary scroll modes preserve it. */
     if (data->undecided_x != 0 || data->undecided_y != 0) {
-        accumulate_filtered(data, ZPT_AXIS_INTENT_FREE, data->undecided_x, data->undecided_y);
+        if (!config->discard_unclassified) {
+            accumulate_filtered(data, ZPT_AXIS_INTENT_FREE, data->undecided_x, data->undecided_y);
+        }
         data->undecided_x = data->undecided_y = 0;
     }
 
@@ -208,6 +212,7 @@ static int zpt_scroll_init(const struct device *dev) {
         .scale_divisor = DT_INST_PROP(inst, scale_divisor),                                        \
         .report_interval_ms = DT_INST_PROP(inst, report_interval_ms),                              \
         .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                                    \
+        .discard_unclassified = DT_INST_PROP(inst, discard_unclassified),                          \
         .intent = {.engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),               \
                    .release_ratio_percent = DT_INST_PROP(inst, release_ratio_percent),             \
                    .activation_distance = DT_INST_PROP(inst, activation_distance),                 \
