@@ -19,8 +19,15 @@ has explicitly enabled telemetry.
 | `0x01` | host → device | Describe request | empty |
 | `0x02` | host → device | Telemetry control | `enabled:u8` |
 | `0x03` | host → device | Heartbeat | empty |
+| `0x04` | host → device | List tuning targets | empty |
+| `0x05` | host → device | Describe tuning target | `target-id:u8` |
+| `0x06` | host → device | Preview tuning value | `target-id:u8, parameter-id:u8, value:i32` |
+| `0x07` | host → device | Reset tuning target | `target-id:u8`; `0xff` resets all |
 | `0x81` | device → host | Describe response | described below |
 | `0x82` | device → host | Acknowledgement | `enabled:u8, dropped:u32` |
+| `0x83` | device → host | Tuning targets | described below |
+| `0x84` | device → host | Tuning target description | described below |
+| `0x85` | device → host | Tuning result | described below |
 | `0x90` | device → host | Trace sample | described below |
 
 ### Describe response
@@ -56,6 +63,59 @@ horizontal-wheel:i32
 
 ## Runtime tuning
 
-This initial protocol is deliberately read-only except for enabling telemetry.
-Capability discovery, temporary previews, resetting to compiled values, and
-optional persistence will be added without making persistence the default.
+Protocol version 2 adds discoverable temporary tuning. Targets are runtime
+processor instances rather than hard-coded left/right devices.
+
+### Tuning targets
+
+```text
+target-count:u8
+repeat target-count times:
+  target-id:u8
+  target-kind:u8
+  label-length:u8
+  label:utf8[label-length]
+```
+
+Target kind `1` is a synchronized scroll processor.
+
+### Tuning target description
+
+```text
+target-id:u8
+parameter-count:u8
+repeat parameter-count times:
+  parameter-id:u8
+  value-type:u8
+  minimum:i32
+  maximum:i32
+  step:i32
+  compiled-value:i32
+  current-value:i32
+  label-length:u8
+  unit-length:u8
+  label:utf8[label-length]
+  unit:utf8[unit-length]
+```
+
+Value type `0` is an integer and type `1` is a boolean represented by `0` or
+`1`. Firmware validates ranges and parameter relationships before applying a
+preview.
+
+### Tuning result
+
+```text
+request-type:u8
+status:u8
+target-id:u8
+parameter-id:u8
+value:i32
+```
+
+Status values are success (`0`), unknown target (`1`), unknown parameter (`2`),
+invalid value (`3`), and internal error (`4`). A successful preview returns the
+effective current value.
+
+Runtime values live only in RAM. They remain active when the web page
+disconnects, but reset explicitly or on keyboard reboot. No command in protocol
+version 2 writes settings to flash.

@@ -49,6 +49,24 @@ config ZMK_POINTING_TOOLS_TELEMETRY
 
 if ZMK_POINTING_TOOLS_TELEMETRY
 
+config ZMK_POINTING_TOOLS_RUNTIME_TUNING
+    bool "Temporary runtime tuning over USB serial"
+    default y
+    depends on ZMK_POINTING_TOOLS_SCROLL
+    help
+      Discover scroll processors and preview validated parameter changes.
+      Runtime values are never persisted and return to devicetree defaults on
+      reset or reboot.
+
+if ZMK_POINTING_TOOLS_RUNTIME_TUNING
+
+config ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS
+    int "Maximum runtime tuning targets"
+    default 8
+    range 1 32
+
+endif
+
 config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE
     int "Maximum queued telemetry samples"
     default 64

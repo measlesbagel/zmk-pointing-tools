@@ -2,9 +2,23 @@ export const MESSAGE = Object.freeze({
   DESCRIBE_REQUEST: 0x01,
   TELEMETRY_CONTROL: 0x02,
   PING: 0x03,
+  TUNING_TARGETS_REQUEST: 0x04,
+  TUNING_DESCRIBE_REQUEST: 0x05,
+  TUNING_SET_REQUEST: 0x06,
+  TUNING_RESET_REQUEST: 0x07,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
+  TUNING_TARGETS_RESPONSE: 0x83,
+  TUNING_DESCRIBE_RESPONSE: 0x84,
+  TUNING_RESULT: 0x85,
   SAMPLE: 0x90,
+});
+
+export const TUNING = Object.freeze({
+  ALL_TARGETS: 0xff,
+  INTEGER: 0,
+  BOOLEAN: 1,
+  STATUS_OK: 0,
 });
 
 const MAGIC_0 = 0x5a;
@@ -91,4 +105,77 @@ export function parseSample(payload) {
     wheel: view.getInt32(18, true),
     hWheel: view.getInt32(22, true),
   };
+}
+
+function requireBytes(payload, offset, count, context) {
+  if (offset + count > payload.length) throw new Error(`Truncated ${context}`);
+}
+
+export function parseTuningTargets(payload) {
+  requireBytes(payload, 0, 1, "tuning target list");
+  const decoder = new TextDecoder();
+  const count = payload[0];
+  const targets = [];
+  let offset = 1;
+
+  for (let index = 0; index < count; index += 1) {
+    requireBytes(payload, offset, 3, "tuning target descriptor");
+    const id = payload[offset++];
+    const kind = payload[offset++];
+    const length = payload[offset++];
+    requireBytes(payload, offset, length, "tuning target label");
+    const label = decoder.decode(payload.slice(offset, offset + length));
+    offset += length;
+    targets.push({ id, kind, label, parameters: [] });
+  }
+  return targets;
+}
+
+export function parseTuningDescription(payload) {
+  requireBytes(payload, 0, 2, "tuning description");
+  const decoder = new TextDecoder();
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const targetId = payload[0];
+  const count = payload[1];
+  const parameters = [];
+  let offset = 2;
+
+  for (let index = 0; index < count; index += 1) {
+    requireBytes(payload, offset, 24, "tuning parameter descriptor");
+    const id = payload[offset++];
+    const type = payload[offset++];
+    const minimum = view.getInt32(offset, true); offset += 4;
+    const maximum = view.getInt32(offset, true); offset += 4;
+    const step = view.getInt32(offset, true); offset += 4;
+    const compiled = view.getInt32(offset, true); offset += 4;
+    const current = view.getInt32(offset, true); offset += 4;
+    const labelLength = payload[offset++];
+    const unitLength = payload[offset++];
+    requireBytes(payload, offset, labelLength + unitLength, "tuning parameter strings");
+    const label = decoder.decode(payload.slice(offset, offset + labelLength));
+    offset += labelLength;
+    const unit = decoder.decode(payload.slice(offset, offset + unitLength));
+    offset += unitLength;
+    parameters.push({ id, type, minimum, maximum, step, compiled, current, label, unit });
+  }
+  return { targetId, parameters };
+}
+
+export function parseTuningResult(payload) {
+  if (payload.length !== 8) throw new Error("Invalid tuning result length");
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  return {
+    requestType: payload[0],
+    status: payload[1],
+    targetId: payload[2],
+    parameterId: payload[3],
+    value: view.getInt32(4, true),
+  };
+}
+
+export function encodeTuningSet(targetId, parameterId, value) {
+  const payload = new Uint8Array(6);
+  payload.set([targetId, parameterId]);
+  new DataView(payload.buffer).setInt32(2, value, true);
+  return encodeFrame(MESSAGE.TUNING_SET_REQUEST, payload);
 }

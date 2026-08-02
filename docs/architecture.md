@@ -58,6 +58,12 @@ The host protocol should describe pointing devices and capabilities rather than
 hard-code left/right trackballs. A transport-independent runtime registry will
 serve Web Serial initially and may support other transports later.
 
+The first registry implementation assigns session-local target IDs during boot
+and exposes typed parameter metadata, compiled baselines, current values,
+validated temporary updates, and reset operations. Persistence is intentionally
+absent from protocol version 2 so experimentation cannot cause hidden flash
+writes or make the repository disagree with keyboard behavior.
+
 ## Telemetry
 
 Telemetry is opt-in and active only during a tuning session. It should expose

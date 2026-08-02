@@ -4,10 +4,14 @@ import assert from "node:assert/strict";
 import {
   FrameDecoder,
   MESSAGE,
+  encodeTuningSet,
   encodeFrame,
   parseAck,
   parseDescribe,
   parseSample,
+  parseTuningDescription,
+  parseTuningResult,
+  parseTuningTargets,
 } from "./protocol.js";
 
 test("decodes fragmented and adjacent frames", () => {
@@ -63,5 +67,59 @@ test("parses acknowledgements and signed samples", () => {
     y: 34,
     wheel: -2,
     hWheel: 5,
+  });
+});
+
+test("parses runtime tuning discovery and parameter descriptions", () => {
+  const targetLabel = new TextEncoder().encode("Left scroll");
+  const targetPayload = Uint8Array.of(1, 3, 1, targetLabel.length, ...targetLabel);
+  assert.deepEqual(parseTuningTargets(targetPayload), [
+    { id: 3, kind: 1, label: "Left scroll", parameters: [] },
+  ]);
+
+  const label = new TextEncoder().encode("Physical keypress guard");
+  const unit = new TextEncoder().encode("ms");
+  const description = new Uint8Array(2 + 24 + label.length + unit.length);
+  const view = new DataView(description.buffer);
+  description.set([3, 1, 9, 0]);
+  view.setInt32(4, 0, true);
+  view.setInt32(8, 500, true);
+  view.setInt32(12, 1, true);
+  view.setInt32(16, 75, true);
+  view.setInt32(20, 60, true);
+  description.set([label.length, unit.length], 24);
+  description.set(label, 26);
+  description.set(unit, 26 + label.length);
+
+  assert.deepEqual(parseTuningDescription(description), {
+    targetId: 3,
+    parameters: [{
+      id: 9,
+      type: 0,
+      minimum: 0,
+      maximum: 500,
+      step: 1,
+      compiled: 75,
+      current: 60,
+      label: "Physical keypress guard",
+      unit: "ms",
+    }],
+  });
+});
+
+test("encodes tuning previews and parses results", () => {
+  const frame = encodeTuningSet(2, 9, -12);
+  assert.deepEqual([...frame.slice(0, 7)], [0x5a, 0x50, MESSAGE.TUNING_SET_REQUEST, 6, 0, 2, 9]);
+  assert.equal(new DataView(frame.buffer).getInt32(7, true), -12);
+
+  const result = new Uint8Array(8);
+  result.set([MESSAGE.TUNING_SET_REQUEST, 0, 2, 9]);
+  new DataView(result.buffer).setInt32(4, 60, true);
+  assert.deepEqual(parseTuningResult(result), {
+    requestType: MESSAGE.TUNING_SET_REQUEST,
+    status: 0,
+    targetId: 2,
+    parameterId: 9,
+    value: 60,
   });
 });
