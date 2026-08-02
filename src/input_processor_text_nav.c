@@ -176,7 +176,10 @@ static int zpt_text_nav_handle_event(const struct device *dev, struct input_even
         process_frame(dev, state, x, y, param1, param2);
     }
 
-    return ZMK_INPUT_PROC_STOP;
+    /* Layer overrides consume STOP before ZMK's HID listener sees it. Zeroing
+     * preserves report synchronization without also moving the cursor. */
+    event->value = 0;
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
 static const struct zmk_input_processor_driver_api zpt_text_nav_driver_api = {
