@@ -28,7 +28,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #error "measlesbagel,zpt-telemetry-uart chosen node is required"
 #endif
 
-#define ZPT_PROTOCOL_VERSION (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING) ? 3 : 1)
+#define ZPT_PROTOCOL_VERSION (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING) ? 4 : 1)
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -40,17 +40,30 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_TUNING_SET 0x06
 #define ZPT_REQ_TUNING_RESET 0x07
 #define ZPT_REQ_TUNING_HELP 0x08
+#define ZPT_REQ_TUNING_TARGET_METADATA 0x09
+#define ZPT_REQ_TUNING_PARAMETER_METADATA 0x0a
+#define ZPT_REQ_TUNING_SET_MANY 0x0b
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
 #define ZPT_RESP_TUNING_DESCRIBE 0x84
 #define ZPT_RESP_TUNING_RESULT 0x85
 #define ZPT_RESP_TUNING_HELP 0x86
+#define ZPT_RESP_TUNING_TARGET_METADATA 0x87
+#define ZPT_RESP_TUNING_PARAMETER_METADATA 0x88
 #define ZPT_EVENT_SAMPLE 0x90
 
-#define ZPT_MAX_REQUEST_PAYLOAD 8
+#define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_DESCRIBE_PAYLOAD 512
 #define ZPT_TUNING_ALL_TARGETS UINT8_MAX
+#define ZPT_TUNING_BATCH_HEADER_SIZE 2
+#define ZPT_TUNING_BATCH_VALUE_SIZE 5
+#define ZPT_TUNING_MAX_BATCH_VALUES 20
+
+BUILD_ASSERT(ZPT_TUNING_BATCH_HEADER_SIZE +
+                     ZPT_TUNING_MAX_BATCH_VALUES * ZPT_TUNING_BATCH_VALUE_SIZE <=
+                 ZPT_MAX_REQUEST_PAYLOAD,
+             "batch request exceeds parser payload capacity");
 
 enum zpt_tuning_status {
     ZPT_TUNING_STATUS_OK = 0,
@@ -156,6 +169,7 @@ static uint8_t zpt_tuning_status_from_errno(int error) {
         return ZPT_TUNING_STATUS_UNKNOWN_PARAMETER;
     case -EINVAL:
     case -ERANGE:
+    case -EEXIST:
         return ZPT_TUNING_STATUS_INVALID_VALUE;
     default:
         return ZPT_TUNING_STATUS_INTERNAL_ERROR;
@@ -299,6 +313,90 @@ static void zpt_send_tuning_help(uint8_t target_id, uint8_t parameter_id) {
     zpt_send_frame(ZPT_RESP_TUNING_HELP, payload, (uint16_t)(4 + description_length));
 }
 
+static void zpt_send_tuning_target_metadata(uint8_t target_id) {
+    const struct zpt_tuning_target *target = zpt_tuning_target_get(target_id);
+    if (target == NULL) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_TARGET_METADATA, -ENODEV, target_id, UINT8_MAX, 0);
+        return;
+    }
+
+    uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
+    const size_t stable_id_length = MIN(strlen(target->stable_id), UINT8_MAX);
+    const size_t path_length = MIN(strlen(target->devicetree_path), UINT16_MAX);
+    if (4 + stable_id_length + path_length > sizeof(payload)) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_TARGET_METADATA, -ENOMEM, target_id, UINT8_MAX, 0);
+        return;
+    }
+
+    payload[0] = target_id;
+    payload[1] = stable_id_length;
+    sys_put_le16((uint16_t)path_length, &payload[2]);
+    memcpy(&payload[4], target->stable_id, stable_id_length);
+    memcpy(&payload[4 + stable_id_length], target->devicetree_path, path_length);
+    zpt_send_frame(ZPT_RESP_TUNING_TARGET_METADATA, payload,
+                   (uint16_t)(4 + stable_id_length + path_length));
+}
+
+static void zpt_send_tuning_parameter_metadata(uint8_t target_id, uint8_t parameter_id) {
+    const struct zpt_tuning_target *target = zpt_tuning_target_get(target_id);
+    if (target == NULL) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_PARAMETER_METADATA, -ENODEV, target_id, parameter_id,
+                               0);
+        return;
+    }
+    const struct zpt_tuning_parameter *parameter = zpt_tuning_parameter_get(target, parameter_id);
+    if (parameter == NULL) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_PARAMETER_METADATA, -ENOENT, target_id, parameter_id,
+                               0);
+        return;
+    }
+
+    uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
+    const size_t key_length = MIN(strlen(parameter->key), UINT8_MAX);
+    const size_t property_length = MIN(strlen(parameter->devicetree_property), UINT8_MAX);
+    if (4 + key_length + property_length > sizeof(payload)) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_PARAMETER_METADATA, -ENOMEM, target_id, parameter_id,
+                               0);
+        return;
+    }
+    payload[0] = target_id;
+    payload[1] = parameter_id;
+    payload[2] = key_length;
+    payload[3] = property_length;
+    memcpy(&payload[4], parameter->key, key_length);
+    memcpy(&payload[4 + key_length], parameter->devicetree_property, property_length);
+    zpt_send_frame(ZPT_RESP_TUNING_PARAMETER_METADATA, payload,
+                   (uint16_t)(4 + key_length + property_length));
+}
+
+static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) {
+    if (length < ZPT_TUNING_BATCH_HEADER_SIZE) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_SET_MANY, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        return;
+    }
+
+    const uint8_t target_id = payload[0];
+    const uint8_t count = payload[1];
+    if (count == 0 || count > ZPT_TUNING_MAX_BATCH_VALUES ||
+        length != ZPT_TUNING_BATCH_HEADER_SIZE + count * ZPT_TUNING_BATCH_VALUE_SIZE) {
+        zpt_send_tuning_result(ZPT_REQ_TUNING_SET_MANY, -EINVAL, target_id, UINT8_MAX, 0);
+        return;
+    }
+
+    struct zpt_tuning_value values[ZPT_TUNING_MAX_BATCH_VALUES];
+    size_t offset = ZPT_TUNING_BATCH_HEADER_SIZE;
+    for (size_t i = 0; i < count; i++) {
+        values[i].parameter_id = payload[offset++];
+        values[i].value = (int32_t)sys_get_le32(&payload[offset]);
+        offset += 4;
+    }
+
+    uint8_t failed_parameter_id = UINT8_MAX;
+    int ret = zpt_tuning_set_many(target_id, values, count, &failed_parameter_id);
+    zpt_send_tuning_result(ZPT_REQ_TUNING_SET_MANY, ret, target_id,
+                           ret == 0 ? UINT8_MAX : failed_parameter_id, ret == 0 ? count : 0);
+}
+
 #endif /* CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING */
 
 static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) {
@@ -349,6 +447,26 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         } else {
             zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
         }
+        break;
+    case ZPT_REQ_TUNING_TARGET_METADATA:
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        if (length == 1) {
+            zpt_send_tuning_target_metadata(payload[0]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_PARAMETER_METADATA:
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        if (length == 2) {
+            zpt_send_tuning_parameter_metadata(payload[0], payload[1]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_SET_MANY:
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_handle_tuning_set_many(payload, length);
         break;
 #endif
     default:

@@ -29,12 +29,17 @@ requests must not be emitted as an unbounded burst.
 | `0x06` | host → device | Preview tuning value | `target-id:u8, parameter-id:u8, value:i32` |
 | `0x07` | host → device | Reset tuning target | `target-id:u8`; `0xff` resets all |
 | `0x08` | host → device | Get parameter help | `target-id:u8, parameter-id:u8` |
+| `0x09` | host → device | Get target metadata | `target-id:u8` |
+| `0x0a` | host → device | Get parameter metadata | `target-id:u8, parameter-id:u8` |
+| `0x0b` | host → device | Preview parameter batch | described below |
 | `0x81` | device → host | Describe response | described below |
 | `0x82` | device → host | Acknowledgement | `enabled:u8, dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
 | `0x86` | device → host | Parameter help | described below |
+| `0x87` | device → host | Target metadata | described below |
+| `0x88` | device → host | Parameter metadata | described below |
 | `0x90` | device → host | Trace sample | described below |
 
 ### Describe response
@@ -126,7 +131,7 @@ effective current value.
 
 Runtime values live only in RAM. They remain active when the web page
 disconnects, but reset explicitly or on keyboard reboot. No command in protocol
-versions 2 or 3 writes settings to flash.
+versions 2 through 4 writes settings to flash.
 
 ### Parameter help
 
@@ -143,3 +148,49 @@ description:utf8[description-length]
 Fetching help separately keeps target discovery compact and lets generic host
 interfaces explain processor-defined settings without embedding a matching
 catalog of parameter IDs.
+
+### Stable profile metadata
+
+Protocol version 4 adds stable identities for profile export/import while
+retaining numeric IDs for compact session requests. Target metadata is:
+
+```text
+target-id:u8
+stable-id-length:u8
+devicetree-path-length:u16
+stable-id:utf8[stable-id-length]
+devicetree-path:utf8[devicetree-path-length]
+```
+
+Parameter metadata is:
+
+```text
+target-id:u8
+parameter-id:u8
+key-length:u8
+devicetree-property-length:u8
+key:utf8[key-length]
+devicetree-property:utf8[devicetree-property-length]
+```
+
+Stable target IDs are keyboard policy supplied by `tuning-id`. Parameter keys
+are owned by each processor family. Devicetree paths and property names allow a
+host to generate a reviewable overlay without assuming node labels.
+
+### Atomic parameter preview
+
+Version 4 can update related values as one target-level transaction:
+
+```text
+target-id:u8
+value-count:u8
+repeat value-count times:
+  parameter-id:u8
+  value:i32
+```
+
+The response is the ordinary tuning result with request type `0x0b` and the
+number of applied values in its value field. Firmware validates every range,
+duplicate, and processor-level relationship before replacing current settings;
+if any value fails, none of that target's values change. A request contains at
+most 20 values.

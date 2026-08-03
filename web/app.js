@@ -4,14 +4,22 @@ import {
   TUNING,
   encodeFrame,
   encodeTuningSet,
+  encodeTuningSetMany,
   parseAck,
   parseDescribe,
   parseSample,
   parseTuningDescription,
   parseTuningHelp,
+  parseTuningParameterMetadata,
   parseTuningResult,
+  parseTuningTargetMetadata,
   parseTuningTargets,
 } from "./protocol.js";
+import {
+  createTuningProfile,
+  prepareProfileImport,
+  renderDevicetreeSnippet,
+} from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
@@ -19,7 +27,7 @@ const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"
 const MAX_SAMPLES = 20_000;
 
 const elements = Object.fromEntries(
-  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all"].map(
+  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -116,7 +124,20 @@ function renderStreams() {
 }
 
 function renderTuning() {
+  const targets = [...tuningTargets.values()];
+  const modified = targets.reduce(
+    (count, target) => count + target.parameters.filter((parameter) => parameter.current !== parameter.compiled).length,
+    0,
+  );
+  const profileReady = protocolVersion >= 4 && targets.length > 0 && targets.every(
+    (target) => target.stableId && target.devicetreePath && target.parameters.length > 0 &&
+      target.parameters.every((parameter) => parameter.key && parameter.devicetreeProperty),
+  );
   elements["reset-all"].disabled = tuningTargets.size === 0;
+  elements["profile-export"].disabled = !profileReady;
+  elements["profile-copy"].disabled = !profileReady;
+  elements["profile-import"].disabled = !profileReady;
+  elements["modified-count"].textContent = `${modified} modified`;
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">Connect protocol v2 firmware to discover tunable processors.</p>';
     return;
@@ -125,7 +146,7 @@ function renderTuning() {
   elements.tuning.innerHTML = [...tuningTargets.values()]
     .map((target) => `<article class="tuning-target">
       <div class="tuning-target-heading">
-        <div><h3>${escapeHtml(target.label)}</h3><span>Temporary preview values</span></div>
+        <div><h3>${escapeHtml(target.label)}</h3><span>${target.stableId ? `<code>${escapeHtml(target.stableId)}</code> · ` : ""}Temporary preview values</span></div>
         <button data-reset-target="${target.id}" ${target.parameters.length ? "" : "disabled"}>Reset target</button>
       </div>
       ${target.parameters.length ? `<div class="parameters">${target.parameters.map((parameter) => {
@@ -150,7 +171,12 @@ function setTuningTargets(targets, requestDescriptions = true) {
   tuningTargets = new Map(targets.map((target) => [target.id, target]));
   renderTuning();
   if (requestDescriptions) {
-    for (const target of targets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+    for (const target of targets) {
+      queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+      if (protocolVersion >= 4) {
+        queueTuningRequest(MESSAGE.TUNING_TARGET_METADATA_REQUEST, Uint8Array.of(target.id));
+      }
+    }
   }
 }
 
@@ -164,6 +190,12 @@ function setTuningDescription(description) {
       queueTuningRequest(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
     }
   }
+  if (protocolVersion >= 4) {
+    for (const parameter of target.parameters) {
+      queueTuningRequest(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST,
+        Uint8Array.of(target.id, parameter.id));
+    }
+  }
 }
 
 function setTuningHelp(help) {
@@ -171,6 +203,21 @@ function setTuningHelp(help) {
   const parameter = target?.parameters.find(({ id }) => id === help.parameterId);
   if (!parameter) return;
   parameter.description = help.description;
+  renderTuning();
+}
+
+function setTuningTargetMetadata(metadata) {
+  const target = tuningTargets.get(metadata.targetId);
+  if (!target) return;
+  Object.assign(target, metadata);
+  renderTuning();
+}
+
+function setTuningParameterMetadata(metadata) {
+  const target = tuningTargets.get(metadata.targetId);
+  const parameter = target?.parameters.find(({ id }) => id === metadata.parameterId);
+  if (!parameter) return;
+  Object.assign(parameter, metadata);
   renderTuning();
 }
 
@@ -223,6 +270,35 @@ function queueTuningRequest(type, payload) {
   tuningRequests.enqueue(type, encodeFrame(type, payload));
 }
 
+function downloadJson(payload, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function applyProfile(profile) {
+  const batches = prepareProfileImport(profile, tuningTargets);
+  if (simulator) {
+    for (const batch of batches) {
+      const target = tuningTargets.get(batch.targetId);
+      for (const update of batch.values) {
+        target.parameters.find(({ id }) => id === update.parameterId).current = update.value;
+      }
+    }
+    renderTuning();
+    notice(`Applied ${batches.length} simulated profile targets.`);
+    return;
+  }
+
+  for (const batch of batches) {
+    tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST,
+      encodeTuningSetMany(batch.targetId, batch.values));
+  }
+  notice(`Validated profile; applying ${batches.length} targets as temporary previews.`);
+}
+
 function handleFrame(frame) {
   if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
     const description = parseDescribe(frame.payload);
@@ -246,6 +322,12 @@ function handleFrame(frame) {
   } else if (frame.type === MESSAGE.TUNING_HELP_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_HELP_REQUEST);
     setTuningHelp(parseTuningHelp(frame.payload));
+  } else if (frame.type === MESSAGE.TUNING_TARGET_METADATA_RESPONSE) {
+    tuningRequests.complete(MESSAGE.TUNING_TARGET_METADATA_REQUEST);
+    setTuningTargetMetadata(parseTuningTargetMetadata(frame.payload));
+  } else if (frame.type === MESSAGE.TUNING_PARAMETER_METADATA_RESPONSE) {
+    tuningRequests.complete(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST);
+    setTuningParameterMetadata(parseTuningParameterMetadata(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
     tuningRequests.complete(result.requestType);
@@ -253,12 +335,18 @@ function handleFrame(frame) {
     if (result.status !== TUNING.STATUS_OK) {
       const messages = ["success", "unknown target", "unknown parameter", "invalid value", "internal error"];
       notice(`Preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
-      if (target) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+      if (target && [MESSAGE.TUNING_SET_REQUEST, MESSAGE.TUNING_SET_MANY_REQUEST,
+        MESSAGE.TUNING_RESET_REQUEST].includes(result.requestType)) {
+        queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+      }
     } else if (result.requestType === MESSAGE.TUNING_SET_REQUEST && target) {
       const parameter = target.parameters.find(({ id }) => id === result.parameterId);
       if (parameter) parameter.current = result.value;
       renderTuning();
       notice(`${target.label} preview updated. Changes remain temporary until reboot.`);
+    } else if (result.requestType === MESSAGE.TUNING_SET_MANY_REQUEST && target) {
+      queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+      notice(`${target.label} profile values applied atomically as a temporary preview.`);
     } else if (result.requestType === MESSAGE.TUNING_RESET_REQUEST) {
       const resetTargets = result.targetId === TUNING.ALL_TARGETS ? [...tuningTargets.values()] : [target].filter(Boolean);
       for (const item of resetTargets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
@@ -350,20 +438,20 @@ function startSimulator() {
     renderTuning();
     return;
   }
-  setDescription({ version: 3, streams: [
+  setDescription({ version: 4, streams: [
     { deviceId: 1, stage: 0, key: "1:0", label: "Simulated raw" },
     { deviceId: 1, stage: 1, key: "1:1", label: "Simulated output" },
   ] });
-  setTuningTargets([{ id: 0, kind: 1, label: "Simulated adaptive scroll", parameters: [
-    { id: 6, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
-    { id: 9, type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
-    { id: 10, type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "", description: "Drops motion that ends before adaptive classification." },
-  ] }, { id: 1, kind: 2, label: "Simulated text navigation", parameters: [
-    { id: 1, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 25, current: 25, label: "Horizontal step distance", unit: "counts", description: "Horizontal movement required for one left or right key tap." },
-    { id: 2, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 50, current: 50, label: "Vertical step distance", unit: "counts", description: "Vertical movement required for one up or down key tap." },
-    { id: 3, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 12, current: 12, label: "Activation distance", unit: "counts", description: "Accumulated movement required before choosing the gesture's locked axis." },
-    { id: 4, type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
-    { id: 5, type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
+  setTuningTargets([{ id: 0, stableId: "simulated-scroll", kind: 1, label: "Simulated adaptive scroll", devicetreePath: "/simulated_scroll", parameters: [
+    { id: 6, key: "activation-distance", devicetreeProperty: "activation-distance", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
+    { id: 9, key: "suppress-after-keypress-ms", devicetreeProperty: "suppress-after-keypress-ms", type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
+    { id: 10, key: "discard-unclassified", devicetreeProperty: "discard-unclassified", type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "", description: "Drops motion that ends before adaptive classification." },
+  ] }, { id: 1, stableId: "simulated-text-navigation", kind: 2, label: "Simulated text navigation", devicetreePath: "/simulated_text_navigation", parameters: [
+    { id: 1, key: "horizontal-threshold", devicetreeProperty: "horizontal-threshold", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 25, current: 25, label: "Horizontal step distance", unit: "counts", description: "Horizontal movement required for one left or right key tap." },
+    { id: 2, key: "vertical-threshold", devicetreeProperty: "vertical-threshold", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 50, current: 50, label: "Vertical step distance", unit: "counts", description: "Vertical movement required for one up or down key tap." },
+    { id: 3, key: "activation-distance", devicetreeProperty: "activation-distance", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 12, current: 12, label: "Activation distance", unit: "counts", description: "Accumulated movement required before choosing the gesture's locked axis." },
+    { id: 4, key: "engage-ratio-percent", devicetreeProperty: "engage-ratio-percent", type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
+    { id: 5, key: "idle-timeout-ms", devicetreeProperty: "idle-timeout-ms", type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
   ] }], false);
   let tick = 0;
   simulator = setInterval(() => {
@@ -387,6 +475,38 @@ elements.export.addEventListener("click", () => {
   link.download = `zmk-pointing-trace-${new Date().toISOString().replaceAll(":", "-")}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
+});
+
+elements["profile-export"].addEventListener("click", () => {
+  try {
+    const profile = createTuningProfile(tuningTargets, protocolVersion);
+    downloadJson(profile, `zmk-pointing-profile-${new Date().toISOString().replaceAll(":", "-")}.json`);
+    notice("Exported the current runtime tuning profile.");
+  } catch (error) {
+    notice(`Profile export failed: ${error.message}`, true);
+  }
+});
+
+elements["profile-copy"].addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(renderDevicetreeSnippet(tuningTargets));
+    notice("Copied a devicetree overlay with the current values. Review it before committing.");
+  } catch (error) {
+    notice(`Could not copy configuration: ${error.message}`, true);
+  }
+});
+
+elements["profile-import"].addEventListener("click", () => elements["profile-file"].click());
+elements["profile-file"].addEventListener("change", async () => {
+  const [file] = elements["profile-file"].files;
+  if (!file) return;
+  try {
+    applyProfile(JSON.parse(await file.text()));
+  } catch (error) {
+    notice(`Profile import rejected before applying changes: ${error.message}`, true);
+  } finally {
+    elements["profile-file"].value = "";
+  }
 });
 
 elements.tuning.addEventListener("click", async (event) => {

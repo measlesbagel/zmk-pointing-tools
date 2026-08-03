@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include <errno.h>
+#include <string.h>
 
 #include <zephyr/sys/util.h>
 
@@ -11,22 +12,34 @@ static const struct zpt_tuning_target
 static size_t zpt_tuning_targets_count;
 
 int zpt_tuning_register(const struct zpt_tuning_target *target) {
-    if (target == NULL || target->label == NULL || target->parameters == NULL ||
-        target->parameter_count == 0 || target->get == NULL || target->set == NULL ||
+    if (target == NULL || target->stable_id == NULL || target->label == NULL ||
+        target->devicetree_path == NULL || target->parameters == NULL ||
+        target->parameter_count == 0 || target->get == NULL || target->set_many == NULL ||
         target->reset == NULL) {
         return -EINVAL;
     }
 
     for (size_t i = 0; i < target->parameter_count; i++) {
-        if (target->parameters[i].label == NULL || target->parameters[i].unit == NULL ||
+        if (target->parameters[i].key == NULL ||
+            target->parameters[i].devicetree_property == NULL ||
+            target->parameters[i].label == NULL || target->parameters[i].unit == NULL ||
             target->parameters[i].description == NULL) {
             return -EINVAL;
+        }
+        for (size_t j = 0; j < i; j++) {
+            if (target->parameters[j].id == target->parameters[i].id ||
+                strcmp(target->parameters[j].key, target->parameters[i].key) == 0) {
+                return -EEXIST;
+            }
         }
     }
 
     for (size_t i = 0; i < zpt_tuning_targets_count; i++) {
         if (zpt_tuning_targets[i] == target) {
             return (int)i;
+        }
+        if (strcmp(zpt_tuning_targets[i]->stable_id, target->stable_id) == 0) {
+            return -EEXIST;
         }
     }
 
@@ -73,23 +86,49 @@ int zpt_tuning_get(uint8_t target_id, uint8_t parameter_id, bool compiled, int32
 }
 
 int zpt_tuning_set(uint8_t target_id, uint8_t parameter_id, int32_t value) {
+    const struct zpt_tuning_value update = {
+        .parameter_id = parameter_id,
+        .value = value,
+    };
+    return zpt_tuning_set_many(target_id, &update, 1, NULL);
+}
+
+int zpt_tuning_set_many(uint8_t target_id, const struct zpt_tuning_value *values,
+                        size_t value_count, uint8_t *failed_parameter_id) {
     const struct zpt_tuning_target *target = zpt_tuning_target_get(target_id);
     if (target == NULL) {
         return -ENODEV;
     }
+    if (values == NULL || value_count == 0) {
+        return -EINVAL;
+    }
 
-    const struct zpt_tuning_parameter *parameter = zpt_tuning_parameter_get(target, parameter_id);
-    if (parameter == NULL) {
-        return -ENOENT;
+    for (size_t i = 0; i < value_count; i++) {
+        const struct zpt_tuning_parameter *parameter =
+            zpt_tuning_parameter_get(target, values[i].parameter_id);
+        if (failed_parameter_id != NULL) {
+            *failed_parameter_id = values[i].parameter_id;
+        }
+        if (parameter == NULL) {
+            return -ENOENT;
+        }
+        if (values[i].value < parameter->minimum || values[i].value > parameter->maximum ||
+            (parameter->step > 1 &&
+             (values[i].value - parameter->minimum) % parameter->step != 0)) {
+            return -ERANGE;
+        }
+        if (parameter->type == ZPT_TUNING_VALUE_BOOLEAN && values[i].value != 0 &&
+            values[i].value != 1) {
+            return -ERANGE;
+        }
+        for (size_t j = 0; j < i; j++) {
+            if (values[j].parameter_id == values[i].parameter_id) {
+                return -EEXIST;
+            }
+        }
     }
-    if (value < parameter->minimum || value > parameter->maximum ||
-        (parameter->step > 1 && (value - parameter->minimum) % parameter->step != 0)) {
-        return -ERANGE;
-    }
-    if (parameter->type == ZPT_TUNING_VALUE_BOOLEAN && value != 0 && value != 1) {
-        return -ERANGE;
-    }
-    return target->set(target->context, parameter_id, value);
+
+    return target->set_many(target->context, values, value_count, failed_parameter_id);
 }
 
 int zpt_tuning_reset(uint8_t target_id) {

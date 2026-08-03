@@ -21,7 +21,7 @@
         <button id="telemetry" disabled>Start telemetry</button>
         <button id="simulate">Simulate</button>
         <button id="clear">Clear</button>
-        <button id="export" disabled>Export JSON</button>
+        <button id="export" disabled>Export trace</button>
       </section>
 
       <p id="notice" class="notice">
@@ -34,7 +34,14 @@
             <h2>Runtime tuning</h2>
             <span>Preview values in RAM without changing firmware or writing flash.</span>
           </div>
-          <button id="reset-all" disabled>Reset all defaults</button>
+          <div class="panel-actions">
+            <span id="modified-count" class="modified-count">0 modified</span>
+            <button id="profile-export" disabled>Export profile</button>
+            <button id="profile-import" disabled>Import profile</button>
+            <button id="profile-copy" disabled>Copy config</button>
+            <button id="reset-all" disabled>Reset all defaults</button>
+            <input id="profile-file" type="file" accept="application/json,.json" hidden>
+          </div>
         </div>
         <div class="temporary-warning">
           Preview values remain active until reset or keyboard reboot. They are never saved automatically.

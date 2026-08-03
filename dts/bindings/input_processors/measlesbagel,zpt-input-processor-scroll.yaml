@@ -7,6 +7,11 @@ compatible: "measlesbagel,zpt-input-processor-scroll"
 include: ip_one_param.yaml
 
 properties:
+  tuning-id:
+    type: string
+    required: true
+    description: Stable machine-readable identity used by tuning profiles
+
   tuning-label:
     type: string
     default: "Scroll"

@@ -7,12 +7,17 @@ export const MESSAGE = Object.freeze({
   TUNING_SET_REQUEST: 0x06,
   TUNING_RESET_REQUEST: 0x07,
   TUNING_HELP_REQUEST: 0x08,
+  TUNING_TARGET_METADATA_REQUEST: 0x09,
+  TUNING_PARAMETER_METADATA_REQUEST: 0x0a,
+  TUNING_SET_MANY_REQUEST: 0x0b,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
   TUNING_DESCRIBE_RESPONSE: 0x84,
   TUNING_RESULT: 0x85,
   TUNING_HELP_RESPONSE: 0x86,
+  TUNING_TARGET_METADATA_RESPONSE: 0x87,
+  TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
   SAMPLE: 0x90,
 });
 
@@ -186,9 +191,52 @@ export function parseTuningHelp(payload) {
   };
 }
 
+export function parseTuningTargetMetadata(payload) {
+  requireBytes(payload, 0, 4, "tuning target metadata");
+  const stableIdLength = payload[1];
+  const pathLength = payload[2] | (payload[3] << 8);
+  requireBytes(payload, 4, stableIdLength + pathLength, "tuning target metadata strings");
+  const decoder = new TextDecoder();
+  return {
+    targetId: payload[0],
+    stableId: decoder.decode(payload.slice(4, 4 + stableIdLength)),
+    devicetreePath: decoder.decode(payload.slice(4 + stableIdLength, 4 + stableIdLength + pathLength)),
+  };
+}
+
+export function parseTuningParameterMetadata(payload) {
+  requireBytes(payload, 0, 4, "tuning parameter metadata");
+  const keyLength = payload[2];
+  const propertyLength = payload[3];
+  requireBytes(payload, 4, keyLength + propertyLength, "tuning parameter metadata strings");
+  const decoder = new TextDecoder();
+  return {
+    targetId: payload[0],
+    parameterId: payload[1],
+    key: decoder.decode(payload.slice(4, 4 + keyLength)),
+    devicetreeProperty: decoder.decode(payload.slice(4 + keyLength, 4 + keyLength + propertyLength)),
+  };
+}
+
 export function encodeTuningSet(targetId, parameterId, value) {
   const payload = new Uint8Array(6);
   payload.set([targetId, parameterId]);
   new DataView(payload.buffer).setInt32(2, value, true);
   return encodeFrame(MESSAGE.TUNING_SET_REQUEST, payload);
+}
+
+export function encodeTuningSetMany(targetId, values) {
+  if (values.length === 0 || values.length > 20) {
+    throw new Error("A tuning batch must contain between 1 and 20 values");
+  }
+  const payload = new Uint8Array(2 + values.length * 5);
+  const view = new DataView(payload.buffer);
+  payload.set([targetId, values.length]);
+  let offset = 2;
+  for (const { parameterId, value } of values) {
+    payload[offset++] = parameterId;
+    view.setInt32(offset, value, true);
+    offset += 4;
+  }
+  return encodeFrame(MESSAGE.TUNING_SET_MANY_REQUEST, payload);
 }
