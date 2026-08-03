@@ -7,6 +7,7 @@
 
 enum zpt_tuning_target_kind {
     ZPT_TUNING_TARGET_SCROLL = 1,
+    ZPT_TUNING_TARGET_TEXT_NAV = 2,
 };
 
 enum zpt_tuning_value_type {

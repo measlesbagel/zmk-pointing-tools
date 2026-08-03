@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #define DT_DRV_COMPAT measlesbagel_zpt_input_processor_text_nav
 
+#include <errno.h>
 #include <limits.h>
-#include <stdlib.h>
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -17,53 +17,42 @@
 #include <zmk/keymap.h>
 #include <zmk/virtual_key_position.h>
 
-#include <zmk/pointing_tools/axis_intent.h>
+#include <zmk/pointing_tools/text_nav.h>
+#include <zmk/pointing_tools/tuning.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define ZPT_TEXT_NAV_BINDING_COUNT 4
 
-enum zpt_text_nav_direction {
-    ZPT_TEXT_NAV_LEFT = 0,
-    ZPT_TEXT_NAV_RIGHT,
-    ZPT_TEXT_NAV_UP,
-    ZPT_TEXT_NAV_DOWN,
-};
-
 struct zpt_text_nav_config {
     uint8_t index;
     uint16_t tap_ms;
-    uint16_t idle_timeout_ms;
-    uint16_t activation_distance;
-    uint16_t engage_ratio_percent;
+    struct zpt_text_nav_settings compiled;
     const struct zmk_behavior_binding *bindings;
+    const char *tuning_label;
 };
 
 struct zpt_text_nav_data {
+    struct k_spinlock lock;
     int32_t frame_x;
     int32_t frame_y;
-    int32_t accumulated_x;
-    int32_t accumulated_y;
     uint32_t last_frame_ms;
-    enum zpt_axis_intent intent;
     bool have_last_frame;
+    struct zpt_text_nav_state gesture;
+    struct zpt_text_nav_settings settings;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_tuning_target tuning_target;
+#endif
 };
 
 static int32_t clamp_add(int32_t lhs, int32_t rhs) {
     return (int32_t)CLAMP((int64_t)lhs + rhs, INT32_MIN, INT32_MAX);
 }
 
-static uint32_t magnitude(int32_t value) {
-    return value >= 0 ? (uint32_t)value : (uint32_t)(-(value + 1)) + 1U;
-}
-
-static bool dominates(uint32_t major, uint32_t minor, uint16_t ratio_percent) {
-    return (uint64_t)major * 100U >= (uint64_t)minor * ratio_percent;
-}
-
-static void reset_gesture(struct zpt_text_nav_data *data) {
-    data->accumulated_x = data->accumulated_y = 0;
-    data->intent = ZPT_AXIS_INTENT_UNDECIDED;
+static void reset_processing_locked(struct zpt_text_nav_data *data) {
+    data->frame_x = data->frame_y = 0;
+    data->have_last_frame = false;
+    zpt_text_nav_reset(&data->gesture);
 }
 
 static int queue_tap(const struct device *dev, struct zmk_input_processor_state *state,
@@ -86,83 +75,20 @@ static int queue_tap(const struct device *dev, struct zmk_input_processor_state 
     return zmk_behavior_queue_add(&behavior_event, config->bindings[direction], false, 0);
 }
 
-static void process_frame(const struct device *dev, struct zmk_input_processor_state *state,
-                          int32_t x, int32_t y, uint32_t horizontal_threshold,
-                          uint32_t vertical_threshold) {
-    const struct zpt_text_nav_config *config = dev->config;
-    struct zpt_text_nav_data *data = dev->data;
-    uint32_t now = k_uptime_get_32();
-    uint32_t elapsed = data->have_last_frame ? now - data->last_frame_ms : 0U;
-
-    if (!data->have_last_frame || elapsed >= config->idle_timeout_ms) {
-        reset_gesture(data);
-    }
-    data->last_frame_ms = now;
-    data->have_last_frame = true;
-
-    if (data->intent == ZPT_AXIS_INTENT_UNDECIDED) {
-        data->accumulated_x = clamp_add(data->accumulated_x, x);
-        data->accumulated_y = clamp_add(data->accumulated_y, y);
-
-        uint32_t horizontal = magnitude(data->accumulated_x);
-        uint32_t vertical = magnitude(data->accumulated_y);
-        if (horizontal + vertical < config->activation_distance) {
-            return;
-        }
-
-        if (dominates(horizontal, vertical, config->engage_ratio_percent)) {
-            data->intent = ZPT_AXIS_INTENT_HORIZONTAL;
-            data->accumulated_y = 0;
-        } else if (dominates(vertical, horizontal, config->engage_ratio_percent)) {
-            data->intent = ZPT_AXIS_INTENT_VERTICAL;
-            data->accumulated_x = 0;
-        } else {
-            return;
-        }
-    } else if (data->intent == ZPT_AXIS_INTENT_HORIZONTAL) {
-        data->accumulated_x = clamp_add(data->accumulated_x, x);
-    } else {
-        data->accumulated_y = clamp_add(data->accumulated_y, y);
-    }
-
-    int32_t *movement;
-    uint32_t threshold;
-    enum zpt_text_nav_direction negative_direction;
-    enum zpt_text_nav_direction positive_direction;
-
-    if (data->intent == ZPT_AXIS_INTENT_HORIZONTAL) {
-        movement = &data->accumulated_x;
-        threshold = MAX(horizontal_threshold, 1U);
-        negative_direction = ZPT_TEXT_NAV_LEFT;
-        positive_direction = ZPT_TEXT_NAV_RIGHT;
-    } else {
-        movement = &data->accumulated_y;
-        threshold = MAX(vertical_threshold, 1U);
-        negative_direction = ZPT_TEXT_NAV_UP;
-        positive_direction = ZPT_TEXT_NAV_DOWN;
-    }
-
-    if (magnitude(*movement) < threshold) {
-        return;
-    }
-
-    enum zpt_text_nav_direction direction = *movement < 0 ? negative_direction : positive_direction;
-    *movement += *movement < 0 ? (int32_t)threshold : -(int32_t)threshold;
-
-    int ret = queue_tap(dev, state, direction);
-    if (ret < 0) {
-        LOG_ERR("Failed to queue text navigation behavior: %d", ret);
-    }
-}
-
 static int zpt_text_nav_handle_event(const struct device *dev, struct input_event *event,
                                      uint32_t param1, uint32_t param2,
                                      struct zmk_input_processor_state *state) {
+    ARG_UNUSED(param1);
+    ARG_UNUSED(param2);
+
     if (event->type != INPUT_EV_REL || (event->code != INPUT_REL_X && event->code != INPUT_REL_Y)) {
         return ZMK_INPUT_PROC_CONTINUE;
     }
 
     struct zpt_text_nav_data *data = dev->data;
+    enum zpt_text_nav_direction direction = ZPT_TEXT_NAV_NONE;
+
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
     if (event->code == INPUT_REL_X) {
         data->frame_x = clamp_add(data->frame_x, event->value);
     } else {
@@ -170,10 +96,21 @@ static int zpt_text_nav_handle_event(const struct device *dev, struct input_even
     }
 
     if (event->sync) {
-        int32_t x = data->frame_x;
-        int32_t y = data->frame_y;
+        uint32_t now = k_uptime_get_32();
+        uint32_t elapsed = data->have_last_frame ? now - data->last_frame_ms : 0U;
+        direction = zpt_text_nav_update(&data->gesture, &data->settings, data->frame_x,
+                                        data->frame_y, elapsed, data->have_last_frame);
         data->frame_x = data->frame_y = 0;
-        process_frame(dev, state, x, y, param1, param2);
+        data->last_frame_ms = now;
+        data->have_last_frame = true;
+    }
+    k_spin_unlock(&data->lock, key);
+
+    if (direction != ZPT_TEXT_NAV_NONE) {
+        int ret = queue_tap(dev, state, direction);
+        if (ret < 0) {
+            LOG_ERR("Failed to queue text navigation behavior: %d", ret);
+        }
     }
 
     /* Layer overrides consume STOP before ZMK's HID listener sees it. Zeroing
@@ -182,30 +119,203 @@ static int zpt_text_nav_handle_event(const struct device *dev, struct input_even
     return ZMK_INPUT_PROC_CONTINUE;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+
+enum zpt_text_nav_parameter_id {
+    ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD = 1,
+    ZPT_TEXT_NAV_VERTICAL_THRESHOLD,
+    ZPT_TEXT_NAV_ACTIVATION_DISTANCE,
+    ZPT_TEXT_NAV_ENGAGE_RATIO,
+    ZPT_TEXT_NAV_IDLE_TIMEOUT,
+};
+
+static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
+    {.id = ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD,
+     .type = ZPT_TUNING_VALUE_INTEGER,
+     .minimum = 1,
+     .maximum = 10000,
+     .step = 1,
+     .label = "Horizontal step distance",
+     .unit = "counts",
+     .description = "Horizontal movement required for one left or right key tap. Lower values "
+                    "move through text faster."},
+    {.id = ZPT_TEXT_NAV_VERTICAL_THRESHOLD,
+     .type = ZPT_TUNING_VALUE_INTEGER,
+     .minimum = 1,
+     .maximum = 10000,
+     .step = 1,
+     .label = "Vertical step distance",
+     .unit = "counts",
+     .description = "Vertical movement required for one up or down key tap. Lower values move "
+                    "through lines faster."},
+    {.id = ZPT_TEXT_NAV_ACTIVATION_DISTANCE,
+     .type = ZPT_TUNING_VALUE_INTEGER,
+     .minimum = 1,
+     .maximum = 10000,
+     .step = 1,
+     .label = "Activation distance",
+     .unit = "counts",
+     .description = "Accumulated movement required before choosing the gesture's locked axis. "
+                    "This prevents immediate direction choices from tiny initial motion."},
+    {.id = ZPT_TEXT_NAV_ENGAGE_RATIO,
+     .type = ZPT_TUNING_VALUE_INTEGER,
+     .minimum = 101,
+     .maximum = 1000,
+     .step = 1,
+     .label = "Axis engage ratio",
+     .unit = "%",
+     .description = "Dominant-to-minor movement ratio required to choose an axis. Higher values "
+                    "require a straighter initial gesture; 150% means 1.5:1."},
+    {.id = ZPT_TEXT_NAV_IDLE_TIMEOUT,
+     .type = ZPT_TUNING_VALUE_INTEGER,
+     .minimum = 10,
+     .maximum = 2000,
+     .step = 1,
+     .label = "Gesture idle timeout",
+     .unit = "ms",
+     .description = "The motion-free gap that ends the current gesture and allows a new axis to "
+                    "be selected."},
+};
+
+static int setting_get(const struct zpt_text_nav_settings *settings, uint8_t parameter_id,
+                       int32_t *value) {
+    switch (parameter_id) {
+    case ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD:
+        *value = settings->horizontal_threshold;
+        break;
+    case ZPT_TEXT_NAV_VERTICAL_THRESHOLD:
+        *value = settings->vertical_threshold;
+        break;
+    case ZPT_TEXT_NAV_ACTIVATION_DISTANCE:
+        *value = settings->activation_distance;
+        break;
+    case ZPT_TEXT_NAV_ENGAGE_RATIO:
+        *value = settings->engage_ratio_percent;
+        break;
+    case ZPT_TEXT_NAV_IDLE_TIMEOUT:
+        *value = settings->idle_timeout_ms;
+        break;
+    default:
+        return -ENOENT;
+    }
+    return 0;
+}
+
+static int tuning_get(void *context, uint8_t parameter_id, bool compiled, int32_t *value) {
+    const struct device *dev = context;
+    const struct zpt_text_nav_config *config = dev->config;
+    struct zpt_text_nav_data *data = dev->data;
+
+    if (compiled) {
+        return setting_get(&config->compiled, parameter_id, value);
+    }
+
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    int ret = setting_get(&data->settings, parameter_id, value);
+    k_spin_unlock(&data->lock, key);
+    return ret;
+}
+
+static int tuning_set(void *context, uint8_t parameter_id, int32_t value) {
+    const struct device *dev = context;
+    struct zpt_text_nav_data *data = dev->data;
+    int ret = 0;
+
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    switch (parameter_id) {
+    case ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD:
+        data->settings.horizontal_threshold = value;
+        break;
+    case ZPT_TEXT_NAV_VERTICAL_THRESHOLD:
+        data->settings.vertical_threshold = value;
+        break;
+    case ZPT_TEXT_NAV_ACTIVATION_DISTANCE:
+        data->settings.activation_distance = value;
+        break;
+    case ZPT_TEXT_NAV_ENGAGE_RATIO:
+        data->settings.engage_ratio_percent = value;
+        break;
+    case ZPT_TEXT_NAV_IDLE_TIMEOUT:
+        data->settings.idle_timeout_ms = value;
+        break;
+    default:
+        ret = -ENOENT;
+        break;
+    }
+
+    if (ret == 0) {
+        reset_processing_locked(data);
+    }
+    k_spin_unlock(&data->lock, key);
+    return ret;
+}
+
+static int tuning_reset(void *context) {
+    const struct device *dev = context;
+    const struct zpt_text_nav_config *config = dev->config;
+    struct zpt_text_nav_data *data = dev->data;
+
+    k_spinlock_key_t key = k_spin_lock(&data->lock);
+    data->settings = config->compiled;
+    reset_processing_locked(data);
+    k_spin_unlock(&data->lock, key);
+    return 0;
+}
+
+#endif /* CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING */
+
 static const struct zmk_input_processor_driver_api zpt_text_nav_driver_api = {
     .handle_event = zpt_text_nav_handle_event,
 };
 
 static int zpt_text_nav_init(const struct device *dev) {
+    const struct zpt_text_nav_config *config = dev->config;
     struct zpt_text_nav_data *data = dev->data;
-    reset_gesture(data);
+    data->settings = config->compiled;
+    zpt_text_nav_reset(&data->gesture);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    data->tuning_target = (struct zpt_tuning_target){
+        .kind = ZPT_TUNING_TARGET_TEXT_NAV,
+        .label = config->tuning_label,
+        .parameters = zpt_text_nav_parameters,
+        .parameter_count = ARRAY_SIZE(zpt_text_nav_parameters),
+        .context = (void *)dev,
+        .get = tuning_get,
+        .set = tuning_set,
+        .reset = tuning_reset,
+    };
+    int ret = zpt_tuning_register(&data->tuning_target);
+    if (ret < 0) {
+        return ret;
+    }
+#endif
     return 0;
 }
 
 #define ZPT_TEXT_NAV_DEFINE(inst)                                                                  \
     BUILD_ASSERT(DT_INST_PROP_LEN(inst, bindings) == ZPT_TEXT_NAV_BINDING_COUNT,                   \
                  "bindings must be left, right, up, and down");                                    \
-    BUILD_ASSERT(DT_INST_PROP(inst, engage_ratio_percent) >= 100,                                  \
-                 "engage-ratio-percent must be at least 100");                                     \
+    BUILD_ASSERT(DT_INST_PROP(inst, horizontal_threshold) > 0,                                     \
+                 "horizontal-threshold must be positive");                                         \
+    BUILD_ASSERT(DT_INST_PROP(inst, vertical_threshold) > 0,                                       \
+                 "vertical-threshold must be positive");                                           \
+    BUILD_ASSERT(DT_INST_PROP(inst, engage_ratio_percent) > 100,                                   \
+                 "engage-ratio-percent must exceed 100");                                          \
     static const struct zmk_behavior_binding zpt_text_nav_bindings_##inst[] = {LISTIFY(            \
         DT_INST_PROP_LEN(inst, bindings), ZMK_KEYMAP_EXTRACT_BINDING, (, ), DT_DRV_INST(inst))};   \
     static const struct zpt_text_nav_config zpt_text_nav_config_##inst = {                         \
         .index = inst,                                                                             \
         .tap_ms = DT_INST_PROP(inst, tap_ms),                                                      \
-        .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                                    \
-        .activation_distance = DT_INST_PROP(inst, activation_distance),                            \
-        .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),                          \
+        .compiled =                                                                                \
+            {                                                                                      \
+                .horizontal_threshold = DT_INST_PROP(inst, horizontal_threshold),                  \
+                .vertical_threshold = DT_INST_PROP(inst, vertical_threshold),                      \
+                .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                            \
+                .activation_distance = DT_INST_PROP(inst, activation_distance),                    \
+                .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),                  \
+            },                                                                                     \
         .bindings = zpt_text_nav_bindings_##inst,                                                  \
+        .tuning_label = DT_INST_PROP(inst, tuning_label),                                          \
     };                                                                                             \
     static struct zpt_text_nav_data zpt_text_nav_data_##inst;                                      \
     DEVICE_DT_INST_DEFINE(inst, zpt_text_nav_init, NULL, &zpt_text_nav_data_##inst,                \

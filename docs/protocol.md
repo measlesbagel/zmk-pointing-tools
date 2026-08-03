@@ -79,7 +79,8 @@ repeat target-count times:
   label:utf8[label-length]
 ```
 
-Target kind `1` is a synchronized scroll processor.
+Target kind `1` is a synchronized scroll processor and kind `2` is a
+gesture-locked text-navigation processor.
 
 ### Tuning target description
 

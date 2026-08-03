@@ -340,6 +340,12 @@ function startSimulator() {
     { id: 6, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
     { id: 9, type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
     { id: 10, type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "", description: "Drops motion that ends before adaptive classification." },
+  ] }, { id: 1, kind: 2, label: "Simulated text navigation", parameters: [
+    { id: 1, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 25, current: 25, label: "Horizontal step distance", unit: "counts", description: "Horizontal movement required for one left or right key tap." },
+    { id: 2, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 50, current: 50, label: "Vertical step distance", unit: "counts", description: "Vertical movement required for one up or down key tap." },
+    { id: 3, type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 12, current: 12, label: "Activation distance", unit: "counts", description: "Accumulated movement required before choosing the gesture's locked axis." },
+    { id: 4, type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
+    { id: 5, type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
   ] }], false);
   let tick = 0;
   simulator = setInterval(() => {
