@@ -12,5 +12,6 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/axis_intent.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/input_processor_scroll.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV src/input_processor_text_nav.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV src/text_nav.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SIGN_EXTEND_XY src/input_processor_sign_extend_xy.c)
 endif()

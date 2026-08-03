@@ -88,7 +88,10 @@ independent horizontal and vertical step distances:
 / {
     my_text_nav: my_text_nav {
         compatible = "measlesbagel,zpt-input-processor-text-nav";
-        #input-processor-cells = <2>;
+        #input-processor-cells = <0>;
+        tuning-label = "Text navigation";
+        horizontal-threshold = <25>;
+        vertical-threshold = <50>;
         bindings = <&kp LEFT>, <&kp RIGHT>, <&kp UP>, <&kp DOWN>;
         tap-ms = <5>;
         idle-timeout-ms = <120>;
@@ -101,7 +104,7 @@ independent horizontal and vertical step distances:
     text_mode {
         layers = <TEXT>;
         input-processors = <&my_orientation_transform>,
-                           <&my_text_nav 25 50>;
+                           <&my_text_nav>;
     };
 };
 ```
@@ -109,6 +112,12 @@ independent horizontal and vertical step distances:
 Once selected, the axis remains locked until `idle-timeout-ms` elapses. At
 most one behavior tap is emitted per physical input frame, preventing a fast
 sensor report from enqueueing a large burst of arrows at once.
+
+When runtime tuning is enabled, each text-navigation instance exposes its
+horizontal and vertical thresholds, activation distance, engage ratio, and
+idle timeout. A preview resets the active gesture before applying the new
+value. `tuning-label` identifies the instance without imposing left/right
+device semantics.
 
 ## Signed packed split axes
 

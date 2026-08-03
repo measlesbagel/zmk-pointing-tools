@@ -52,9 +52,9 @@ if ZMK_POINTING_TOOLS_TELEMETRY
 config ZMK_POINTING_TOOLS_RUNTIME_TUNING
     bool "Temporary runtime tuning over USB serial"
     default y
-    depends on ZMK_POINTING_TOOLS_SCROLL
+    depends on ZMK_POINTING_TOOLS_SCROLL || ZMK_POINTING_TOOLS_TEXT_NAV
     help
-      Discover scroll processors and preview validated parameter changes.
+      Discover semantic processors and preview validated parameter changes.
       Runtime values are never persisted and return to devicetree defaults on
       reset or reboot.
 
