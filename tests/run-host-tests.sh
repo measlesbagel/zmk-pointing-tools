@@ -17,3 +17,5 @@ cc -std=c11 -Wall -Wextra -Werror \
   -o "$build_dir/text-nav-test"
 
 "$build_dir/text-nav-test"
+
+"$(dirname "$0")/../tools/replay-traces.sh" "$(dirname "$0")"/fixtures/*.json

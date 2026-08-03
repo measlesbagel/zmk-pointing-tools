@@ -1,0 +1,109 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "typing-keypress-guard",
+  "description": "One-to-four-count typing vibration is rejected while intentional motion after the guard survives.",
+  "metadata": {
+    "device": "left-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "scroll",
+    "provenance": "Curated from normal typing and moving-keyboard hardware captures"
+  },
+  "processor": {
+    "kind": "adaptive-scroll",
+    "policy": "adaptive",
+    "settings": {
+      "scaleMultiplier": 7,
+      "scaleDivisor": 16,
+      "reportIntervalMs": 1,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 40,
+      "discardUnclassified": false,
+      "engageRatioPercent": 300,
+      "releaseRatioPercent": 180,
+      "activationDistance": 16,
+      "intentWindowMs": 64
+    }
+  },
+  "events": [
+    [
+      "keypress",
+      0
+    ],
+    [
+      "motion",
+      4,
+      2,
+      -1
+    ],
+    [
+      "motion",
+      8,
+      -3,
+      1
+    ],
+    [
+      "motion",
+      8,
+      1,
+      -4
+    ],
+    [
+      "motion",
+      8,
+      -1,
+      2
+    ],
+    [
+      "motion",
+      12,
+      0,
+      9
+    ],
+    [
+      "motion",
+      8,
+      1,
+      10
+    ],
+    [
+      "motion",
+      8,
+      -1,
+      12
+    ]
+  ],
+  "expect": {
+    "inputFrames": 7,
+    "durationMs": 56,
+    "outputFrames": 3,
+    "outputCadence": {
+      "meanIntervalMs": 8,
+      "maximumIntervalMs": 8
+    },
+    "horizontal": {
+      "signedDistance": 0,
+      "absoluteDistance": 0,
+      "nonzeroFrames": 0,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 13,
+      "absoluteDistance": 13,
+      "nonzeroFrames": 3,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "intentFrames": {
+      "undecided": 5,
+      "free": 0,
+      "horizontal": 0,
+      "vertical": 2
+    },
+    "intentTransitions": 1,
+    "idleResets": 1,
+    "suppressedFrames": 4
+  }
+}

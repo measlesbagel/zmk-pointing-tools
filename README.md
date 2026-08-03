@@ -18,11 +18,11 @@ work with arbitrary ZMK pointing devices.
 - Discoverable, validated scroll and text-navigation previews that never write flash
 - Firmware-provided hover/focus explanations for tuning parameters
 - Versioned profile export/import and generated devicetree handoff
+- Deterministic regression replay of exported hardware traces
 
 Planned capabilities include:
 
 - Threshold-aware optional automatic mouse layers
-- Deterministic regression replay of exported hardware traces
 - Experimental motion-derived gestures such as tap-to-click
 
 ## Repository boundaries
@@ -46,6 +46,8 @@ under development.
 See [`docs/processors.md`](docs/processors.md) for devicetree usage.
 See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
 semantics.
+See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor
+regression testing.
 
 ## Local tuner
 

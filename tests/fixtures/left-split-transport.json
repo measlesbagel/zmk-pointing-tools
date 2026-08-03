@@ -1,0 +1,147 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "left-split-transport",
+  "description": "Coalesced 16 ms split frames retain fractional distance with the left-device gain.",
+  "metadata": {
+    "device": "left-trackball",
+    "cpi": 700,
+    "cadenceMs": 16,
+    "mode": "scroll",
+    "provenance": "Anonymized shape of the historical slow-left-trackball capture"
+  },
+  "processor": {
+    "kind": "adaptive-scroll",
+    "policy": "adaptive",
+    "settings": {
+      "scaleMultiplier": 7,
+      "scaleDivisor": 16,
+      "reportIntervalMs": 1,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 40,
+      "discardUnclassified": false,
+      "engageRatioPercent": 300,
+      "releaseRatioPercent": 180,
+      "activationDistance": 16,
+      "intentWindowMs": 64
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      1,
+      5
+    ],
+    [
+      "motion",
+      16,
+      0,
+      7
+    ],
+    [
+      "motion",
+      16,
+      -1,
+      8
+    ],
+    [
+      "motion",
+      16,
+      1,
+      10
+    ],
+    [
+      "motion",
+      16,
+      0,
+      12
+    ],
+    [
+      "motion",
+      16,
+      -1,
+      9
+    ],
+    [
+      "motion",
+      16,
+      0,
+      6
+    ],
+    [
+      "motion",
+      16,
+      1,
+      4
+    ],
+    [
+      "motion",
+      16,
+      0,
+      -6
+    ],
+    [
+      "motion",
+      16,
+      -1,
+      -9
+    ],
+    [
+      "motion",
+      16,
+      0,
+      -12
+    ],
+    [
+      "motion",
+      16,
+      1,
+      -10
+    ],
+    [
+      "motion",
+      16,
+      0,
+      -8
+    ],
+    [
+      "motion",
+      16,
+      -1,
+      -7
+    ]
+  ],
+  "expect": {
+    "inputFrames": 14,
+    "durationMs": 208,
+    "outputFrames": 14,
+    "outputCadence": {
+      "meanIntervalMs": 16,
+      "maximumIntervalMs": 16
+    },
+    "horizontal": {
+      "signedDistance": 0,
+      "absoluteDistance": 0,
+      "nonzeroFrames": 0,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 4,
+      "absoluteDistance": 48,
+      "nonzeroFrames": 14,
+      "directionChanges": 1,
+      "clippedFrames": 0
+    },
+    "intentFrames": {
+      "undecided": 2,
+      "free": 0,
+      "horizontal": 0,
+      "vertical": 12
+    },
+    "intentTransitions": 1,
+    "idleResets": 1,
+    "suppressedFrames": 0
+  }
+}
