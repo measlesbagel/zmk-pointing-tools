@@ -12,6 +12,7 @@ import {
   parseTuningResult,
   parseTuningTargets,
 } from "./protocol.js";
+import { ResponseRequestQueue } from "./request-queue.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
 const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"];
@@ -35,6 +36,13 @@ let streams = new Map();
 let tuningTargets = new Map();
 let samples = [];
 let decoder = new FrameDecoder();
+const tuningRequests = new ResponseRequestQueue(
+  (frame) => {
+    if (!writer) throw new Error("Serial writer is unavailable");
+    return writer.write(frame);
+  },
+  (error) => notice(`Tuning request failed: ${error.message}`, true),
+);
 
 function setStatus(text, live = false) {
   elements.status.textContent = text;
@@ -142,7 +150,7 @@ function setTuningTargets(targets, requestDescriptions = true) {
   tuningTargets = new Map(targets.map((target) => [target.id, target]));
   renderTuning();
   if (requestDescriptions) {
-    for (const target of targets) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+    for (const target of targets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
   }
 }
 
@@ -153,7 +161,7 @@ function setTuningDescription(description) {
   renderTuning();
   if (protocolVersion >= 3) {
     for (const parameter of target.parameters) {
-      send(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
+      queueTuningRequest(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
     }
   }
 }
@@ -211,11 +219,15 @@ async function send(type, payload) {
   if (writer) await writer.write(encodeFrame(type, payload));
 }
 
+function queueTuningRequest(type, payload) {
+  tuningRequests.enqueue(type, encodeFrame(type, payload));
+}
+
 function handleFrame(frame) {
   if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
     const description = parseDescribe(frame.payload);
     setDescription(description);
-    if (description.version >= 2) send(MESSAGE.TUNING_TARGETS_REQUEST);
+    if (description.version >= 2) queueTuningRequest(MESSAGE.TUNING_TARGETS_REQUEST);
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
@@ -226,18 +238,22 @@ function handleFrame(frame) {
     notice(`Telemetry ${ack.enabled ? "active" : "stopped"}; ${ack.dropped} device samples dropped.`);
   } else if (frame.type === MESSAGE.SAMPLE) addSample(parseSample(frame.payload));
   else if (frame.type === MESSAGE.TUNING_TARGETS_RESPONSE) {
+    tuningRequests.complete(MESSAGE.TUNING_TARGETS_REQUEST);
     setTuningTargets(parseTuningTargets(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_DESCRIBE_RESPONSE) {
+    tuningRequests.complete(MESSAGE.TUNING_DESCRIBE_REQUEST);
     setTuningDescription(parseTuningDescription(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_HELP_RESPONSE) {
+    tuningRequests.complete(MESSAGE.TUNING_HELP_REQUEST);
     setTuningHelp(parseTuningHelp(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
+    tuningRequests.complete(result.requestType);
     const target = tuningTargets.get(result.targetId);
     if (result.status !== TUNING.STATUS_OK) {
       const messages = ["success", "unknown target", "unknown parameter", "invalid value", "internal error"];
       notice(`Preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
-      if (target) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
+      if (target) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
     } else if (result.requestType === MESSAGE.TUNING_SET_REQUEST && target) {
       const parameter = target.parameters.find(({ id }) => id === result.parameterId);
       if (parameter) parameter.current = result.value;
@@ -245,7 +261,7 @@ function handleFrame(frame) {
       notice(`${target.label} preview updated. Changes remain temporary until reboot.`);
     } else if (result.requestType === MESSAGE.TUNING_RESET_REQUEST) {
       const resetTargets = result.targetId === TUNING.ALL_TARGETS ? [...tuningTargets.values()] : [target].filter(Boolean);
-      for (const item of resetTargets) send(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
+      for (const item of resetTargets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
       notice(result.targetId === TUNING.ALL_TARGETS ? "All compiled defaults restored." : `${target?.label ?? "Target"} defaults restored.`);
     }
   }
@@ -278,6 +294,7 @@ async function disconnect() {
   port = writer = undefined;
   telemetryEnabled = false;
   protocolVersion = 0;
+  tuningRequests.clear();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
   elements.connect.textContent = "Connect keyboard";
@@ -307,6 +324,7 @@ async function connect() {
     streams = new Map();
     tuningTargets = new Map();
     samples = [];
+    tuningRequests.clear();
     decoder = new FrameDecoder();
     renderStreams();
     renderTuning();
@@ -391,7 +409,7 @@ elements.tuning.addEventListener("click", async (event) => {
       renderTuning();
       notice(`${target.label} simulator preview updated.`);
     } else if (writer) {
-      await writer.write(encodeTuningSet(targetId, parameterId, value));
+      tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
     }
   } else if (reset) {
     const targetId = Number(reset.dataset.resetTarget);
@@ -401,7 +419,7 @@ elements.tuning.addEventListener("click", async (event) => {
       renderTuning();
       notice(`${target.label} simulator defaults restored.`);
     } else {
-      await send(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
+      queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
     }
   }
 });
@@ -414,7 +432,7 @@ elements["reset-all"].addEventListener("click", async () => {
     renderTuning();
     notice("All simulator defaults restored.");
   } else {
-    await send(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
+    queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
   }
 });
 
