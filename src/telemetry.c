@@ -18,6 +18,9 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 #include <zmk/pointing_tools/tuning.h>
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+#include <zmk/pointing_tools/state.h>
+#endif
 
 LOG_MODULE_REGISTER(zpt_telemetry, CONFIG_ZMK_LOG_LEVEL);
 
@@ -28,7 +31,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #error "measlesbagel,zpt-telemetry-uart chosen node is required"
 #endif
 
-#define ZPT_PROTOCOL_VERSION (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING) ? 4 : 1)
+#define ZPT_PROTOCOL_VERSION 5
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -43,6 +46,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_TUNING_TARGET_METADATA 0x09
 #define ZPT_REQ_TUNING_PARAMETER_METADATA 0x0a
 #define ZPT_REQ_TUNING_SET_MANY 0x0b
+#define ZPT_REQ_STATE_CONTROL 0x0c
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
@@ -51,7 +55,9 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_RESP_TUNING_HELP 0x86
 #define ZPT_RESP_TUNING_TARGET_METADATA 0x87
 #define ZPT_RESP_TUNING_PARAMETER_METADATA 0x88
+#define ZPT_RESP_STATE_STATUS 0x89
 #define ZPT_EVENT_SAMPLE 0x90
+#define ZPT_EVENT_STATE 0x91
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_DESCRIBE_PAYLOAD 512
@@ -59,6 +65,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_TUNING_BATCH_HEADER_SIZE 2
 #define ZPT_TUNING_BATCH_VALUE_SIZE 5
 #define ZPT_TUNING_MAX_BATCH_VALUES 20
+#define ZPT_STATE_SCHEMA_VERSION 1
 
 BUILD_ASSERT(ZPT_TUNING_BATCH_HEADER_SIZE +
                      ZPT_TUNING_MAX_BATCH_VALUES * ZPT_TUNING_BATCH_VALUE_SIZE <=
@@ -77,28 +84,87 @@ enum zpt_tuning_status {
 static const struct device *const zpt_uart = DEVICE_DT_GET(ZPT_UART_NODE);
 
 RING_BUF_DECLARE(zpt_rx_ring, 128);
-K_MSGQ_DEFINE(zpt_sample_queue, sizeof(struct zpt_trace_sample),
+
+enum zpt_record_kind {
+    ZPT_RECORD_TRACE,
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    ZPT_RECORD_STATE,
+#endif
+};
+
+struct zpt_telemetry_record {
+    uint8_t kind;
+    union {
+        struct zpt_trace_sample trace;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        struct zpt_state_sample state;
+#endif
+    } sample;
+};
+
+K_MSGQ_DEFINE(zpt_record_queue, sizeof(struct zpt_telemetry_record),
               CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, 4);
 K_SEM_DEFINE(zpt_wake, 0, 1);
 
 static atomic_t zpt_enabled;
-static atomic_t zpt_dropped;
+static atomic_t zpt_trace_dropped;
 static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+static atomic_t zpt_state_dropped;
+static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
+#endif
 
 void zpt_telemetry_submit(const struct zpt_trace_sample *sample) {
     if (!atomic_get(&zpt_enabled)) {
         return;
     }
 
-    struct zpt_trace_sample queued = *sample;
-    queued.sequence = (uint32_t)atomic_inc(&zpt_sequence);
-    if (k_msgq_put(&zpt_sample_queue, &queued, K_NO_WAIT) < 0) {
-        atomic_inc(&zpt_dropped);
+    struct zpt_telemetry_record record = {
+        .kind = ZPT_RECORD_TRACE,
+        .sample.trace = *sample,
+    };
+    record.sample.trace.sequence = (uint32_t)atomic_inc(&zpt_sequence);
+    if (k_msgq_put(&zpt_record_queue, &record, K_NO_WAIT) < 0) {
+        atomic_inc(&zpt_trace_dropped);
         return;
     }
     k_sem_give(&zpt_wake);
 }
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+
+enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id) {
+    if (target_id >= ARRAY_SIZE(zpt_state_levels)) {
+        return ZPT_STATE_LEVEL_OFF;
+    }
+    return (enum zpt_state_level)atomic_get(&zpt_state_levels[target_id]);
+}
+
+void zpt_state_telemetry_submit(const struct zpt_state_sample *sample) {
+    if (sample == NULL || zpt_state_telemetry_level(sample->target_id) == ZPT_STATE_LEVEL_OFF) {
+        return;
+    }
+
+    struct zpt_telemetry_record record = {
+        .kind = ZPT_RECORD_STATE,
+        .sample.state = *sample,
+    };
+    record.sample.state.sequence = (uint32_t)atomic_inc(&zpt_sequence);
+    if (k_msgq_put(&zpt_record_queue, &record, K_NO_WAIT) < 0) {
+        atomic_inc(&zpt_state_dropped);
+        return;
+    }
+    k_sem_give(&zpt_wake);
+}
+
+static void zpt_state_disable_all(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(zpt_state_levels); i++) {
+        atomic_clear(&zpt_state_levels[i]);
+    }
+}
+
+#endif
 
 static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length) {
     const uint8_t header[] = {ZPT_FRAME_MAGIC_0, ZPT_FRAME_MAGIC_1, type, (uint8_t)(length & 0xff),
@@ -138,9 +204,12 @@ static void zpt_send_describe(void) {
 }
 
 static void zpt_send_ack(void) {
-    uint8_t payload[5];
+    uint8_t payload[IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY) ? 9 : 5];
     payload[0] = atomic_get(&zpt_enabled) ? 1 : 0;
-    sys_put_le32((uint32_t)atomic_get(&zpt_dropped), &payload[1]);
+    sys_put_le32((uint32_t)atomic_get(&zpt_trace_dropped), &payload[1]);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[5]);
+#endif
     zpt_send_frame(ZPT_RESP_ACK, payload, sizeof(payload));
 }
 
@@ -156,6 +225,56 @@ static void zpt_send_sample(const struct zpt_trace_sample *sample) {
     sys_put_le32((uint32_t)sample->h_wheel, &payload[22]);
     zpt_send_frame(ZPT_EVENT_SAMPLE, payload, sizeof(payload));
 }
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+
+static void zpt_send_state(const struct zpt_state_sample *sample) {
+    uint8_t payload[14 + ZPT_STATE_VALUE_COUNT * sizeof(int32_t)];
+    payload[0] = sample->target_id;
+    payload[1] = sample->target_kind;
+    payload[2] = sample->event;
+    payload[3] = sample->intent;
+    sys_put_le16(sample->flags, &payload[4]);
+    sys_put_le32(sample->timestamp_ms, &payload[6]);
+    sys_put_le32(sample->sequence, &payload[10]);
+    for (size_t i = 0; i < ZPT_STATE_VALUE_COUNT; i++) {
+        sys_put_le32((uint32_t)sample->values[i], &payload[14 + i * sizeof(int32_t)]);
+    }
+    zpt_send_frame(ZPT_EVENT_STATE, payload, sizeof(payload));
+}
+
+static void zpt_send_state_status(void) {
+    uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS * 2];
+    const size_t target_count = MIN(zpt_tuning_target_count(), ARRAY_SIZE(zpt_state_levels));
+    payload[0] = ZPT_STATE_SCHEMA_VERSION;
+    sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[1]);
+    sys_put_le16(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, &payload[5]);
+    payload[7] = target_count;
+    size_t offset = 8;
+    for (size_t i = 0; i < target_count; i++) {
+        payload[offset++] = i;
+        payload[offset++] = atomic_get(&zpt_state_levels[i]);
+    }
+    zpt_send_frame(ZPT_RESP_STATE_STATUS, payload, offset);
+}
+
+static void zpt_handle_state_control(const uint8_t *payload, uint16_t length) {
+    if (length == 2) {
+        const uint8_t target_id = payload[0];
+        const uint8_t level = payload[1];
+        if (level <= ZPT_STATE_LEVEL_VERBOSE && target_id == ZPT_STATE_ALL_TARGETS) {
+            for (size_t i = 0; i < ARRAY_SIZE(zpt_state_levels); i++) {
+                atomic_set(&zpt_state_levels[i], level);
+            }
+        } else if (level <= ZPT_STATE_LEVEL_VERBOSE && target_id < zpt_tuning_target_count() &&
+                   target_id < ARRAY_SIZE(zpt_state_levels)) {
+            atomic_set(&zpt_state_levels[target_id], level);
+        }
+    }
+    zpt_send_state_status();
+}
+
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 
@@ -409,9 +528,6 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         if (length == 1) {
             atomic_set(&zpt_enabled, payload[0] != 0);
-            if (!payload[0]) {
-                k_msgq_purge(&zpt_sample_queue);
-            }
         }
         zpt_send_ack();
         break;
@@ -467,6 +583,12 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
     case ZPT_REQ_TUNING_SET_MANY:
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         zpt_handle_tuning_set_many(payload, length);
+        break;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    case ZPT_REQ_STATE_CONTROL:
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_handle_state_control(payload, length);
         break;
 #endif
     default:
@@ -550,16 +672,27 @@ static void zpt_thread(void) {
             zpt_parse_byte(byte);
         }
 
-        struct zpt_trace_sample sample;
-        while (k_msgq_get(&zpt_sample_queue, &sample, K_NO_WAIT) == 0) {
+        struct zpt_telemetry_record record;
+        while (k_msgq_get(&zpt_record_queue, &record, K_NO_WAIT) == 0) {
             const uint32_t elapsed = k_uptime_get_32() - (uint32_t)atomic_get(&zpt_last_contact);
             if (elapsed > CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS) {
                 atomic_clear(&zpt_enabled);
-                k_msgq_purge(&zpt_sample_queue);
+                k_msgq_purge(&zpt_record_queue);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+                zpt_state_disable_all();
+#endif
                 break;
             }
-            if (atomic_get(&zpt_enabled)) {
-                zpt_send_sample(&sample);
+            if (record.kind == ZPT_RECORD_TRACE) {
+                if (atomic_get(&zpt_enabled)) {
+                    zpt_send_sample(&record.sample.trace);
+                }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+            } else if (record.kind == ZPT_RECORD_STATE &&
+                       zpt_state_telemetry_level(record.sample.state.target_id) !=
+                           ZPT_STATE_LEVEL_OFF) {
+                zpt_send_state(&record.sample.state);
+#endif
             }
         }
     }

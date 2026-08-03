@@ -4,12 +4,15 @@ import assert from "node:assert/strict";
 import {
   FrameDecoder,
   MESSAGE,
+  encodeStateControl,
   encodeTuningSet,
   encodeTuningSetMany,
   encodeFrame,
   parseAck,
   parseDescribe,
   parseSample,
+  parseStateSample,
+  parseStateStatus,
   parseTuningDescription,
   parseTuningHelp,
   parseTuningParameterMetadata,
@@ -39,18 +42,23 @@ test("decodes fragmented and adjacent frames", () => {
 
 test("parses stream descriptions", () => {
   const label = new TextEncoder().encode("Right raw");
-  const payload = Uint8Array.of(1, 1, 7, 0, label.length, ...label);
+  const payload = Uint8Array.of(5, 1, 7, 0, label.length, ...label);
   assert.deepEqual(parseDescribe(payload), {
-    version: 1,
+    version: 5,
     streams: [{ deviceId: 7, stage: 0, label: "Right raw", key: "7:0" }],
   });
+  assert.throws(
+    () => parseDescribe(Uint8Array.of(4, 0)),
+    /does not match tuner protocol/,
+  );
 });
 
 test("parses acknowledgements and signed samples", () => {
-  const ack = new Uint8Array(5);
+  const ack = new Uint8Array(9);
   new DataView(ack.buffer).setUint32(1, 42, true);
   ack[0] = 1;
-  assert.deepEqual(parseAck(ack), { enabled: true, dropped: 42 });
+  assert.deepEqual(parseAck(ack), { enabled: true, dropped: 42, stateDropped: 0 });
+  assert.throws(() => parseAck(new Uint8Array(5)), /Invalid acknowledgement length/);
 
   const sample = new Uint8Array(26);
   const view = new DataView(sample.buffer);
@@ -72,6 +80,41 @@ test("parses acknowledgements and signed samples", () => {
     wheel: -2,
     hWheel: 5,
   });
+});
+
+test("parses and controls semantic processor state", () => {
+  const status = new Uint8Array(12);
+  const statusView = new DataView(status.buffer);
+  status[0] = 1;
+  statusView.setUint32(1, 7, true);
+  statusView.setUint16(5, 64, true);
+  status.set([2, 0, 1, 1, 2], 7);
+  const parsedStatus = parseStateStatus(status);
+  assert.equal(parsedStatus.schemaVersion, 1);
+  assert.equal(parsedStatus.dropped, 7);
+  assert.equal(parsedStatus.queueCapacity, 64);
+  assert.deepEqual([...parsedStatus.levels], [[0, 1], [1, 2]]);
+
+  const payload = new Uint8Array(54);
+  const view = new DataView(payload.buffer);
+  payload.set([1, 1, 1, 3]);
+  view.setUint16(4, 0x23, true);
+  view.setUint32(6, 1234, true);
+  view.setUint32(10, 99, true);
+  view.setInt32(14, -5, true);
+  view.setInt32(18, 8, true);
+  assert.deepEqual(parseStateSample(payload), {
+    targetId: 1,
+    targetKind: 1,
+    event: 1,
+    intent: 3,
+    flags: 0x23,
+    timestamp: 1234,
+    sequence: 99,
+    values: [-5, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+  });
+
+  assert.deepEqual([...encodeStateControl(1, 2)], [0x5a, 0x50, MESSAGE.STATE_CONTROL_REQUEST, 2, 0, 1, 2]);
 });
 
 test("parses runtime tuning discovery and parameter descriptions", () => {

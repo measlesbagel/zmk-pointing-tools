@@ -1,13 +1,18 @@
 import {
   FrameDecoder,
   MESSAGE,
+  PROTOCOL_VERSION,
+  STATE,
   TUNING,
   encodeFrame,
+  encodeStateControl,
   encodeTuningSet,
   encodeTuningSetMany,
   parseAck,
   parseDescribe,
   parseSample,
+  parseStateSample,
+  parseStateStatus,
   parseTuningDescription,
   parseTuningHelp,
   parseTuningParameterMetadata,
@@ -25,9 +30,12 @@ import { ResponseRequestQueue } from "./request-queue.js";
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
 const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"];
 const MAX_SAMPLES = 20_000;
+const MAX_STATE_EVENTS = 2_000;
+const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
+const DIRECTION_LABELS = ["left", "right", "up", "down"];
 
 const elements = Object.fromEntries(
-  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count"].map(
+  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -37,12 +45,15 @@ let reader;
 let writer;
 let readActive = false;
 let telemetryEnabled = false;
-let protocolVersion = 0;
+let protocolReady = false;
 let simulator;
 let heartbeat;
 let streams = new Map();
 let tuningTargets = new Map();
 let samples = [];
+let stateEvents = [];
+let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+let stateDirty = true;
 let decoder = new FrameDecoder();
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
@@ -62,6 +73,16 @@ function notice(text, error = false) {
   elements.notice.classList.toggle("error", error);
 }
 
+function updateHeartbeat() {
+  const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
+  const needed = Boolean(writer) && (telemetryEnabled || stateEnabled);
+  if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
+  if (!needed && heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = undefined;
+  }
+}
+
 function streamColor(key) {
   const keys = [...streams.keys()];
   return COLORS[Math.max(0, keys.indexOf(key)) % COLORS.length];
@@ -76,11 +97,12 @@ function escapeHtml(value) {
 }
 
 function setDescription(description) {
-  protocolVersion = description.version;
+  protocolReady = true;
   streams = new Map(
     description.streams.map((stream) => [stream.key, { ...stream, count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} }]),
   );
   renderStreams();
+  stateDirty = true;
   notice(`Protocol v${description.version}; ${streams.size} trace streams available.`);
 }
 
@@ -96,6 +118,7 @@ function addSample(sample) {
   stream.latest = sample;
   samples.push(sample);
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
+  if ([...stateStatus.levels.values()].some((level) => level !== STATE.OFF)) stateDirty = true;
   elements.export.disabled = samples.length === 0;
 }
 
@@ -129,7 +152,7 @@ function renderTuning() {
     (count, target) => count + target.parameters.filter((parameter) => parameter.current !== parameter.compiled).length,
     0,
   );
-  const profileReady = protocolVersion >= 4 && targets.length > 0 && targets.every(
+  const profileReady = targets.length > 0 && targets.every(
     (target) => target.stableId && target.devicetreePath && target.parameters.length > 0 &&
       target.parameters.every((parameter) => parameter.key && parameter.devicetreeProperty),
   );
@@ -139,7 +162,7 @@ function renderTuning() {
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
   if (!tuningTargets.size) {
-    elements.tuning.innerHTML = '<p class="muted">Connect protocol v2 firmware to discover tunable processors.</p>';
+    elements.tuning.innerHTML = '<p class="muted">Connect current firmware to discover tunable processors.</p>';
     return;
   }
 
@@ -167,15 +190,98 @@ function renderTuning() {
     .join("");
 }
 
+function stateFlagLabels(flags) {
+  return [
+    [STATE.FLAG_IDLE_RESET, "idle reset"],
+    [STATE.FLAG_INTENT_CHANGED, "intent changed"],
+    [STATE.FLAG_SUPPRESSED, "suppressed"],
+    [STATE.FLAG_SUPPRESSION_CHANGED, "guard transition"],
+    [STATE.FLAG_DISCARDED, "discarded"],
+    [STATE.FLAG_OUTPUT, "output"],
+    [STATE.FLAG_CLIPPED_HORIZONTAL, "H clipped"],
+    [STATE.FLAG_CLIPPED_VERTICAL, "V clipped"],
+  ].filter(([flag]) => flags & flag).map(([, label]) => label);
+}
+
+function describeStateEvent(event) {
+  const intent = INTENT_LABELS[event.intent] ?? `intent ${event.intent}`;
+  const flags = stateFlagLabels(event.flags);
+  if (event.targetKind === 1 && event.event === STATE.EVENT_FRAME) {
+    return `input ${event.values[0]}/${event.values[1]} · ${intent} · energy ${event.values[2]}/${event.values[3]} · pending ${event.values[6]}/${event.values[7]}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
+  }
+  if (event.targetKind === 1 && event.event === STATE.EVENT_FLUSH) {
+    return `wheel H/V ${event.values[0]}/${event.values[1]} · ${intent} · remainder ${event.values[8]}/${event.values[9]}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
+  }
+  if (event.targetKind === 2) {
+    const direction = event.values[4] >= 0 ? DIRECTION_LABELS[event.values[4]] : "none";
+    return `input ${event.values[0]}/${event.values[1]} · ${intent} · accumulated ${event.values[2]}/${event.values[3]} · step ${direction}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
+  }
+  return `${intent}${flags.length ? ` · ${flags.join(", ")}` : ""} · values ${event.values.join("/")}`;
+}
+
+function renderDiagnostics() {
+  if (!stateDirty) return;
+  stateDirty = false;
+  const supported = protocolReady || simulator;
+  elements["state-count"].textContent = `${stateEvents.length.toLocaleString()} state events`;
+  elements["state-dropped"].textContent = supported
+    ? `${stateStatus.dropped.toLocaleString()} dropped · queue ${stateStatus.queueCapacity || "?"}`
+    : "Requires protocol v5";
+  if (!supported || tuningTargets.size === 0) {
+    elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect processor decisions.</p>';
+    return;
+  }
+
+  const controls = [...tuningTargets.values()].map((target) => {
+    const level = stateStatus.levels.get(target.id) ?? STATE.OFF;
+    const latest = [...stateEvents].reverse().find((event) => event.targetId === target.id);
+    return `<article class="diagnostic-target">
+      <div><h3>${escapeHtml(target.label)}</h3><span>${latest ? escapeHtml(describeStateEvent(latest)) : "No state received"}</span></div>
+      <label>Detail
+        <select data-state-target="${target.id}">
+          <option value="0" ${level === STATE.OFF ? "selected" : ""}>Off</option>
+          <option value="1" ${level === STATE.DECISIONS ? "selected" : ""}>Decisions</option>
+          <option value="2" ${level === STATE.VERBOSE ? "selected" : ""}>Every frame</option>
+        </select>
+      </label>
+    </article>`;
+  }).join("");
+  const timeline = [
+    ...samples.slice(-40).map((sample) => ({ ...sample, recordType: "trace" })),
+    ...stateEvents.slice(-40).map((event) => ({ ...event, recordType: "state" })),
+  ].sort((left, right) => left.sequence - right.sequence).slice(-30).reverse().map((event) => {
+    if (event.recordType === "trace") {
+      const stream = streams.get(event.key);
+      const detail = `relative ${event.x}/${event.y} · wheel H/V ${event.hWheel}/${event.wheel}`;
+      return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(stream?.label ?? `Stream ${event.key}`)}</strong><span>${escapeHtml(detail)}</span></li>`;
+    }
+    const target = tuningTargets.get(event.targetId);
+    return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(target?.label ?? `Target ${event.targetId}`)}</strong><span>${escapeHtml(describeStateEvent(event))}</span></li>`;
+  }).join("");
+  elements.diagnostics.innerHTML = `${controls}<ol class="state-timeline">${timeline || '<li class="muted">Enable a target and move a trackball.</li>'}</ol>`;
+}
+
+function setStateStatus(status) {
+  stateStatus = status;
+  stateDirty = true;
+  updateHeartbeat();
+}
+
+function addStateEvent(event) {
+  stateEvents.push(event);
+  if (stateEvents.length > MAX_STATE_EVENTS) stateEvents.splice(0, stateEvents.length - MAX_STATE_EVENTS);
+  elements.export.disabled = false;
+  stateDirty = true;
+}
+
 function setTuningTargets(targets, requestDescriptions = true) {
   tuningTargets = new Map(targets.map((target) => [target.id, target]));
   renderTuning();
+  stateDirty = true;
   if (requestDescriptions) {
     for (const target of targets) {
       queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
-      if (protocolVersion >= 4) {
-        queueTuningRequest(MESSAGE.TUNING_TARGET_METADATA_REQUEST, Uint8Array.of(target.id));
-      }
+      queueTuningRequest(MESSAGE.TUNING_TARGET_METADATA_REQUEST, Uint8Array.of(target.id));
     }
   }
 }
@@ -185,16 +291,13 @@ function setTuningDescription(description) {
   if (!target) return;
   target.parameters = description.parameters;
   renderTuning();
-  if (protocolVersion >= 3) {
-    for (const parameter of target.parameters) {
-      queueTuningRequest(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
-    }
+  stateDirty = true;
+  for (const parameter of target.parameters) {
+    queueTuningRequest(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
   }
-  if (protocolVersion >= 4) {
-    for (const parameter of target.parameters) {
-      queueTuningRequest(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST,
-        Uint8Array.of(target.id, parameter.id));
-    }
+  for (const parameter of target.parameters) {
+    queueTuningRequest(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST,
+      Uint8Array.of(target.id, parameter.id));
   }
 }
 
@@ -258,6 +361,7 @@ function draw() {
 
 function renderLoop() {
   renderStreams();
+  renderDiagnostics();
   draw();
   requestAnimationFrame(renderLoop);
 }
@@ -303,19 +407,22 @@ function handleFrame(frame) {
   if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
     const description = parseDescribe(frame.payload);
     setDescription(description);
-    if (description.version >= 2) queueTuningRequest(MESSAGE.TUNING_TARGETS_REQUEST);
+    queueTuningRequest(MESSAGE.TUNING_TARGETS_REQUEST);
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
     telemetryEnabled = ack.enabled;
     elements.telemetry.textContent = ack.enabled ? "Stop telemetry" : "Start telemetry";
-    if (ack.enabled && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
-    if (!ack.enabled && heartbeat) { clearInterval(heartbeat); heartbeat = undefined; }
-    notice(`Telemetry ${ack.enabled ? "active" : "stopped"}; ${ack.dropped} device samples dropped.`);
+    updateHeartbeat();
+    stateStatus.dropped = ack.stateDropped;
+    stateDirty = true;
+    notice(`Telemetry ${ack.enabled ? "active" : "stopped"}; ${ack.dropped} trace and ${ack.stateDropped} state samples dropped.`);
   } else if (frame.type === MESSAGE.SAMPLE) addSample(parseSample(frame.payload));
+  else if (frame.type === MESSAGE.STATE_SAMPLE) addStateEvent(parseStateSample(frame.payload));
   else if (frame.type === MESSAGE.TUNING_TARGETS_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_TARGETS_REQUEST);
     setTuningTargets(parseTuningTargets(frame.payload));
+    queueTuningRequest(MESSAGE.STATE_CONTROL_REQUEST);
   } else if (frame.type === MESSAGE.TUNING_DESCRIBE_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_DESCRIBE_REQUEST);
     setTuningDescription(parseTuningDescription(frame.payload));
@@ -328,6 +435,9 @@ function handleFrame(frame) {
   } else if (frame.type === MESSAGE.TUNING_PARAMETER_METADATA_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST);
     setTuningParameterMetadata(parseTuningParameterMetadata(frame.payload));
+  } else if (frame.type === MESSAGE.STATE_STATUS_RESPONSE) {
+    tuningRequests.complete(MESSAGE.STATE_CONTROL_REQUEST);
+    setStateStatus(parseStateStatus(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
     tuningRequests.complete(result.requestType);
@@ -374,6 +484,7 @@ async function readLoop() {
 }
 
 async function disconnect() {
+  try { if (writer && protocolReady) await writer.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
   try { if (writer && telemetryEnabled) await send(MESSAGE.TELEMETRY_CONTROL, Uint8Array.of(0)); } catch {}
   readActive = false;
   try { if (reader) await reader.cancel(); } catch {}
@@ -381,7 +492,7 @@ async function disconnect() {
   try { if (port) await port.close(); } catch {}
   port = writer = undefined;
   telemetryEnabled = false;
-  protocolVersion = 0;
+  protocolReady = false;
   tuningRequests.clear();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
@@ -390,6 +501,9 @@ async function disconnect() {
   elements.simulate.disabled = false;
   elements.telemetry.textContent = "Start telemetry";
   tuningTargets = new Map();
+  stateEvents = [];
+  stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+  stateDirty = true;
   renderTuning();
   setStatus("Disconnected");
 }
@@ -404,6 +518,7 @@ async function connect() {
     port = await navigator.serial.requestPort({ filters: USB_FILTERS });
     await port.open({ baudRate: 115200 });
     writer = port.writable.getWriter();
+    protocolReady = false;
     readActive = true;
     readLoop();
     elements.connect.textContent = "Disconnect";
@@ -412,6 +527,9 @@ async function connect() {
     streams = new Map();
     tuningTargets = new Map();
     samples = [];
+    stateEvents = [];
+    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+    stateDirty = true;
     tuningRequests.clear();
     decoder = new FrameDecoder();
     renderStreams();
@@ -435,10 +553,14 @@ function startSimulator() {
     elements.simulate.textContent = "Simulate";
     setStatus(port ? "Connected" : "Disconnected", Boolean(port));
     tuningTargets = new Map();
+    protocolReady = false;
+    stateEvents = [];
+    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+    stateDirty = true;
     renderTuning();
     return;
   }
-  setDescription({ version: 4, streams: [
+  setDescription({ version: PROTOCOL_VERSION, streams: [
     { deviceId: 1, stage: 0, key: "1:0", label: "Simulated raw" },
     { deviceId: 1, stage: 1, key: "1:1", label: "Simulated output" },
   ] });
@@ -453,11 +575,20 @@ function startSimulator() {
     { id: 4, key: "engage-ratio-percent", devicetreeProperty: "engage-ratio-percent", type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
     { id: 5, key: "idle-timeout-ms", devicetreeProperty: "idle-timeout-ms", type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
   ] }], false);
+  setStateStatus({ schemaVersion: 1, dropped: 0, queueCapacity: 64, levels: new Map([[0, STATE.OFF], [1, STATE.OFF]]) });
   let tick = 0;
   simulator = setInterval(() => {
     const raw = { deviceId: 1, stage: 0, key: "1:0", timestamp: tick * 8, sequence: tick * 2, x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1), wheel: 0, hWheel: 0 };
     addSample(raw);
     addSample({ ...raw, stage: 1, key: "1:1", sequence: tick * 2 + 1, x: Math.abs(raw.x) < 2 ? 0 : raw.x, y: Math.abs(raw.y) < 2 ? 0 : raw.y });
+    const level = stateStatus.levels.get(0) ?? STATE.OFF;
+    if (level === STATE.VERBOSE || (level === STATE.DECISIONS && tick % 20 === 0)) {
+      addStateEvent({ targetId: 0, targetKind: 1, event: STATE.EVENT_FRAME,
+        intent: Math.abs(raw.x) >= Math.abs(raw.y) ? 2 : 3,
+        flags: tick % 20 === 0 ? STATE.FLAG_INTENT_CHANGED : 0,
+        timestamp: raw.timestamp, sequence: tick * 3 + 2,
+        values: [raw.x, raw.y, Math.abs(raw.x) * 4, Math.abs(raw.y) * 4, 0, 0, raw.x, raw.y, 0, 0] });
+    }
     tick += 1;
   }, 8);
   elements.simulate.textContent = "Stop simulation";
@@ -467,9 +598,25 @@ function startSimulator() {
 elements.connect.addEventListener("click", () => (port ? disconnect() : connect()));
 elements.telemetry.addEventListener("click", () => send(MESSAGE.TELEMETRY_CONTROL, Uint8Array.of(telemetryEnabled ? 0 : 1)));
 elements.simulate.addEventListener("click", startSimulator);
-elements.clear.addEventListener("click", () => { samples = []; for (const stream of streams.values()) Object.assign(stream, { count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} }); elements.export.disabled = true; });
+elements.clear.addEventListener("click", () => {
+  samples = [];
+  stateEvents = [];
+  stateDirty = true;
+  for (const stream of streams.values()) Object.assign(stream, { count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} });
+  elements.export.disabled = true;
+});
 elements.export.addEventListener("click", () => {
-  const payload = JSON.stringify({ exportedAt: new Date().toISOString(), streams: [...streams.values()].map(({ count, lastTimestamp, totalDt, distance, latest, ...descriptor }) => descriptor), samples }, null, 2);
+  const payload = JSON.stringify({
+    exportedAt: new Date().toISOString(),
+    streams: [...streams.values()].map(({ count, lastTimestamp, totalDt, distance, latest, ...descriptor }) => descriptor),
+    samples,
+    stateTelemetry: protocolReady ? {
+      schemaVersion: stateStatus.schemaVersion,
+      dropped: stateStatus.dropped,
+      queueCapacity: stateStatus.queueCapacity,
+      events: stateEvents,
+    } : undefined,
+  }, null, 2);
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
   link.download = `zmk-pointing-trace-${new Date().toISOString().replaceAll(":", "-")}.json`;
@@ -477,9 +624,22 @@ elements.export.addEventListener("click", () => {
   URL.revokeObjectURL(link.href);
 });
 
+elements.diagnostics.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-state-target]");
+  if (!select) return;
+  const targetId = Number(select.dataset.stateTarget);
+  const level = Number(select.value);
+  if (simulator) {
+    stateStatus.levels.set(targetId, level);
+    stateDirty = true;
+  } else if (writer && protocolReady) {
+    tuningRequests.enqueue(MESSAGE.STATE_CONTROL_REQUEST, encodeStateControl(targetId, level));
+  }
+});
+
 elements["profile-export"].addEventListener("click", () => {
   try {
-    const profile = createTuningProfile(tuningTargets, protocolVersion);
+    const profile = createTuningProfile(tuningTargets);
     downloadJson(profile, `zmk-pointing-profile-${new Date().toISOString().replaceAll(":", "-")}.json`);
     notice("Exported the current runtime tuning profile.");
   } catch (error) {

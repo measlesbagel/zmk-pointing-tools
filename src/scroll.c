@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include <limits.h>
+#include <stddef.h>
 
 #include <zmk/pointing_tools/scroll.h>
 
@@ -26,11 +27,14 @@ static void accumulate_filtered(struct zpt_scroll_state *state, enum zpt_axis_in
 }
 
 static int16_t take_scaled(int32_t *pending, int32_t *remainder, uint16_t multiplier,
-                           uint16_t divisor) {
+                           uint16_t divisor, bool *clipped) {
     int64_t numerator = (int64_t)*pending * multiplier + *remainder;
     int64_t scaled = numerator / divisor;
     int16_t output =
         scaled > INT16_MAX ? INT16_MAX : (scaled < INT16_MIN ? INT16_MIN : (int16_t)scaled);
+    if (clipped != NULL) {
+        *clipped = scaled > INT16_MAX || scaled < INT16_MIN;
+    }
 
     /* Keep both fractional and HID-range overflow for a later report. */
     int64_t remaining = numerator - ((int64_t)output * divisor);
@@ -107,7 +111,15 @@ struct zpt_scroll_decision zpt_scroll_process(struct zpt_scroll_state *state,
 
 bool zpt_scroll_flush(struct zpt_scroll_state *state,
                       const struct zpt_scroll_settings *settings, int16_t *horizontal,
-                      int16_t *vertical) {
+                      int16_t *vertical, struct zpt_scroll_flush_decision *decision) {
+    if (decision != NULL) {
+        *decision = (struct zpt_scroll_flush_decision){
+            .undecided_x = state->undecided_x,
+            .undecided_y = state->undecided_y,
+            .discarded = settings->discard_unclassified &&
+                         (state->undecided_x != 0 || state->undecided_y != 0),
+        };
+    }
     if (state->undecided_x != 0 || state->undecided_y != 0) {
         if (!settings->discard_unclassified) {
             accumulate_filtered(state, ZPT_AXIS_INTENT_FREE, state->undecided_x,
@@ -116,9 +128,16 @@ bool zpt_scroll_flush(struct zpt_scroll_state *state,
         state->undecided_x = state->undecided_y = 0;
     }
 
+    bool clipped_horizontal;
+    bool clipped_vertical;
     *horizontal = take_scaled(&state->pending_x, &state->remainder_x,
-                              settings->scale_multiplier, settings->scale_divisor);
+                              settings->scale_multiplier, settings->scale_divisor,
+                              &clipped_horizontal);
     *vertical = take_scaled(&state->pending_y, &state->remainder_y, settings->scale_multiplier,
-                            settings->scale_divisor);
+                            settings->scale_divisor, &clipped_vertical);
+    if (decision != NULL) {
+        decision->clipped_horizontal = clipped_horizontal;
+        decision->clipped_vertical = clipped_vertical;
+    }
     return *horizontal != 0 || *vertical != 0;
 }

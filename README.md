@@ -14,6 +14,7 @@ work with arbitrary ZMK pointing devices.
 - Adaptive, vertical-only, horizontal-only, and free scroll policies
 - Gesture-locked movement-to-behavior processing for text navigation
 - Pass-through staged motion telemetry and trace recording
+- Optional semantic telemetry for intent, suppression, accumulation, and clipping decisions
 - An offline, repository-owned Web Serial trace viewer
 - Discoverable, validated scroll and text-navigation previews that never write flash
 - Firmware-provided hover/focus explanations for tuning parameters

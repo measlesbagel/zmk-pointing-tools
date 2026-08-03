@@ -21,11 +21,10 @@ const targets = [{
 }];
 
 test("exports stable, versioned profiles", () => {
-  assert.deepEqual(createTuningProfile(targets, 4, "2026-01-01T00:00:00.000Z"), {
+  assert.deepEqual(createTuningProfile(targets, "2026-01-01T00:00:00.000Z"), {
     schema: PROFILE_SCHEMA,
     version: 1,
     exportedAt: "2026-01-01T00:00:00.000Z",
-    protocolVersion: 4,
     targets: [{
       stableId: "left-scroll",
       kind: 1,
@@ -40,7 +39,7 @@ test("exports stable, versioned profiles", () => {
 });
 
 test("prepares target-level atomic imports by stable keys", () => {
-  const profile = createTuningProfile(targets, 4);
+  const profile = createTuningProfile(targets);
   profile.targets[0].parameters[0].value = 9;
   assert.deepEqual(prepareProfileImport(profile, targets), [{
     targetId: 2,
@@ -50,7 +49,7 @@ test("prepares target-level atomic imports by stable keys", () => {
 });
 
 test("rejects unknown targets and parameters before applying anything", () => {
-  const profile = createTuningProfile(targets, 4);
+  const profile = createTuningProfile(targets);
   profile.targets.push({ stableId: "missing", kind: 1, parameters: [] });
   profile.targets[0].parameters.push({ key: "unknown", value: 1 });
   assert.throws(() => prepareProfileImport(profile, targets), /Unknown parameter.*Unknown target/);

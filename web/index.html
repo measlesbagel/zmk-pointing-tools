@@ -47,7 +47,7 @@
           Preview values remain active until reset or keyboard reboot. They are never saved automatically.
         </div>
         <div id="tuning" class="tuning">
-          <p class="muted">Connect protocol v2 firmware to discover tunable processors.</p>
+          <p class="muted">Connect current firmware to discover tunable processors.</p>
         </div>
       </section>
 
@@ -57,6 +57,23 @@
           <span>Raw and processed streams are drawn independently from the center.</span>
         </div>
         <canvas id="trace" width="960" height="480"></canvas>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Processor decisions</h2>
+            <span id="state-count">0 state events</span>
+          </div>
+          <span id="state-dropped">Requires protocol v5</span>
+        </div>
+        <div class="temporary-warning">
+          Diagnostics are observational and off by default. “Decisions” reports transitions and
+          output; “Every frame” uses substantially more serial bandwidth.
+        </div>
+        <div id="diagnostics" class="diagnostics">
+          <p class="muted">Connect current firmware to inspect processor decisions.</p>
+        </div>
       </section>
 
       <section class="panel">
