@@ -21,6 +21,7 @@
     zpt_test_scroll: zpt_test_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;
+        tuning-id = "test-scroll";
         tuning-label = "Test scroll";
         scale-multiplier = <1>;
         scale-divisor = <8>;
@@ -42,6 +43,7 @@
     zpt_test_text_nav: zpt_test_text_nav {
         compatible = "measlesbagel,zpt-input-processor-text-nav";
         #input-processor-cells = <0>;
+        tuning-id = "test-text-navigation";
         tuning-label = "Test text navigation";
         horizontal-threshold = <25>;
         vertical-threshold = <50>;

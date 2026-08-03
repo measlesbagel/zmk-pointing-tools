@@ -29,7 +29,9 @@ struct zpt_text_nav_config {
     uint16_t tap_ms;
     struct zpt_text_nav_settings compiled;
     const struct zmk_behavior_binding *bindings;
+    const char *tuning_id;
     const char *tuning_label;
+    const char *devicetree_path;
 };
 
 struct zpt_text_nav_data {
@@ -132,6 +134,8 @@ enum zpt_text_nav_parameter_id {
 static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
     {.id = ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "horizontal-threshold",
+     .devicetree_property = "horizontal-threshold",
      .minimum = 1,
      .maximum = 10000,
      .step = 1,
@@ -141,6 +145,8 @@ static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
                     "move through text faster."},
     {.id = ZPT_TEXT_NAV_VERTICAL_THRESHOLD,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "vertical-threshold",
+     .devicetree_property = "vertical-threshold",
      .minimum = 1,
      .maximum = 10000,
      .step = 1,
@@ -150,6 +156,8 @@ static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
                     "through lines faster."},
     {.id = ZPT_TEXT_NAV_ACTIVATION_DISTANCE,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "activation-distance",
+     .devicetree_property = "activation-distance",
      .minimum = 1,
      .maximum = 10000,
      .step = 1,
@@ -159,6 +167,8 @@ static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
                     "This prevents immediate direction choices from tiny initial motion."},
     {.id = ZPT_TEXT_NAV_ENGAGE_RATIO,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "engage-ratio-percent",
+     .devicetree_property = "engage-ratio-percent",
      .minimum = 101,
      .maximum = 1000,
      .step = 1,
@@ -168,6 +178,8 @@ static const struct zpt_tuning_parameter zpt_text_nav_parameters[] = {
                     "require a straighter initial gesture; 150% means 1.5:1."},
     {.id = ZPT_TEXT_NAV_IDLE_TIMEOUT,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "idle-timeout-ms",
+     .devicetree_property = "idle-timeout-ms",
      .minimum = 10,
      .maximum = 2000,
      .step = 1,
@@ -216,34 +228,45 @@ static int tuning_get(void *context, uint8_t parameter_id, bool compiled, int32_
     return ret;
 }
 
-static int tuning_set(void *context, uint8_t parameter_id, int32_t value) {
+static int tuning_set_many(void *context, const struct zpt_tuning_value *values, size_t value_count,
+                           uint8_t *failed_parameter_id) {
     const struct device *dev = context;
     struct zpt_text_nav_data *data = dev->data;
     int ret = 0;
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
-    switch (parameter_id) {
-    case ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD:
-        data->settings.horizontal_threshold = value;
-        break;
-    case ZPT_TEXT_NAV_VERTICAL_THRESHOLD:
-        data->settings.vertical_threshold = value;
-        break;
-    case ZPT_TEXT_NAV_ACTIVATION_DISTANCE:
-        data->settings.activation_distance = value;
-        break;
-    case ZPT_TEXT_NAV_ENGAGE_RATIO:
-        data->settings.engage_ratio_percent = value;
-        break;
-    case ZPT_TEXT_NAV_IDLE_TIMEOUT:
-        data->settings.idle_timeout_ms = value;
-        break;
-    default:
-        ret = -ENOENT;
-        break;
+    struct zpt_text_nav_settings candidate = data->settings;
+    for (size_t i = 0; i < value_count; i++) {
+        if (failed_parameter_id != NULL) {
+            *failed_parameter_id = values[i].parameter_id;
+        }
+        switch (values[i].parameter_id) {
+        case ZPT_TEXT_NAV_HORIZONTAL_THRESHOLD:
+            candidate.horizontal_threshold = values[i].value;
+            break;
+        case ZPT_TEXT_NAV_VERTICAL_THRESHOLD:
+            candidate.vertical_threshold = values[i].value;
+            break;
+        case ZPT_TEXT_NAV_ACTIVATION_DISTANCE:
+            candidate.activation_distance = values[i].value;
+            break;
+        case ZPT_TEXT_NAV_ENGAGE_RATIO:
+            candidate.engage_ratio_percent = values[i].value;
+            break;
+        case ZPT_TEXT_NAV_IDLE_TIMEOUT:
+            candidate.idle_timeout_ms = values[i].value;
+            break;
+        default:
+            ret = -ENOENT;
+            break;
+        }
+        if (ret < 0) {
+            break;
+        }
     }
 
     if (ret == 0) {
+        data->settings = candidate;
         reset_processing_locked(data);
     }
     k_spin_unlock(&data->lock, key);
@@ -276,12 +299,14 @@ static int zpt_text_nav_init(const struct device *dev) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     data->tuning_target = (struct zpt_tuning_target){
         .kind = ZPT_TUNING_TARGET_TEXT_NAV,
+        .stable_id = config->tuning_id,
         .label = config->tuning_label,
+        .devicetree_path = config->devicetree_path,
         .parameters = zpt_text_nav_parameters,
         .parameter_count = ARRAY_SIZE(zpt_text_nav_parameters),
         .context = (void *)dev,
         .get = tuning_get,
-        .set = tuning_set,
+        .set_many = tuning_set_many,
         .reset = tuning_reset,
     };
     int ret = zpt_tuning_register(&data->tuning_target);
@@ -315,7 +340,9 @@ static int zpt_text_nav_init(const struct device *dev) {
                 .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),                  \
             },                                                                                     \
         .bindings = zpt_text_nav_bindings_##inst,                                                  \
+        .tuning_id = DT_INST_PROP(inst, tuning_id),                                                \
         .tuning_label = DT_INST_PROP(inst, tuning_label),                                          \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
     };                                                                                             \
     static struct zpt_text_nav_data zpt_text_nav_data_##inst;                                      \
     DEVICE_DT_INST_DEFINE(inst, zpt_text_nav_init, NULL, &zpt_text_nav_data_##inst,                \

@@ -26,6 +26,7 @@ listener:
     my_scroll: my_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;
+        tuning-id = "left-scroll";
         tuning-label = "Left scroll";
         scale-multiplier = <1>;
         scale-divisor = <8>;
@@ -79,6 +80,10 @@ human-readable identity. Scale, timing, axis-intent, keypress-guard, and
 unclassified-motion settings can be previewed in RAM and reset to these
 compiled devicetree values. Runtime previews never write flash.
 
+`tuning-id` is a stable machine-readable identity used by exported profiles.
+Keep it unique within a firmware build and avoid changing it unless profiles
+should intentionally stop matching that target.
+
 ## Text navigation
 
 Text navigation chooses an axis from gesture geometry before applying the
@@ -89,6 +94,7 @@ independent horizontal and vertical step distances:
     my_text_nav: my_text_nav {
         compatible = "measlesbagel,zpt-input-processor-text-nav";
         #input-processor-cells = <0>;
+        tuning-id = "text-navigation";
         tuning-label = "Text navigation";
         horizontal-threshold = <25>;
         vertical-threshold = <50>;

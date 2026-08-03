@@ -68,6 +68,12 @@ Parameter explanations are owned by the processor and fetched on demand in
 protocol version 3. Host tools therefore remain generic as new processor types
 and settings are added.
 
+Protocol version 4 separates compact boot-session IDs from stable profile IDs.
+Processors own stable parameter keys and devicetree property mappings; keyboard
+configurations own stable target IDs. Related values are validated against a
+candidate settings copy and committed per target only after the complete batch
+passes, preventing half-applied gain or axis-ratio updates.
+
 ## Telemetry
 
 Telemetry is opt-in and active only during a tuning session. It should expose

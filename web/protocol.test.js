@@ -5,13 +5,16 @@ import {
   FrameDecoder,
   MESSAGE,
   encodeTuningSet,
+  encodeTuningSetMany,
   encodeFrame,
   parseAck,
   parseDescribe,
   parseSample,
   parseTuningDescription,
   parseTuningHelp,
+  parseTuningParameterMetadata,
   parseTuningResult,
+  parseTuningTargetMetadata,
   parseTuningTargets,
 } from "./protocol.js";
 
@@ -133,4 +136,38 @@ test("parses on-demand tuning help", () => {
     parameterId: 9,
     description: "Rejects typing vibration.",
   });
+});
+
+test("parses stable tuning metadata", () => {
+  const stableId = new TextEncoder().encode("left-scroll");
+  const path = new TextEncoder().encode("/zpt_left_scroll");
+  const target = Uint8Array.of(2, stableId.length, path.length, 0, ...stableId, ...path);
+  assert.deepEqual(parseTuningTargetMetadata(target), {
+    targetId: 2,
+    stableId: "left-scroll",
+    devicetreePath: "/zpt_left_scroll",
+  });
+
+  const key = new TextEncoder().encode("scale-multiplier");
+  const property = new TextEncoder().encode("scale-multiplier");
+  const parameter = Uint8Array.of(2, 1, key.length, property.length, ...key, ...property);
+  assert.deepEqual(parseTuningParameterMetadata(parameter), {
+    targetId: 2,
+    parameterId: 1,
+    key: "scale-multiplier",
+    devicetreeProperty: "scale-multiplier",
+  });
+});
+
+test("encodes atomic tuning batches", () => {
+  const frame = encodeTuningSetMany(2, [
+    { parameterId: 7, value: 300 },
+    { parameterId: 8, value: 180 },
+  ]);
+  assert.deepEqual([...frame.slice(0, 7)], [0x5a, 0x50, MESSAGE.TUNING_SET_MANY_REQUEST, 12, 0, 2, 2]);
+  const view = new DataView(frame.buffer);
+  assert.equal(frame[7], 7);
+  assert.equal(view.getInt32(8, true), 300);
+  assert.equal(frame[12], 8);
+  assert.equal(view.getInt32(13, true), 180);
 });

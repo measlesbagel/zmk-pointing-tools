@@ -31,7 +31,9 @@ struct zpt_scroll_settings {
 
 struct zpt_scroll_config {
     struct zpt_scroll_settings compiled;
+    const char *tuning_id;
     const char *tuning_label;
+    const char *devicetree_path;
 };
 
 struct zpt_scroll_data {
@@ -252,6 +254,8 @@ enum zpt_scroll_parameter_id {
 static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
     {.id = ZPT_SCROLL_SCALE_MULTIPLIER,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "scale-multiplier",
+     .devicetree_property = "scale-multiplier",
      .minimum = 1,
      .maximum = 1024,
      .step = 1,
@@ -261,6 +265,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "the divisor also changes."},
     {.id = ZPT_SCROLL_SCALE_DIVISOR,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "scale-divisor",
+     .devicetree_property = "scale-divisor",
      .minimum = 1,
      .maximum = 1024,
      .step = 1,
@@ -270,6 +276,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "unless the multiplier also changes."},
     {.id = ZPT_SCROLL_REPORT_INTERVAL,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "report-interval-ms",
+     .devicetree_property = "report-interval-ms",
      .minimum = 1,
      .maximum = 100,
      .step = 1,
@@ -279,6 +287,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "sooner; higher values can feel smoother."},
     {.id = ZPT_SCROLL_IDLE_TIMEOUT,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "idle-timeout-ms",
+     .devicetree_property = "idle-timeout-ms",
      .minimum = 10,
      .maximum = 2000,
      .step = 1,
@@ -288,6 +298,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
          "The motion-free gap that ends a gesture and releases its current axis classification."},
     {.id = ZPT_SCROLL_INTENT_WINDOW,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "intent-window-ms",
+     .devicetree_property = "intent-window-ms",
      .minimum = 1,
      .maximum = 1000,
      .step = 1,
@@ -297,6 +309,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "are steadier but slower to recognize turns."},
     {.id = ZPT_SCROLL_ACTIVATION_DISTANCE,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "activation-distance",
+     .devicetree_property = "activation-distance",
      .minimum = 1,
      .maximum = 10000,
      .step = 1,
@@ -306,6 +320,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "dead zone when unclassified motion is discarded."},
     {.id = ZPT_SCROLL_ENGAGE_RATIO,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "engage-ratio-percent",
+     .devicetree_property = "engage-ratio-percent",
      .minimum = 101,
      .maximum = 1000,
      .step = 1,
@@ -315,6 +331,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "require a straighter gesture; 300% means 3:1."},
     {.id = ZPT_SCROLL_RELEASE_RATIO,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "release-ratio-percent",
+     .devicetree_property = "release-ratio-percent",
      .minimum = 100,
      .maximum = 999,
      .step = 1,
@@ -324,6 +342,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "the lock more strongly. Keep this below engage."},
     {.id = ZPT_SCROLL_KEYPRESS_GUARD,
      .type = ZPT_TUNING_VALUE_INTEGER,
+     .key = "suppress-after-keypress-ms",
+     .devicetree_property = "suppress-after-keypress-ms",
      .minimum = 0,
      .maximum = 500,
      .step = 1,
@@ -333,6 +353,8 @@ static const struct zpt_tuning_parameter zpt_scroll_parameters[] = {
                     "typing vibration without an idle-motion dead zone."},
     {.id = ZPT_SCROLL_DISCARD_UNCLASSIFIED,
      .type = ZPT_TUNING_VALUE_BOOLEAN,
+     .key = "discard-unclassified",
+     .devicetree_property = "discard-unclassified",
      .minimum = 0,
      .maximum = 1,
      .step = 1,
@@ -406,57 +428,64 @@ static int zpt_scroll_tuning_get(void *context, uint8_t parameter_id, bool compi
     return ret;
 }
 
-static int zpt_scroll_tuning_set(void *context, uint8_t parameter_id, int32_t value) {
+static int zpt_scroll_tuning_set_many(void *context, const struct zpt_tuning_value *values,
+                                      size_t value_count, uint8_t *failed_parameter_id) {
     const struct device *dev = context;
     struct zpt_scroll_data *data = dev->data;
     int ret = 0;
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
-    switch (parameter_id) {
-    case ZPT_SCROLL_SCALE_MULTIPLIER:
-        data->settings.scale_multiplier = value;
-        break;
-    case ZPT_SCROLL_SCALE_DIVISOR:
-        data->settings.scale_divisor = value;
-        break;
-    case ZPT_SCROLL_REPORT_INTERVAL:
-        data->settings.report_interval_ms = value;
-        break;
-    case ZPT_SCROLL_IDLE_TIMEOUT:
-        data->settings.idle_timeout_ms = value;
-        break;
-    case ZPT_SCROLL_INTENT_WINDOW:
-        data->settings.intent.window_ms = value;
-        break;
-    case ZPT_SCROLL_ACTIVATION_DISTANCE:
-        data->settings.intent.activation_distance = value;
-        break;
-    case ZPT_SCROLL_ENGAGE_RATIO:
-        if (value <= data->settings.intent.release_ratio_percent) {
-            ret = -EINVAL;
-        } else {
-            data->settings.intent.engage_ratio_percent = value;
+    struct zpt_scroll_settings candidate = data->settings;
+    for (size_t i = 0; i < value_count; i++) {
+        if (failed_parameter_id != NULL) {
+            *failed_parameter_id = values[i].parameter_id;
         }
-        break;
-    case ZPT_SCROLL_RELEASE_RATIO:
-        if (value >= data->settings.intent.engage_ratio_percent) {
-            ret = -EINVAL;
-        } else {
-            data->settings.intent.release_ratio_percent = value;
+        switch (values[i].parameter_id) {
+        case ZPT_SCROLL_SCALE_MULTIPLIER:
+            candidate.scale_multiplier = values[i].value;
+            break;
+        case ZPT_SCROLL_SCALE_DIVISOR:
+            candidate.scale_divisor = values[i].value;
+            break;
+        case ZPT_SCROLL_REPORT_INTERVAL:
+            candidate.report_interval_ms = values[i].value;
+            break;
+        case ZPT_SCROLL_IDLE_TIMEOUT:
+            candidate.idle_timeout_ms = values[i].value;
+            break;
+        case ZPT_SCROLL_INTENT_WINDOW:
+            candidate.intent.window_ms = values[i].value;
+            break;
+        case ZPT_SCROLL_ACTIVATION_DISTANCE:
+            candidate.intent.activation_distance = values[i].value;
+            break;
+        case ZPT_SCROLL_ENGAGE_RATIO:
+            candidate.intent.engage_ratio_percent = values[i].value;
+            break;
+        case ZPT_SCROLL_RELEASE_RATIO:
+            candidate.intent.release_ratio_percent = values[i].value;
+            break;
+        case ZPT_SCROLL_KEYPRESS_GUARD:
+            candidate.suppress_after_keypress_ms = values[i].value;
+            break;
+        case ZPT_SCROLL_DISCARD_UNCLASSIFIED:
+            candidate.discard_unclassified = values[i].value != 0;
+            break;
+        default:
+            ret = -ENOENT;
+            break;
         }
-        break;
-    case ZPT_SCROLL_KEYPRESS_GUARD:
-        data->settings.suppress_after_keypress_ms = value;
-        break;
-    case ZPT_SCROLL_DISCARD_UNCLASSIFIED:
-        data->settings.discard_unclassified = value != 0;
-        break;
-    default:
-        ret = -ENOENT;
-        break;
+        if (ret < 0) {
+            break;
+        }
     }
 
+    if (ret == 0 &&
+        candidate.intent.engage_ratio_percent <= candidate.intent.release_ratio_percent) {
+        ret = -EINVAL;
+    }
     if (ret == 0) {
+        data->settings = candidate;
         zpt_scroll_reset_processing_locked(data);
     }
     k_spin_unlock(&data->lock, key);
@@ -492,12 +521,14 @@ static int zpt_scroll_init(const struct device *dev) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     data->tuning_target = (struct zpt_tuning_target){
         .kind = ZPT_TUNING_TARGET_SCROLL,
+        .stable_id = config->tuning_id,
         .label = config->tuning_label,
+        .devicetree_path = config->devicetree_path,
         .parameters = zpt_scroll_parameters,
         .parameter_count = ARRAY_SIZE(zpt_scroll_parameters),
         .context = (void *)dev,
         .get = zpt_scroll_tuning_get,
-        .set = zpt_scroll_tuning_set,
+        .set_many = zpt_scroll_tuning_set_many,
         .reset = zpt_scroll_tuning_reset,
     };
     int ret = zpt_tuning_register(&data->tuning_target);
@@ -535,7 +566,9 @@ static int zpt_scroll_init(const struct device *dev) {
                         .window_ms = DT_INST_PROP(inst, intent_window_ms),                         \
                     },                                                                             \
             },                                                                                     \
+        .tuning_id = DT_INST_PROP(inst, tuning_id),                                                \
         .tuning_label = DT_INST_PROP(inst, tuning_label),                                          \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, zpt_scroll_init, NULL, &zpt_scroll_data_##inst,                    \
                           &zpt_scroll_config_##inst, POST_KERNEL,                                  \

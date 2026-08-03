@@ -17,11 +17,12 @@ work with arbitrary ZMK pointing devices.
 - An offline, repository-owned Web Serial trace viewer
 - Discoverable, validated scroll and text-navigation previews that never write flash
 - Firmware-provided hover/focus explanations for tuning parameters
+- Versioned profile export/import and generated devicetree handoff
 
 Planned capabilities include:
 
 - Threshold-aware optional automatic mouse layers
-- Tuning-profile export and Git-tracked configuration handoff
+- Deterministic regression replay of exported hardware traces
 - Experimental motion-derived gestures such as tap-to-click
 
 ## Repository boundaries
@@ -38,10 +39,13 @@ See [`docs/architecture.md`](docs/architecture.md) for the initial design.
 
 The current milestone provides pass-through telemetry, synchronized adaptive
 scrolling, gesture-locked text navigation, and a local static tuning surface.
-Scroll and text-navigation values can be previewed temporarily and reset to compiled defaults;
-explicit optional persistence remains under development.
+Scroll and text-navigation values can be previewed temporarily, exported as a
+profile, and reset to compiled defaults. Explicit optional persistence remains
+under development.
 
 See [`docs/processors.md`](docs/processors.md) for devicetree usage.
+See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
+semantics.
 
 ## Local tuner
 
