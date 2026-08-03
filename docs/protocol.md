@@ -12,6 +12,11 @@ otherwise transport-independent. All multi-byte integers are little-endian.
 The host initiates requests. Trace samples are unsolicited only while the host
 has explicitly enabled telemetry.
 
+Hosts send at most one tuning request at a time and wait for its matching
+response before advancing discovery. This provides transport-level flow
+control for firmware with small serial receive buffers; bulk parameter-help
+requests must not be emitted as an unbounded burst.
+
 ## Messages
 
 | Type | Direction | Name | Payload |
