@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test web/*.test.js",
-    "check": "node --check web/app.js && node --check web/protocol.js"
+    "check": "node --check web/app.js && node --check web/protocol.js && node --check tools/replay-traces.js && node --check tools/import-trace.js"
   }
 }

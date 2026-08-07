@@ -1,0 +1,123 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "scroll-precision-remainder",
+  "description": "Sub-wheel precision movement accumulates instead of disappearing at integer scaling boundaries.",
+  "metadata": {
+    "device": "right-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "precision-scroll",
+    "provenance": "Synthetic low-amplitude regression based on precision captures"
+  },
+  "processor": {
+    "kind": "adaptive-scroll",
+    "policy": "horizontal",
+    "settings": {
+      "scaleMultiplier": 1,
+      "scaleDivisor": 8,
+      "reportIntervalMs": 8,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 0,
+      "discardUnclassified": false,
+      "engageRatioPercent": 300,
+      "releaseRatioPercent": 180,
+      "activationDistance": 16,
+      "intentWindowMs": 64
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ]
+  ],
+  "expect": {
+    "inputFrames": 10,
+    "durationMs": 72,
+    "outputFrames": 2,
+    "outputCadence": {
+      "meanIntervalMs": 40,
+      "maximumIntervalMs": 40
+    },
+    "horizontal": {
+      "signedDistance": 0,
+      "absoluteDistance": 2,
+      "nonzeroFrames": 2,
+      "directionChanges": 1,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 0,
+      "absoluteDistance": 0,
+      "nonzeroFrames": 0,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "intentFrames": {
+      "undecided": 0,
+      "free": 0,
+      "horizontal": 10,
+      "vertical": 0
+    },
+    "intentTransitions": 0,
+    "idleResets": 1,
+    "suppressedFrames": 0
+  }
+}

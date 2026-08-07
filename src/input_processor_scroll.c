@@ -3,7 +3,6 @@
 
 #include <errno.h>
 #include <limits.h>
-
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -16,18 +15,8 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 
-#include <zmk/pointing_tools/axis_intent.h>
+#include <zmk/pointing_tools/scroll.h>
 #include <zmk/pointing_tools/tuning.h>
-
-struct zpt_scroll_settings {
-    uint16_t scale_multiplier;
-    uint16_t scale_divisor;
-    uint16_t report_interval_ms;
-    uint16_t idle_timeout_ms;
-    uint16_t suppress_after_keypress_ms;
-    bool discard_unclassified;
-    struct zpt_axis_intent_config intent;
-};
 
 struct zpt_scroll_config {
     struct zpt_scroll_settings compiled;
@@ -40,18 +29,9 @@ struct zpt_scroll_data {
     const struct device *dev;
     struct k_work_delayable flush_work;
     struct k_spinlock lock;
-    struct zpt_axis_intent_state intent;
-    enum zpt_axis_policy policy;
+    struct zpt_scroll_state scroll;
     int32_t frame_x;
     int32_t frame_y;
-    int32_t undecided_x;
-    int32_t undecided_y;
-    int32_t pending_x;
-    int32_t pending_y;
-    int32_t remainder_x;
-    int32_t remainder_y;
-    uint32_t last_frame_ms;
-    bool have_last_frame;
     bool flush_armed;
     struct zpt_scroll_settings settings;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
@@ -80,30 +60,7 @@ static int32_t clamp_add(int32_t lhs, int32_t rhs) {
     return (int32_t)CLAMP(result, INT32_MIN, INT32_MAX);
 }
 
-static void accumulate_filtered(struct zpt_scroll_data *data, enum zpt_axis_intent intent,
-                                int32_t x, int32_t y) {
-    if (intent != ZPT_AXIS_INTENT_VERTICAL) {
-        data->pending_x = clamp_add(data->pending_x, x);
-    }
-    if (intent != ZPT_AXIS_INTENT_HORIZONTAL) {
-        data->pending_y = clamp_add(data->pending_y, y);
-    }
-}
-
-static int16_t take_scaled(int32_t *pending, int32_t *remainder, uint16_t multiplier,
-                           uint16_t divisor) {
-    int64_t numerator = (int64_t)*pending * multiplier + *remainder;
-    int64_t scaled = numerator / divisor;
-    int16_t output = (int16_t)CLAMP(scaled, INT16_MIN, INT16_MAX);
-
-    /* Keep both fractional and HID-range overflow for a later report. */
-    int64_t remaining = numerator - ((int64_t)output * divisor);
-    *remainder = (int32_t)CLAMP(remaining, INT32_MIN, INT32_MAX);
-    *pending = 0;
-    return output;
-}
-
-static void zpt_scroll_flush(struct k_work *work) {
+static void zpt_scroll_flush_work(struct k_work *work) {
     struct k_work_delayable *delayable = k_work_delayable_from_work(work);
     struct zpt_scroll_data *data = CONTAINER_OF(delayable, struct zpt_scroll_data, flush_work);
     int16_t horizontal;
@@ -112,19 +69,7 @@ static void zpt_scroll_flush(struct k_work *work) {
     k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->flush_armed = false;
 
-    /* A dedicated always-on scroll device can discard pre-activation motion
-     * to reject typing vibration. Momentary scroll modes preserve it. */
-    if (data->undecided_x != 0 || data->undecided_y != 0) {
-        if (!data->settings.discard_unclassified) {
-            accumulate_filtered(data, ZPT_AXIS_INTENT_FREE, data->undecided_x, data->undecided_y);
-        }
-        data->undecided_x = data->undecided_y = 0;
-    }
-
-    horizontal = take_scaled(&data->pending_x, &data->remainder_x, data->settings.scale_multiplier,
-                             data->settings.scale_divisor);
-    vertical = take_scaled(&data->pending_y, &data->remainder_y, data->settings.scale_multiplier,
-                           data->settings.scale_divisor);
+    zpt_scroll_flush(&data->scroll, &data->settings, &horizontal, &vertical);
     k_spin_unlock(&data->lock, key);
 
     if (horizontal == 0 && vertical == 0) {
@@ -151,46 +96,15 @@ static void process_frame(const struct device *dev, int32_t x, int32_t y,
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
 
-    if (data->settings.suppress_after_keypress_ms > 0U &&
-        atomic_get(&zpt_scroll_keypress_seen) != 0 &&
-        now - (uint32_t)atomic_get(&zpt_scroll_last_keypress_ms) <
-            data->settings.suppress_after_keypress_ms) {
-        zpt_axis_intent_reset(&data->intent);
-        data->undecided_x = data->undecided_y = 0;
-        data->pending_x = data->pending_y = 0;
-        data->have_last_frame = false;
+    bool suppress = data->settings.suppress_after_keypress_ms > 0U &&
+                    atomic_get(&zpt_scroll_keypress_seen) != 0 &&
+                    now - (uint32_t)atomic_get(&zpt_scroll_last_keypress_ms) <
+                        data->settings.suppress_after_keypress_ms;
+    struct zpt_scroll_decision decision =
+        zpt_scroll_process(&data->scroll, &data->settings, x, y, policy, now, suppress);
+    if (decision.suppressed) {
         k_spin_unlock(&data->lock, key);
         return;
-    }
-
-    uint32_t elapsed = data->have_last_frame ? now - data->last_frame_ms : 0U;
-
-    if (!data->have_last_frame || elapsed >= data->settings.idle_timeout_ms ||
-        policy != data->policy) {
-        zpt_axis_intent_reset(&data->intent);
-        data->undecided_x = data->undecided_y = 0;
-    }
-
-    data->policy = policy;
-    data->last_frame_ms = now;
-    data->have_last_frame = true;
-
-    enum zpt_axis_intent previous = data->intent.intent;
-    enum zpt_axis_intent intent =
-        zpt_axis_intent_update(&data->intent, &data->settings.intent, policy, x, y, elapsed);
-
-    if (intent == ZPT_AXIS_INTENT_UNDECIDED) {
-        data->undecided_x = clamp_add(data->undecided_x, x);
-        data->undecided_y = clamp_add(data->undecided_y, y);
-    } else {
-        if (previous == ZPT_AXIS_INTENT_UNDECIDED) {
-            data->undecided_x = clamp_add(data->undecided_x, x);
-            data->undecided_y = clamp_add(data->undecided_y, y);
-            accumulate_filtered(data, intent, data->undecided_x, data->undecided_y);
-            data->undecided_x = data->undecided_y = 0;
-        } else {
-            accumulate_filtered(data, intent, x, y);
-        }
     }
 
     schedule_flush(data, data->settings.report_interval_ms);
@@ -404,12 +318,8 @@ static int zpt_scroll_setting_get(const struct zpt_scroll_settings *settings, ui
 }
 
 static void zpt_scroll_reset_processing_locked(struct zpt_scroll_data *data) {
-    zpt_axis_intent_reset(&data->intent);
     data->frame_x = data->frame_y = 0;
-    data->undecided_x = data->undecided_y = 0;
-    data->pending_x = data->pending_y = 0;
-    data->remainder_x = data->remainder_y = 0;
-    data->have_last_frame = false;
+    zpt_scroll_reset(&data->scroll, true);
 }
 
 static int zpt_scroll_tuning_get(void *context, uint8_t parameter_id, bool compiled,
@@ -515,9 +425,9 @@ static int zpt_scroll_init(const struct device *dev) {
     struct zpt_scroll_data *data = dev->data;
     data->dev = dev;
     data->settings = config->compiled;
-    data->policy = ZPT_AXIS_POLICY_ADAPTIVE;
-    zpt_axis_intent_reset(&data->intent);
-    k_work_init_delayable(&data->flush_work, zpt_scroll_flush);
+    data->scroll.policy = ZPT_AXIS_POLICY_ADAPTIVE;
+    zpt_scroll_reset(&data->scroll, true);
+    k_work_init_delayable(&data->flush_work, zpt_scroll_flush_work);
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     data->tuning_target = (struct zpt_tuning_target){
         .kind = ZPT_TUNING_TARGET_SCROLL,
