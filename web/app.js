@@ -26,6 +26,7 @@ import {
   renderDevicetreeSnippet,
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
+import { PointingPlayground } from "./playground.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
 const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"];
@@ -46,6 +47,7 @@ let writer;
 let readActive = false;
 let telemetryEnabled = false;
 let protocolReady = false;
+let traceDropped = 0;
 let simulator;
 let heartbeat;
 let streams = new Map();
@@ -225,7 +227,7 @@ function renderDiagnostics() {
   const supported = protocolReady || simulator;
   elements["state-count"].textContent = `${stateEvents.length.toLocaleString()} state events`;
   elements["state-dropped"].textContent = supported
-    ? `${stateStatus.dropped.toLocaleString()} dropped · queue ${stateStatus.queueCapacity || "?"}`
+    ? `${stateStatus.dropped.toLocaleString()} dropped · queue capacity ${stateStatus.queueCapacity || "?"}`
     : "Requires protocol v5";
   if (!supported || tuningTargets.size === 0) {
     elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect processor decisions.</p>';
@@ -411,6 +413,7 @@ function handleFrame(frame) {
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
+    traceDropped = ack.dropped;
     telemetryEnabled = ack.enabled;
     elements.telemetry.textContent = ack.enabled ? "Stop telemetry" : "Start telemetry";
     updateHeartbeat();
@@ -493,6 +496,7 @@ async function disconnect() {
   port = writer = undefined;
   telemetryEnabled = false;
   protocolReady = false;
+  traceDropped = 0;
   tuningRequests.clear();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
@@ -527,6 +531,7 @@ async function connect() {
     streams = new Map();
     tuningTargets = new Map();
     samples = [];
+    traceDropped = 0;
     stateEvents = [];
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
     stateDirty = true;
@@ -714,6 +719,41 @@ elements["reset-all"].addEventListener("click", async () => {
   } else {
     queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
   }
+});
+
+function playgroundContext() {
+  let tuningProfile;
+  try {
+    if (tuningTargets.size) tuningProfile = createTuningProfile(tuningTargets);
+  } catch {
+    tuningProfile = undefined;
+  }
+  const latestSequence = [...samples.slice(-1), ...stateEvents.slice(-1)]
+    .reduce((latest, record) => Math.max(latest, record.sequence ?? 0), -1);
+  return {
+    nextSequence: latestSequence + 1,
+    tuningProfile,
+    streams: [...streams.values()].map(
+      ({ count, lastTimestamp, totalDt, distance, latest, ...descriptor }) => descriptor,
+    ),
+    samples,
+    stateEvents,
+    stateSchemaVersion: stateStatus.schemaVersion,
+    traceDropped,
+    stateDropped: stateStatus.dropped,
+    queueCapacity: stateStatus.queueCapacity,
+  };
+}
+
+new PointingPlayground(document.getElementById("playground"), {
+  getContext: playgroundContext,
+  onExport: (result) => {
+    downloadJson(
+      result,
+      `zmk-pointing-playground-${result.activity.id}-${new Date().toISOString().replaceAll(":", "-")}.json`,
+    );
+    notice(`Exported ${result.activity.label} playground results.`);
+  },
 });
 
 navigator.serial?.addEventListener("disconnect", (event) => { if (event.target === port) disconnect(); });

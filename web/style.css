@@ -11,6 +11,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+body.playground-running { overflow: hidden; }
 main { width: min(1100px, calc(100% - 32px)); margin: 36px auto 64px; }
 header, .panel-heading, .actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 h1, h2, p { margin-top: 0; }
@@ -51,6 +52,35 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .state-timeline li { display: grid; grid-template-columns: 150px minmax(120px, .45fr) 1fr; gap: 10px; padding: 7px 9px; background: #11141a; font-size: 12px; }
 .state-timeline strong { font-weight: 600; }
 .state-timeline span { color: var(--muted); }
+.playground-dialog { width: min(1050px, calc(100vw - 24px)); max-width: none; height: min(820px, calc(100vh - 24px)); max-height: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 18px; }
+.playground-dialog::backdrop { background: #05070bd9; backdrop-filter: blur(3px); }
+.playground-dialog-heading, .playground-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.playground-dialog-heading h2 { font-size: 22px; }
+.playground-controls { justify-content: flex-start; flex-wrap: wrap; margin-top: 18px; }
+.playground-controls label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
+.playground-controls strong { margin-left: auto; color: var(--accent); }
+.playground-instructions { margin: 16px 0 8px; color: var(--text); }
+.playground-metrics { min-height: 28px; margin-bottom: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.playground-surface { position: relative; height: min(52vh, 480px); min-height: 300px; overflow: hidden; border: 1px solid var(--line); background: #090b0e; }
+.playground-note { margin: 10px 0 0; }
+.playground-scroll { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--accent) #11141a; }
+.playground-scroll-content { position: relative; min-width: 100%; min-height: 100%; background-color: #0c1015; background-image: linear-gradient(#202731 1px, transparent 1px), linear-gradient(90deg, #202731 1px, transparent 1px); background-size: 48px 48px; }
+.playground-scroll.vertical .playground-scroll-content { height: 1800px; }
+.playground-scroll.horizontal .playground-scroll-content { width: 2200px; }
+.playground-scroll.both .playground-scroll-content { width: 1800px; height: 1400px; }
+.playground-start-marker, .playground-end-marker { position: absolute; padding: 8px 11px; background: var(--accent); color: #07120e; }
+.playground-start-marker { top: 18px; left: 18px; }
+.playground-end-marker { right: 18px; bottom: 18px; }
+.playground-text { width: 100%; height: 100%; resize: none; border: 0; outline: none; background: #0b0e12; color: var(--text); padding: 24px 24px 58px; font: 18px/2 ui-monospace, monospace; caret-color: var(--accent); }
+.playground-text:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.playground-text::selection { background: var(--accent); color: #07120e; }
+.playground-text-position { position: absolute; right: 14px; bottom: 12px; border: 1px solid var(--line); background: #090b0eee; color: var(--accent); padding: 5px 8px; font: 12px ui-monospace, monospace; pointer-events: none; }
+.playground-pointer-area, .playground-drag-area { position: relative; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(circle at center, #151b22, #090b0e 70%); }
+.playground-target { position: absolute; width: 34px; height: 34px; padding: 0; border: 3px solid #07120e; border-radius: 50%; background: var(--accent); color: #07120e; font-size: 11px; font-weight: 800; transform: translate(-50%, -50%); }
+.playground-pointer-area.precision .playground-target { width: 12px; height: 12px; border-width: 2px; color: transparent; }
+.playground-path { width: 100%; height: 100%; display: block; }
+.playground-drag-token { position: absolute; z-index: 2; left: 48px; top: 50%; width: 72px; height: 72px; padding: 0; border-radius: 50%; background: var(--accent); color: #07120e; font-weight: 800; transform: translate(-50%, -50%); touch-action: none; }
+.playground-drop-zone { position: absolute; right: 45px; top: 50%; display: grid; width: 180px; height: 180px; place-items: center; border: 3px dashed var(--warning); color: var(--warning); transform: translateY(-50%); }
 .tuning-target { border: 1px solid var(--line); background: #11141a; padding: 14px; }
 .tuning-target-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .tuning-target-heading h3 { margin: 0; font-size: 16px; }
@@ -71,4 +101,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 @media (max-width: 650px) {
   header, .panel-heading, .diagnostic-target { align-items: flex-start; flex-direction: column; }
   .state-timeline li { grid-template-columns: 1fr; gap: 2px; }
+  .playground-dialog { height: calc(100vh - 12px); width: calc(100vw - 12px); padding: 12px; }
+  .playground-dialog-heading, .playground-controls { align-items: flex-start; }
+  .playground-controls strong { width: 100%; margin-left: 0; }
 }
