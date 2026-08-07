@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test web/*.test.js",
-    "check": "node --check web/app.js && node --check web/protocol.js && node --check tools/replay-traces.js && node --check tools/import-trace.js"
+    "test": "node --test web/*.test.js host/replay/*.test.js",
+    "check": "node --check web/app.js && node --check web/protocol.js && node --check host/replay/cli.js && node --check host/replay/import.js"
   }
 }

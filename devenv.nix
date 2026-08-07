@@ -6,29 +6,43 @@
     pkgs.python3
     pkgs.shellcheck
     pkgs.gcc
+    pkgs.cmake
+    pkgs.ninja
   ];
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
 
   tasks = {
-    "web:check" = {
-      description = "Check browser JavaScript syntax";
+    "javascript:check" = {
+      description = "Check browser and host JavaScript syntax";
       exec = "npm run check";
     };
 
-    "web:test" = {
-      description = "Run host protocol parser tests";
+    "javascript:test" = {
+      description = "Run browser and host JavaScript tests";
       exec = "npm test";
     };
-    "processor:test" = {
-      description = "Run host-side processor model tests";
-      exec = "tests/run-host-tests.sh";
+    "host:configure" = {
+      description = "Configure native processor tools";
+      exec = "cmake -S host -B \"$DEVENV_STATE/host-build\" -G Ninja";
+    };
+
+    "host:build" = {
+      description = "Build native processor tools";
+      exec = "cmake --build \"$DEVENV_STATE/host-build\"";
+      after = [ "host:configure" ];
+    };
+
+    "host:test" = {
+      description = "Run native processor and trace replay tests";
+      exec = "ctest --test-dir \"$DEVENV_STATE/host-build\" --output-on-failure";
+      after = [ "host:build" ];
     };
 
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
-      after = [ "web:check" "web:test" "processor:test" ];
+      after = [ "javascript:check" "javascript:test" "host:test" ];
       before = [ "devenv:enterTest" ];
     };
   };

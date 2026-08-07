@@ -49,6 +49,8 @@ See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
 semantics.
 See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor
 regression testing.
+See [`host/README.md`](host/README.md) for the native development and test
+subsystem.
 
 ## Local tuner
 

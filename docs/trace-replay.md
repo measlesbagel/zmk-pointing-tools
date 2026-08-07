@@ -7,21 +7,31 @@ Bluetooth timing, or wall-clock scheduling.
 ## Run the regression suite
 
 ```sh
-tools/replay-traces.sh tests/fixtures/*.json
+cmake -S host -B build/host -G Ninja
+cmake --build build/host
+ctest --test-dir build/host --output-on-failure
 ```
 
 Generate a machine-readable report for review or comparison:
 
 ```sh
-tools/replay-traces.sh --json /tmp/replay.json tests/fixtures/*.json
+node host/replay/cli.js \
+  --scroll-runner build/host/zpt_scroll_replay \
+  --text-runner build/host/zpt_text_nav_replay \
+  --json /tmp/replay.json \
+  host/tests/fixtures/*.json
 ```
 
 The command exits nonzero and prints field-level differences when an expected metric changes.
 After intentionally changing processor behavior, inspect the report before updating snapshots:
 
 ```sh
-tools/replay-traces.sh --update tests/fixtures/*.json
-git diff -- tests/fixtures
+node host/replay/cli.js \
+  --scroll-runner build/host/zpt_scroll_replay \
+  --text-runner build/host/zpt_text_nav_replay \
+  --update \
+  host/tests/fixtures/*.json
+git diff -- host/tests/fixtures
 ```
 
 Never update expectations only to make CI pass. The metrics are the review surface for behavior
@@ -56,10 +66,10 @@ Start by copying a similar fixture so its processor settings and metadata are ex
 replace its event list from an exported tuner trace:
 
 ```sh
-node tools/import-trace.js \
+node host/replay/import.js \
   --input ~/Downloads/zmk-pointing-trace.json \
   --stream 0:0 \
-  --template tests/fixtures/left-split-transport.json \
+  --template host/tests/fixtures/left-split-transport.json \
   --output /tmp/new-left-fixture.json \
   --start 100 \
   --count 500
@@ -77,5 +87,5 @@ when reproducing keypress-guard behavior.
 
 Keep algorithms host-buildable and deterministic: isolate Zephyr device, workqueue, HID, and
 event-manager integration in the firmware wrapper. Add a small stdin/stdout runner under
-`tools/`, teach `replay-traces.js` its settings and metrics, and add at least one fixture covering
-a historical or boundary case.
+`host/runners`, teach the modules under `host/replay` its settings and metrics, register the target
+in `host/CMakeLists.txt`, and add at least one fixture covering a historical or boundary case.
