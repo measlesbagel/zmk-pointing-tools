@@ -65,6 +65,14 @@ config ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS
     default 8
     range 1 32
 
+config ZMK_POINTING_TOOLS_STATE_TELEMETRY
+    bool "Semantic processor-state telemetry"
+    default y
+    help
+      Optionally expose axis intent, suppression, accumulation, clipping, and
+      gesture lifecycle decisions. State telemetry remains off until requested
+      by a connected host.
+
 endif
 
 config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE

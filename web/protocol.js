@@ -10,6 +10,7 @@ export const MESSAGE = Object.freeze({
   TUNING_TARGET_METADATA_REQUEST: 0x09,
   TUNING_PARAMETER_METADATA_REQUEST: 0x0a,
   TUNING_SET_MANY_REQUEST: 0x0b,
+  STATE_CONTROL_REQUEST: 0x0c,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -18,14 +19,36 @@ export const MESSAGE = Object.freeze({
   TUNING_HELP_RESPONSE: 0x86,
   TUNING_TARGET_METADATA_RESPONSE: 0x87,
   TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
+  STATE_STATUS_RESPONSE: 0x89,
   SAMPLE: 0x90,
+  STATE_SAMPLE: 0x91,
 });
+
+export const PROTOCOL_VERSION = 5;
+export const STATE_SCHEMA_VERSION = 1;
 
 export const TUNING = Object.freeze({
   ALL_TARGETS: 0xff,
   INTEGER: 0,
   BOOLEAN: 1,
   STATUS_OK: 0,
+});
+
+export const STATE = Object.freeze({
+  ALL_TARGETS: 0xff,
+  OFF: 0,
+  DECISIONS: 1,
+  VERBOSE: 2,
+  EVENT_FRAME: 1,
+  EVENT_FLUSH: 2,
+  FLAG_IDLE_RESET: 1 << 0,
+  FLAG_INTENT_CHANGED: 1 << 1,
+  FLAG_SUPPRESSED: 1 << 2,
+  FLAG_SUPPRESSION_CHANGED: 1 << 3,
+  FLAG_DISCARDED: 1 << 4,
+  FLAG_OUTPUT: 1 << 5,
+  FLAG_CLIPPED_HORIZONTAL: 1 << 6,
+  FLAG_CLIPPED_VERTICAL: 1 << 7,
 });
 
 const MAGIC_0 = 0x5a;
@@ -75,6 +98,9 @@ export function parseDescribe(payload) {
   const decoder = new TextDecoder();
   let offset = 0;
   const version = payload[offset++];
+  if (version !== PROTOCOL_VERSION) {
+    throw new Error(`Firmware protocol ${version} does not match tuner protocol ${PROTOCOL_VERSION}`);
+  }
   const count = payload[offset++];
   const streams = [];
 
@@ -91,9 +117,13 @@ export function parseDescribe(payload) {
 }
 
 export function parseAck(payload) {
-  if (payload.length !== 5) throw new Error("Invalid acknowledgement length");
+  if (payload.length !== 9) throw new Error("Invalid acknowledgement length");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  return { enabled: Boolean(payload[0]), dropped: view.getUint32(1, true) };
+  return {
+    enabled: Boolean(payload[0]),
+    dropped: view.getUint32(1, true),
+    stateDropped: view.getUint32(5, true),
+  };
 }
 
 export function parseSample(payload) {
@@ -112,6 +142,43 @@ export function parseSample(payload) {
     wheel: view.getInt32(18, true),
     hWheel: view.getInt32(22, true),
   };
+}
+
+export function parseStateStatus(payload) {
+  requireBytes(payload, 0, 8, "state telemetry status");
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (payload[0] !== STATE_SCHEMA_VERSION) throw new Error("Unsupported state telemetry schema");
+  const count = payload[7];
+  requireBytes(payload, 8, count * 2, "state telemetry target levels");
+  const levels = new Map();
+  for (let offset = 8; offset < 8 + count * 2; offset += 2) levels.set(payload[offset], payload[offset + 1]);
+  return {
+    schemaVersion: payload[0],
+    dropped: view.getUint32(1, true),
+    queueCapacity: view.getUint16(5, true),
+    levels,
+  };
+}
+
+export function parseStateSample(payload) {
+  if (payload.length !== 54) throw new Error("Invalid state sample length");
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const values = [];
+  for (let offset = 14; offset < payload.length; offset += 4) values.push(view.getInt32(offset, true));
+  return {
+    targetId: payload[0],
+    targetKind: payload[1],
+    event: payload[2],
+    intent: payload[3],
+    flags: view.getUint16(4, true),
+    timestamp: view.getUint32(6, true),
+    sequence: view.getUint32(10, true),
+    values,
+  };
+}
+
+export function encodeStateControl(targetId, level) {
+  return encodeFrame(MESSAGE.STATE_CONTROL_REQUEST, Uint8Array.of(targetId, level));
 }
 
 function requireBytes(payload, offset, count, context) {

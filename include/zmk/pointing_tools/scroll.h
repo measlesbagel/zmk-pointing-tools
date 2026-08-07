@@ -36,6 +36,14 @@ struct zpt_scroll_decision {
     bool suppressed;
 };
 
+struct zpt_scroll_flush_decision {
+    int32_t undecided_x;
+    int32_t undecided_y;
+    bool discarded;
+    bool clipped_horizontal;
+    bool clipped_vertical;
+};
+
 void zpt_scroll_reset(struct zpt_scroll_state *state, bool clear_remainder);
 
 struct zpt_scroll_decision zpt_scroll_process(struct zpt_scroll_state *state,
@@ -46,4 +54,4 @@ struct zpt_scroll_decision zpt_scroll_process(struct zpt_scroll_state *state,
 
 bool zpt_scroll_flush(struct zpt_scroll_state *state,
                       const struct zpt_scroll_settings *settings, int16_t *horizontal,
-                      int16_t *vertical);
+                      int16_t *vertical, struct zpt_scroll_flush_decision *decision);

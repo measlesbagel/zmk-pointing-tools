@@ -16,14 +16,13 @@ function requireMetadata(target) {
   }
 }
 
-export function createTuningProfile(targets, protocolVersion, exportedAt = new Date().toISOString()) {
+export function createTuningProfile(targets, exportedAt = new Date().toISOString()) {
   const available = asTargets(targets);
   for (const target of available) requireMetadata(target);
   return {
     schema: PROFILE_SCHEMA,
     version: PROFILE_VERSION,
     exportedAt,
-    protocolVersion,
     targets: available.map((target) => ({
       stableId: target.stableId,
       kind: target.kind,

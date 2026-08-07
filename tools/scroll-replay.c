@@ -14,7 +14,7 @@ static void emit_flush(struct zpt_scroll_state *state, const struct zpt_scroll_s
                        uint32_t timestamp) {
     int16_t horizontal;
     int16_t vertical;
-    if (zpt_scroll_flush(state, settings, &horizontal, &vertical)) {
+    if (zpt_scroll_flush(state, settings, &horizontal, &vertical, NULL)) {
         printf("O\t%" PRIu32 "\t%d\t%d\n", timestamp, horizontal, vertical);
     }
 }

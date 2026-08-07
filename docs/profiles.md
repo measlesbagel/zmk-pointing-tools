@@ -1,8 +1,8 @@
 # Tuning profiles and configuration handoff
 
-Protocol version 4 firmware gives each tuning target and parameter a stable
-machine-readable identity. The local tuner uses those identities instead of
-session-local numeric IDs when exporting and importing profiles.
+Each tuning target and parameter has a stable machine-readable identity. The
+local tuner uses those identities instead of session-local numeric IDs when
+exporting and importing profiles.
 
 ## Profile format
 
@@ -13,7 +13,6 @@ Profiles are versioned JSON documents:
   "schema": "zmk-pointing-tools/tuning-profile",
   "version": 1,
   "exportedAt": "2026-01-01T00:00:00.000Z",
-  "protocolVersion": 4,
   "targets": [
     {
       "stableId": "left-scroll",

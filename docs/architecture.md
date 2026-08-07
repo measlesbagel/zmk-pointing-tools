@@ -58,27 +58,29 @@ The host protocol should describe pointing devices and capabilities rather than
 hard-code left/right trackballs. A transport-independent runtime registry will
 serve Web Serial initially and may support other transports later.
 
-The first registry implementation assigns session-local target IDs during boot
-and exposes typed parameter metadata, compiled baselines, current values,
-validated temporary updates, and reset operations. Persistence is intentionally
-absent from protocol version 2 so experimentation cannot cause hidden flash
-writes or make the repository disagree with keyboard behavior.
+The registry assigns session-local target IDs during boot and exposes typed
+parameter metadata, compiled baselines, current values, validated temporary
+updates, reset operations, and processor-owned explanations. Persistence is
+intentionally absent so experimentation cannot cause hidden flash writes or
+make the repository disagree with keyboard behavior.
 
-Parameter explanations are owned by the processor and fetched on demand in
-protocol version 3. Host tools therefore remain generic as new processor types
-and settings are added.
-
-Protocol version 4 separates compact boot-session IDs from stable profile IDs.
-Processors own stable parameter keys and devicetree property mappings; keyboard
-configurations own stable target IDs. Related values are validated against a
-candidate settings copy and committed per target only after the complete batch
-passes, preventing half-applied gain or axis-ratio updates.
+Compact boot-session IDs are separate from stable profile IDs. Processors own
+stable parameter keys and devicetree property mappings; keyboard configurations
+own stable target IDs. Related values are validated against a candidate settings
+copy and committed per target only after the complete batch passes, preventing
+half-applied gain or axis-ratio updates.
 
 ## Telemetry
 
 Telemetry is opt-in and active only during a tuning session. It should expose
 enough staged information to compare raw, filtered, classified, and emitted
 movement without permanently consuming split bandwidth.
+
+Semantic state records are keyed by runtime tuning target. Decision-only and
+every-frame levels keep normal operation at zero diagnostic bandwidth while
+allowing the tuner to correlate internal processor choices with raw/output
+traces. Bounded no-wait queues ensure observation cannot block input processing;
+separate drop counters expose overload.
 
 Recorded traces should be exportable for deterministic processor regression
 tests. Experimental gesture classifiers, including motion-derived tap-to-click,

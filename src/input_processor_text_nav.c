@@ -17,6 +17,9 @@
 #include <zmk/keymap.h>
 #include <zmk/virtual_key_position.h>
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+#include <zmk/pointing_tools/state.h>
+#endif
 #include <zmk/pointing_tools/text_nav.h>
 #include <zmk/pointing_tools/tuning.h>
 
@@ -44,6 +47,9 @@ struct zpt_text_nav_data {
     struct zpt_text_nav_settings settings;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     struct zpt_tuning_target tuning_target;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    uint8_t telemetry_target_id;
 #endif
 };
 
@@ -89,6 +95,11 @@ static int zpt_text_nav_handle_event(const struct device *dev, struct input_even
 
     struct zpt_text_nav_data *data = dev->data;
     enum zpt_text_nav_direction direction = ZPT_TEXT_NAV_NONE;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    struct zpt_state_sample sample = {0};
+    bool submit_state = false;
+    enum zpt_state_level state_level = zpt_state_telemetry_level(data->telemetry_target_id);
+#endif
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
     if (event->code == INPUT_REL_X) {
@@ -100,13 +111,40 @@ static int zpt_text_nav_handle_event(const struct device *dev, struct input_even
     if (event->sync) {
         uint32_t now = k_uptime_get_32();
         uint32_t elapsed = data->have_last_frame ? now - data->last_frame_ms : 0U;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        int32_t frame_x = data->frame_x;
+        int32_t frame_y = data->frame_y;
+        enum zpt_axis_intent previous = data->gesture.intent;
+        bool idle_reset = !data->have_last_frame || elapsed >= data->settings.idle_timeout_ms;
+#endif
         direction = zpt_text_nav_update(&data->gesture, &data->settings, data->frame_x,
                                         data->frame_y, elapsed, data->have_last_frame);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        sample = (struct zpt_state_sample){
+            .timestamp_ms = now,
+            .target_id = data->telemetry_target_id,
+            .target_kind = ZPT_TUNING_TARGET_TEXT_NAV,
+            .event = ZPT_STATE_EVENT_FRAME,
+            .intent = data->gesture.intent,
+            .flags = (idle_reset ? ZPT_STATE_FLAG_IDLE_RESET : 0) |
+                     (data->gesture.intent != previous ? ZPT_STATE_FLAG_INTENT_CHANGED : 0) |
+                     (direction != ZPT_TEXT_NAV_NONE ? ZPT_STATE_FLAG_OUTPUT : 0),
+            .values = {frame_x, frame_y, data->gesture.accumulated_x,
+                       data->gesture.accumulated_y, direction},
+        };
+        submit_state = state_level == ZPT_STATE_LEVEL_VERBOSE || sample.flags != 0;
+#endif
         data->frame_x = data->frame_y = 0;
         data->last_frame_ms = now;
         data->have_last_frame = true;
     }
     k_spin_unlock(&data->lock, key);
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    if (submit_state) {
+        zpt_state_telemetry_submit(&sample);
+    }
+#endif
 
     if (direction != ZPT_TEXT_NAV_NONE) {
         int ret = queue_tap(dev, state, direction);
@@ -313,6 +351,9 @@ static int zpt_text_nav_init(const struct device *dev) {
     if (ret < 0) {
         return ret;
     }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    data->telemetry_target_id = ret;
+#endif
 #endif
     return 0;
 }

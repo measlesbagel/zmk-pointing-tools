@@ -16,6 +16,9 @@
 #include <zmk/events/position_state_changed.h>
 
 #include <zmk/pointing_tools/scroll.h>
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+#include <zmk/pointing_tools/state.h>
+#endif
 #include <zmk/pointing_tools/tuning.h>
 
 struct zpt_scroll_config {
@@ -36,6 +39,10 @@ struct zpt_scroll_data {
     struct zpt_scroll_settings settings;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     struct zpt_tuning_target tuning_target;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    uint8_t telemetry_target_id;
+    bool state_suppressed;
 #endif
 };
 
@@ -65,12 +72,46 @@ static void zpt_scroll_flush_work(struct k_work *work) {
     struct zpt_scroll_data *data = CONTAINER_OF(delayable, struct zpt_scroll_data, flush_work);
     int16_t horizontal;
     int16_t vertical;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    struct zpt_scroll_flush_decision decision;
+    struct zpt_state_sample sample = {0};
+    enum zpt_state_level state_level = zpt_state_telemetry_level(data->telemetry_target_id);
+#endif
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
     data->flush_armed = false;
 
-    zpt_scroll_flush(&data->scroll, &data->settings, &horizontal, &vertical);
+    zpt_scroll_flush(&data->scroll, &data->settings, &horizontal, &vertical,
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+                     &decision
+#else
+                     NULL
+#endif
+    );
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    sample = (struct zpt_state_sample){
+        .timestamp_ms = k_uptime_get_32(),
+        .target_id = data->telemetry_target_id,
+        .target_kind = ZPT_TUNING_TARGET_SCROLL,
+        .event = ZPT_STATE_EVENT_FLUSH,
+        .intent = data->scroll.intent.intent,
+        .flags = (horizontal != 0 || vertical != 0 ? ZPT_STATE_FLAG_OUTPUT : 0) |
+                 (decision.discarded ? ZPT_STATE_FLAG_DISCARDED : 0) |
+                 (decision.clipped_horizontal ? ZPT_STATE_FLAG_CLIPPED_HORIZONTAL : 0) |
+                 (decision.clipped_vertical ? ZPT_STATE_FLAG_CLIPPED_VERTICAL : 0),
+        .values = {horizontal, vertical, data->scroll.intent.horizontal_energy,
+                   data->scroll.intent.vertical_energy, decision.undecided_x,
+                   decision.undecided_y, data->scroll.pending_x, data->scroll.pending_y,
+                   data->scroll.remainder_x, data->scroll.remainder_y},
+    };
+#endif
     k_spin_unlock(&data->lock, key);
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    if (state_level == ZPT_STATE_LEVEL_VERBOSE || sample.flags != 0) {
+        zpt_state_telemetry_submit(&sample);
+    }
+#endif
 
     if (horizontal == 0 && vertical == 0) {
         return;
@@ -93,6 +134,16 @@ static void process_frame(const struct device *dev, int32_t x, int32_t y,
                           enum zpt_axis_policy policy) {
     struct zpt_scroll_data *data = dev->data;
     uint32_t now = k_uptime_get_32();
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    enum zpt_state_level state_level = zpt_state_telemetry_level(data->telemetry_target_id);
+    struct zpt_state_sample sample = {
+        .timestamp_ms = now,
+        .target_id = data->telemetry_target_id,
+        .target_kind = ZPT_TUNING_TARGET_SCROLL,
+        .event = ZPT_STATE_EVENT_FRAME,
+        .values = {x, y},
+    };
+#endif
 
     k_spinlock_key_t key = k_spin_lock(&data->lock);
 
@@ -103,12 +154,52 @@ static void process_frame(const struct device *dev, int32_t x, int32_t y,
     struct zpt_scroll_decision decision =
         zpt_scroll_process(&data->scroll, &data->settings, x, y, policy, now, suppress);
     if (decision.suppressed) {
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        sample.intent = decision.intent;
+        sample.flags = ZPT_STATE_FLAG_SUPPRESSED |
+                       (!data->state_suppressed ? ZPT_STATE_FLAG_SUPPRESSION_CHANGED : 0);
+        data->state_suppressed = true;
+#endif
         k_spin_unlock(&data->lock, key);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        if (state_level == ZPT_STATE_LEVEL_VERBOSE ||
+            (sample.flags & ZPT_STATE_FLAG_SUPPRESSION_CHANGED) != 0) {
+            zpt_state_telemetry_submit(&sample);
+        }
+#endif
         return;
     }
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    if (decision.reset_for_idle) {
+        sample.flags |= ZPT_STATE_FLAG_IDLE_RESET;
+    }
+    if (decision.intent != decision.previous_intent) {
+        sample.flags |= ZPT_STATE_FLAG_INTENT_CHANGED;
+    }
+    if (data->state_suppressed) {
+        sample.flags |= ZPT_STATE_FLAG_SUPPRESSION_CHANGED;
+        data->state_suppressed = false;
+    }
+#endif
     schedule_flush(data, data->settings.report_interval_ms);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    sample.intent = decision.intent;
+    sample.values[2] = data->scroll.intent.horizontal_energy;
+    sample.values[3] = data->scroll.intent.vertical_energy;
+    sample.values[4] = data->scroll.undecided_x;
+    sample.values[5] = data->scroll.undecided_y;
+    sample.values[6] = data->scroll.pending_x;
+    sample.values[7] = data->scroll.pending_y;
+    sample.values[8] = data->scroll.remainder_x;
+    sample.values[9] = data->scroll.remainder_y;
+#endif
     k_spin_unlock(&data->lock, key);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    if (state_level == ZPT_STATE_LEVEL_VERBOSE || sample.flags != 0) {
+        zpt_state_telemetry_submit(&sample);
+    }
+#endif
 }
 
 static int zpt_scroll_handle_event(const struct device *dev, struct input_event *event,
@@ -320,6 +411,9 @@ static int zpt_scroll_setting_get(const struct zpt_scroll_settings *settings, ui
 static void zpt_scroll_reset_processing_locked(struct zpt_scroll_data *data) {
     data->frame_x = data->frame_y = 0;
     zpt_scroll_reset(&data->scroll, true);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    data->state_suppressed = false;
+#endif
 }
 
 static int zpt_scroll_tuning_get(void *context, uint8_t parameter_id, bool compiled,
@@ -445,6 +539,9 @@ static int zpt_scroll_init(const struct device *dev) {
     if (ret < 0) {
         return ret;
     }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    data->telemetry_target_id = ret;
+#endif
 #endif
     return 0;
 }
