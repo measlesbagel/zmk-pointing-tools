@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+
+description: Thin synchronized ZMK cursor output sink
+
+compatible: "measlesbagel,zpt-sink-cursor"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity unique within the owning pipeline

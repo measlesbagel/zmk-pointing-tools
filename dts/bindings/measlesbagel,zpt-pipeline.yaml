@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: MIT
+
+description: Named ordered pointing-tool pipeline
+
+compatible: "measlesbagel,zpt-pipeline"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity unique within the owning router
+
+  stages:
+    type: phandles
+    required: true
+    description: Ordered references to independently allocated pointing-tool stages
+
+  sink:
+    type: phandle
+    required: true
+    description: Independently allocated terminal sink for this pipeline
+
+  dispatch-budget:
+    type: int
+    default: 16
+    description: Maximum stage and sink visits allowed for one pipeline operation

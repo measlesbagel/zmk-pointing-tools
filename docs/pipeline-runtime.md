@@ -65,16 +65,17 @@ the input thread.
 ## Delayed output
 
 A stateful stage with a flush callback can request one absolute 32-bit uptime
-deadline. The runtime exposes the nearest pipeline deadline to a future Zephyr
-scheduler. When due, the stage's flush callback resumes output after that
-stage; it does not restart the pipeline.
+deadline. The runtime exposes the nearest pipeline deadline to the Zephyr
+executor. When due, the stage's flush callback resumes output after that stage;
+it does not restart the pipeline.
 
 Deadline comparisons follow signed 32-bit uptime-difference semantics and are
 covered across timestamp wrap. Firmware stage settings must remain well below
 half the uptime range.
 
-The host runtime does not own a thread or clock. Tests and the future Zephyr
-adapter call `zpt_pipeline_flush()` with the observed time.
+The host runtime does not own a thread or clock. Tests call
+`zpt_pipeline_flush()` explicitly; the Zephyr executor supplies uptime and
+delayable work around the same core call.
 
 ## Lifecycle
 

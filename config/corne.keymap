@@ -29,18 +29,29 @@
         stable-id = "raw-pointer-identity";
     };
 
+    zpt_test_cursor_sink: zpt_test_cursor_sink {
+        compatible = "measlesbagel,zpt-sink-cursor";
+        stable-id = "cursor";
+    };
+
     zpt_test_cursor_pipeline: zpt_test_cursor_pipeline {
+        compatible = "measlesbagel,zpt-pipeline";
+        stable-id = "test-cursor";
+        stages = <&zpt_test_orientation &zpt_test_pointer_identity>;
+        sink = <&zpt_test_cursor_sink>;
+    };
+
+    zpt_test_cursor_source: zpt_test_cursor_source {
         compatible = "measlesbagel,zpt-input-processor-pipeline";
         #input-processor-cells = <0>;
-        stable-id = "test-cursor";
         source-id = <1>;
         resolution-cpi = <700>;
-        stages = <&zpt_test_orientation &zpt_test_pointer_identity>;
+        pipeline = <&zpt_test_cursor_pipeline>;
     };
 
     zpt_test_cursor_output: zpt_test_cursor_output {
         compatible = "zmk,input-listener";
-        device = <&zpt_test_cursor_pipeline>;
+        device = <&zpt_test_cursor_source>;
         input-processors = <&zpt_test_output>;
     };
 
@@ -62,21 +73,32 @@
         stable-id = "raw-pointer-identity";
     };
 
+    zpt_test_compact_sink: zpt_test_compact_sink {
+        compatible = "measlesbagel,zpt-sink-cursor";
+        stable-id = "cursor";
+    };
+
     zpt_test_compact_pipeline: zpt_test_compact_pipeline {
+        compatible = "measlesbagel,zpt-pipeline";
+        stable-id = "test-compact-cursor";
+        stages = <&zpt_test_compact_orientation &zpt_test_compact_pointer_identity>;
+        sink = <&zpt_test_compact_sink>;
+    };
+
+    zpt_test_compact_source: zpt_test_compact_source {
         compatible = "measlesbagel,zpt-input-processor-pipeline";
         #input-processor-cells = <0>;
-        stable-id = "test-compact-cursor";
         source-id = <2>;
         resolution-cpi = <700>;
         transported;
         compact-event-code = <INPUT_REL_Z>;
         compact-transport-coalesced;
-        stages = <&zpt_test_compact_orientation &zpt_test_compact_pointer_identity>;
+        pipeline = <&zpt_test_compact_pipeline>;
     };
 
     zpt_test_compact_output: zpt_test_compact_output {
         compatible = "zmk,input-listener";
-        device = <&zpt_test_compact_pipeline>;
+        device = <&zpt_test_compact_source>;
     };
 
     /* Instantiate normalized, stateful stage providers even though the
@@ -134,7 +156,7 @@
     zpt_test_noise_output: zpt_test_noise_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_noise_filter>;
-        input-processors = <&zpt_test_raw &zpt_test_cursor_pipeline>;
+        input-processors = <&zpt_test_raw &zpt_test_cursor_source>;
     };
 
     zpt_test_text_nav: zpt_test_text_nav {
