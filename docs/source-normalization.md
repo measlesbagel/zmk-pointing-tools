@@ -90,5 +90,7 @@ a normalized pointer mapper and fractional quantizer must precede the integral
 cursor sink first.
 
 The Bridges configuration is unchanged. Runtime CPI discovery/control,
-calibration recommendations, compact transport, and cursor mapping remain
-separate review layers.
+calibration recommendations, and cursor mapping remain separate review layers.
+The optional compact transport codec is documented in
+[`compact-split-codec.md`](compact-split-codec.md); its decoder preserves
+source-side sequence and estimated span in this same raw source contract.

@@ -39,3 +39,9 @@ void zpt_motion_source_add(struct zpt_motion_source_state *state, enum zpt_motio
 bool zpt_motion_source_take(struct zpt_motion_source_state *state, uint32_t observed_at_ms,
                             uint32_t sample_span_us, uint32_t additional_flags,
                             struct zpt_signal *signal);
+
+/* Finish a transported frame using a sequence reconstructed by its codec. */
+bool zpt_motion_source_take_at_sequence(struct zpt_motion_source_state *state,
+                                        uint32_t observed_at_ms, uint32_t sample_span_us,
+                                        uint16_t sequence, uint32_t additional_flags,
+                                        struct zpt_signal *signal);

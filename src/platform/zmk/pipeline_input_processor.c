@@ -14,6 +14,7 @@
 
 #include <zmk/pointing_tools/sink/cursor.h>
 #include <zmk/pointing_tools/source/motion_source.h>
+#include <zmk/pointing_tools/source/transport/compact_split_codec.h>
 #include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/pointer_identity.h>
 
@@ -23,11 +24,15 @@ struct zpt_pipeline_processor_config {
     const char *stable_id;
     struct zpt_motion_source_config source;
     struct zpt_orientation_config orientation;
+    uint16_t compact_event_code;
+    bool compact_transport;
+    bool compact_transport_coalesced;
 };
 
 struct zpt_pipeline_processor_data {
     struct k_spinlock frame_lock;
     struct zpt_motion_source_state source;
+    struct zpt_compact_split_decoder compact_decoder;
     struct zpt_cursor_sink_config sink_config;
     struct zpt_stage stages[2];
     struct zpt_sink sink;
@@ -43,6 +48,7 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
         LOG_ERR("Failed to initialize motion source for %s: %d", config->stable_id, ret);
         return ret;
     }
+    zpt_compact_split_decoder_init(&data->compact_decoder);
 
     data->sink_config.output_device = dev;
     data->stages[0] = (struct zpt_stage){
@@ -94,7 +100,25 @@ static int zpt_pipeline_processor_handle_event(const struct device *dev, struct 
     uint32_t now = event->sync ? k_uptime_get_32() : 0U;
 
     k_spinlock_key_t key = k_spin_lock(&data->frame_lock);
-    if (event->type == INPUT_EV_REL && event->code == INPUT_REL_X) {
+    if (config->compact_transport && event->type == INPUT_EV_REL &&
+        event->code == config->compact_event_code) {
+        struct zpt_compact_split_frame frame;
+        now = k_uptime_get_32();
+        int ret = zpt_compact_split_decode(&data->compact_decoder, (uint32_t)event->value, &frame);
+        event->value = 0;
+        if (ret == 0) {
+            zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_X, frame.motion.x_counts);
+            zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_Y, frame.motion.y_counts);
+            uint32_t flags = frame.flags;
+            if (config->compact_transport_coalesced) {
+                flags |= ZPT_SIGNAL_FLAG_COALESCED;
+            }
+            frame_ready = zpt_motion_source_take_at_sequence(
+                &data->source, now, frame.sample_span_us, frame.sequence, flags, &signal);
+        } else {
+            LOG_ERR("Motion pipeline %s rejected compact split packet: %d", config->stable_id, ret);
+        }
+    } else if (event->type == INPUT_EV_REL && event->code == INPUT_REL_X) {
         zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_X, event->value);
         event->value = 0;
     } else if (event->type == INPUT_EV_REL && event->code == INPUT_REL_Y) {
@@ -130,6 +154,17 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
     BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) > 0, "resolution-cpi must be positive");       \
     BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) <= UINT16_MAX,                                 \
                  "resolution-cpi must fit in 16 bits");                                            \
+    BUILD_ASSERT(!DT_INST_NODE_HAS_PROP(inst, compact_event_code) ||                               \
+                     DT_INST_PROP(inst, transported),                                              \
+                 "compact-event-code requires a transported source");                              \
+    BUILD_ASSERT(!DT_INST_NODE_HAS_PROP(inst, compact_event_code) ||                               \
+                     (DT_INST_PROP_OR(inst, compact_event_code, 0) >= 0 &&                         \
+                      DT_INST_PROP_OR(inst, compact_event_code, 0) <= UINT16_MAX),                 \
+                 "compact-event-code must fit in 16 bits");                                        \
+    BUILD_ASSERT(!DT_INST_NODE_HAS_PROP(inst, compact_event_code) ||                               \
+                     (DT_INST_PROP_OR(inst, compact_event_code, 0) != INPUT_REL_X &&               \
+                      DT_INST_PROP_OR(inst, compact_event_code, 0) != INPUT_REL_Y),                \
+                 "compact-event-code must not overlap a native axis");                             \
     static struct zpt_pipeline_processor_data zpt_pipeline_processor_data_##inst;                  \
     static const struct zpt_pipeline_processor_config zpt_pipeline_processor_config_##inst = {     \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
@@ -146,6 +181,9 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
                 .invert_x = DT_INST_PROP(inst, invert_x),                                          \
                 .invert_y = DT_INST_PROP(inst, invert_y),                                          \
             },                                                                                     \
+        .compact_event_code = DT_INST_PROP_OR(inst, compact_event_code, 0),                        \
+        .compact_transport = DT_INST_NODE_HAS_PROP(inst, compact_event_code),                      \
+        .compact_transport_coalesced = DT_INST_PROP(inst, compact_transport_coalesced),            \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(                                                                         \
         inst, zpt_pipeline_processor_init, NULL, &zpt_pipeline_processor_data_##inst,              \

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+
+description: Complete-frame encoder for compact ZMK split pointing transport
+
+compatible: "measlesbagel,zpt-input-processor-compact-split-encoder"
+
+include: ip_zero_param.yaml
+
+properties:
+  event-code:
+    type: int
+    required: true
+    description: Relative input event code used to carry the packed frame

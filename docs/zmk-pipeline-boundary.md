@@ -83,6 +83,12 @@ indexes. `resolution-cpi` must match the sensor's compiled/current setting.
 identities unchanged when later profiles and telemetry address pipeline
 boundaries.
 
+A transported source may additionally set `compact-event-code` to accept the
+matched complete-frame format documented in
+[`compact-split-codec.md`](compact-split-codec.md). Decoding occurs inside the
+source boundary rather than as a generic X/Y expander, preserving packet
+sequence and source-side span metadata.
+
 ## Current limits
 
 - Only the fixed identity cursor composition is constructed.
