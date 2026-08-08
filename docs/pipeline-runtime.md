@@ -90,6 +90,21 @@ connection changes, transport discontinuity, external suppression, retuning,
 default restoration, and administrative reset. Individual production stages
 will document which values they preserve for each reason.
 
+## Router runtime
+
+The semantic-neutral router owns an ordered set of compatible pipelines and
+activates exactly one at a time. Validation claims every pipeline, requires a
+shared input signal kind, and rejects duplicate pipeline identities. A route
+change deactivates the outgoing pipeline with `PIPELINE_LEFT`, clearing its
+deadlines and buffered state, before activating the incoming pipeline with
+`PIPELINE_ENTERED`.
+
+Push, flush, and nearest-deadline queries delegate only to the active pipeline.
+Selecting the current pipeline is a lifecycle no-op. If incoming activation
+fails after the old route was left, the router deliberately has no active
+pipeline but remains available for a later recovery selection; stale input is
+never sent back through a pipeline that has already been deactivated.
+
 ## Current stages
 
 Most host tests intentionally use local fake stages and sinks rather than

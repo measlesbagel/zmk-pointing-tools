@@ -505,6 +505,11 @@ It owns:
 - activation state;
 - observer dispatch.
 
+The core router applies the same constraints across named pipelines. It owns
+their validation and enter/leave lifecycle, delegates input and deadlines only
+to the selected pipeline, and remains independent of the ZMK layer or behavior
+policy that chooses a route.
+
 The host implementation uses the same core source files and integer arithmetic
 as firmware. Zephyr adapters provide clocks, work scheduling, keypress/layer
 signals, and output integration around that core. The first adapter hosts frame
