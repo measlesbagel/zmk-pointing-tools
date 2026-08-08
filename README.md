@@ -22,6 +22,7 @@ work with arbitrary ZMK pointing devices.
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic regression replay of exported hardware traces
 - Guided scroll, text, cursor, click, and drag playground activities
+- A shared typed motion-pipeline runtime with a minimal identity cursor boundary
 
 Planned capabilities include:
 
@@ -55,6 +56,8 @@ semantics.
 See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor
 regression testing.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
+See [`docs/zmk-pipeline-boundary.md`](docs/zmk-pipeline-boundary.md) for the
+initial composable runtime integration with ZMK.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 

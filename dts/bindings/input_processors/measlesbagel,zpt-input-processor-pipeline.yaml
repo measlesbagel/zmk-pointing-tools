@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+
+description: Frame-aware ingress backed by an identity cursor pipeline
+
+compatible: "measlesbagel,zpt-input-processor-pipeline"
+
+include: ip_zero_param.yaml
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity for the constructed pipeline
+
+  source-id:
+    type: int
+    required: true
+    description: Stable identity for raw motion received by this ingress
+
+  transported:
+    type: boolean
+    description: Mark source frames as having crossed split transport

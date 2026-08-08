@@ -1,7 +1,8 @@
 # Composable motion pipeline architecture
 
-Status: accepted direction; API and devicetree names remain provisional until
-the host prototype validates them.
+Status: accepted direction; the shared runtime and minimal ZMK identity
+boundary are implemented, while the complete devicetree model remains
+provisional.
 
 This document defines the intended architecture for issue
 [#36](https://github.com/measlesbagel/zmk-pointing-tools/issues/36). It is a
@@ -501,9 +502,11 @@ It owns:
 - activation state;
 - observer dispatch.
 
-The host implementation must use the same core source files and integer
-arithmetic as firmware. Zephyr adapters provide clocks, work scheduling,
-keypress/layer signals, and output integration around that core.
+The host implementation uses the same core source files and integer arithmetic
+as firmware. Zephyr adapters provide clocks, work scheduling, keypress/layer
+signals, and output integration around that core. The first adapter hosts frame
+ingress in a standard ZMK input-listener processor chain and emits cursor
+events from a virtual device to a dedicated output listener.
 
 ## Routing and mode lifecycle
 
@@ -747,14 +750,15 @@ The host-only runtime fixes these representation details:
 See [`pipeline-runtime.md`](pipeline-runtime.md) for the prototype contract.
 
 The normalized unit remains domain-specific until source normalization is
-implemented. These questions remain for later measured slices:
+implemented. The standard ZMK input listener is the accepted source-specific
+ingress host; the future router will attach there once rather than using
+per-layer processor overrides. These questions remain for later measured
+slices:
 
 - physical/reference unit chosen by the normalization stage;
 - buffered-output policy for each production stage and reset reason;
 - compact split packet axis/sequence/time bit allocation;
 - which type errors devicetree can catch at build time versus initialization;
-- whether standard ZMK input listeners host ingress or a dedicated library
-  callback is safer for all source types.
 
 These questions do not change the thin-sink, typed-stage, explicit-lifecycle,
 or source-ownership decisions in this document.
