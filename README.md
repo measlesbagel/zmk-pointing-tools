@@ -36,7 +36,8 @@ not contain keyboard matrix definitions, sensor wiring, or personal keymaps.
 - Hardware: [`measlesbagel/bridges-v2-zmk-firmware`](https://github.com/measlesbagel/bridges-v2-zmk-firmware)
 - Consumer configuration: [`measlesbagel/zmk-config`](https://github.com/measlesbagel/zmk-config)
 
-See [`docs/architecture.md`](docs/architecture.md) for the initial design.
+See [`docs/architecture.md`](docs/architecture.md) for the accepted direction
+for composable sources, typed motion stages, routing, and thin output sinks.
 
 ## Status
 
