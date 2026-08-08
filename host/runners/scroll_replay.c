@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <zmk/pointing_tools/scroll.h>
+#include <zmk/pointing_tools/legacy_processor/scroll.h>
 
 static bool due(uint32_t now, uint32_t deadline) { return (int32_t)(now - deadline) >= 0; }
 

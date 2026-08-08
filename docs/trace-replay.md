@@ -55,9 +55,10 @@ previous event, making replay independent of uptime and timestamp wrap in the or
 
 Supported models are currently:
 
-- `noise-filter`, backed by `src/noise_filter.c`;
-- `adaptive-scroll`, backed by `src/scroll.c` and `src/axis_intent.c`;
-- `text-navigation`, backed by `src/text_nav.c`.
+- `noise-filter`, backed by `src/legacy_processor/noise_filter.c`;
+- `adaptive-scroll`, backed by `src/legacy_processor/scroll.c` and
+  `src/legacy_processor/axis_intent.c`;
+- `text-navigation`, backed by `src/legacy_processor/text_nav.c`.
 
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as

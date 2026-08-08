@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/text_nav.h>
+#include <zmk/pointing_tools/legacy_processor/text_nav.h>
 
 static const struct zpt_text_nav_settings settings = {
     .horizontal_threshold = 25,
