@@ -26,6 +26,8 @@ enum zpt_state_flag {
     ZPT_STATE_FLAG_OUTPUT = 1 << 5,
     ZPT_STATE_FLAG_CLIPPED_HORIZONTAL = 1 << 6,
     ZPT_STATE_FLAG_CLIPPED_VERTICAL = 1 << 7,
+    ZPT_STATE_FLAG_QUALIFIED = 1 << 8,
+    ZPT_STATE_FLAG_PENDING_DISCARDED = 1 << 9,
 };
 
 struct zpt_state_sample {

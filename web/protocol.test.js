@@ -42,13 +42,13 @@ test("decodes fragmented and adjacent frames", () => {
 
 test("parses stream descriptions", () => {
   const label = new TextEncoder().encode("Right raw");
-  const payload = Uint8Array.of(5, 1, 7, 0, label.length, ...label);
+  const payload = Uint8Array.of(6, 1, 7, 0, label.length, ...label);
   assert.deepEqual(parseDescribe(payload), {
-    version: 5,
+    version: 6,
     streams: [{ deviceId: 7, stage: 0, label: "Right raw", key: "7:0" }],
   });
   assert.throws(
-    () => parseDescribe(Uint8Array.of(4, 0)),
+    () => parseDescribe(Uint8Array.of(5, 0)),
     /does not match tuner protocol/,
   );
 });

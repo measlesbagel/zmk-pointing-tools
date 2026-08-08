@@ -16,6 +16,7 @@ Generate a machine-readable report for review or comparison:
 
 ```sh
 node host/replay/cli.js \
+  --noise-runner build/host/zpt_noise_filter_replay \
   --scroll-runner build/host/zpt_scroll_replay \
   --text-runner build/host/zpt_text_nav_replay \
   --json /tmp/replay.json \
@@ -27,6 +28,7 @@ After intentionally changing processor behavior, inspect the report before updat
 
 ```sh
 node host/replay/cli.js \
+  --noise-runner build/host/zpt_noise_filter_replay \
   --scroll-runner build/host/zpt_scroll_replay \
   --text-runner build/host/zpt_text_nav_replay \
   --update \
@@ -53,6 +55,7 @@ previous event, making replay independent of uptime and timestamp wrap in the or
 
 Supported models are currently:
 
+- `noise-filter`, backed by `src/noise_filter.c`;
 - `adaptive-scroll`, backed by `src/scroll.c` and `src/axis_intent.c`;
 - `text-navigation`, backed by `src/text_nav.c`.
 

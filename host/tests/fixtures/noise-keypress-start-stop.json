@@ -1,0 +1,136 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "noise-keypress-start-stop",
+  "description": "Typing vibration is suppressed, deliberate motion later qualifies, and motion after idle must qualify again.",
+  "metadata": {
+    "device": "left-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "cursor",
+    "provenance": "Curated from normal typing and start-stop hardware captures"
+  },
+  "processor": {
+    "kind": "noise-filter",
+    "settings": {
+      "enabled": true,
+      "activationDistance": 6,
+      "coherencePercent": 60,
+      "qualificationTimeoutMs": 160,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 40
+    }
+  },
+  "events": [
+    [
+      "keypress",
+      0
+    ],
+    [
+      "motion",
+      4,
+      3,
+      -1
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      1
+    ],
+    [
+      "motion",
+      8,
+      4,
+      0
+    ],
+    [
+      "motion",
+      20,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      140,
+      -2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      0
+    ]
+  ],
+  "expect": {
+    "inputFrames": 12,
+    "durationMs": 236,
+    "outputFrames": 2,
+    "outputCadence": {
+      "meanIntervalMs": 156,
+      "maximumIntervalMs": 156
+    },
+    "horizontal": {
+      "signedDistance": 0,
+      "absoluteDistance": 12,
+      "nonzeroFrames": 2,
+      "directionChanges": 1,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 0,
+      "absoluteDistance": 0,
+      "nonzeroFrames": 0,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "phaseFrames": {
+      "idle": 3,
+      "pending": 7,
+      "active": 2,
+      "bypass": 0
+    },
+    "idleResets": 1,
+    "qualificationResets": 0,
+    "suppressedFrames": 3,
+    "qualifications": 2,
+    "discardedFrames": 0
+  }
+}

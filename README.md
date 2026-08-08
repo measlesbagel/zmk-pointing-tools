@@ -12,6 +12,7 @@ work with arbitrary ZMK pointing devices.
 - Frame-aware movement coalescing
 - Synchronized two-axis scrolling with fractional accumulation
 - Adaptive, vertical-only, horizontal-only, and free scroll policies
+- Rotation-invariant buffered dead-zone and noise qualification
 - Gesture-locked movement-to-behavior processing for text navigation
 - Pass-through staged motion telemetry and trace recording
 - Optional semantic telemetry for intent, suppression, accumulation, and clipping decisions
@@ -46,6 +47,8 @@ profile, and reset to compiled defaults. Explicit optional persistence remains
 under development.
 
 See [`docs/processors.md`](docs/processors.md) for devicetree usage.
+See [`docs/noise-filter.md`](docs/noise-filter.md) for dead-zone design and
+tuning guidance.
 See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
 semantics.
 See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor

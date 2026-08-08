@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT
+
+description: Vector-aware buffered dead-zone and noise filter
+
+compatible: "measlesbagel,zpt-input-processor-noise-filter"
+
+include: ip_zero_param.yaml
+
+properties:
+  tuning-id:
+    type: string
+    required: true
+    description: Stable machine-readable identity used by tuning profiles
+
+  tuning-label:
+    type: string
+    default: "Noise filter"
+    description: Host-facing name used by the runtime tuner
+
+  enabled:
+    type: boolean
+    description: Enable qualification; when absent all complete vectors pass unchanged
+
+  activation-distance:
+    type: int
+    required: true
+    description: Radial net displacement required to qualify intentional movement
+
+  coherence-percent:
+    type: int
+    required: true
+    description: Minimum rotation-invariant directional coherence from 0 through 100
+
+  qualification-timeout-ms:
+    type: int
+    required: true
+    description: Maximum time allowed for pending movement to qualify
+
+  idle-timeout-ms:
+    type: int
+    required: true
+    description: Gap after which active movement must qualify again
+
+  suppress-after-keypress-ms:
+    type: int
+    description: Ignore movement for this duration after each physical key press

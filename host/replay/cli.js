@@ -12,15 +12,21 @@ function main() {
     options: {
       "scroll-runner": { type: "string" },
       "text-runner": { type: "string" },
+      "noise-runner": { type: "string" },
       update: { type: "boolean", default: false },
       json: { type: "string" },
     },
   });
-  if (!values["scroll-runner"] || !values["text-runner"] || fixtures.length === 0) {
-    throw new Error("Scroll runner, text runner, and at least one fixture are required");
+  if (!values["scroll-runner"] || !values["text-runner"] || !values["noise-runner"] ||
+      fixtures.length === 0) {
+    throw new Error("All processor runners and at least one fixture are required");
   }
 
-  const runners = { scroll: values["scroll-runner"], text: values["text-runner"] };
+  const runners = {
+    noise: values["noise-runner"],
+    scroll: values["scroll-runner"],
+    text: values["text-runner"],
+  };
   const reports = fixtures.map((fixture) => replayFixture(fixture, runners, values.update));
   for (const report of reports) {
     if (report.differences.length) {

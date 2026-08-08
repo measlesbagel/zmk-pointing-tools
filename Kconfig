@@ -1,6 +1,7 @@
 DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
+DT_COMPAT_ZPT_NOISE_FILTER := measlesbagel,zpt-input-processor-noise-filter
 DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
 DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
 
@@ -20,6 +21,15 @@ config ZMK_POINTING_TOOLS_SCROLL
     help
       Coalesce complete X/Y frames and emit synchronized horizontal and
       vertical scrolling with free, adaptive, or forced axis policies.
+
+config ZMK_POINTING_TOOLS_NOISE_FILTER
+    bool "Vector-aware dead-zone and noise filter"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_NOISE_FILTER))
+    depends on ZMK_POINTING
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    help
+      Buffer idle vectors until coherent radial movement qualifies, then pass
+      the complete gesture without per-axis bias or lost distance.
 
 config ZMK_POINTING_TOOLS_TEXT_NAV
     bool "Gesture-locked text navigation processor"
@@ -52,7 +62,7 @@ if ZMK_POINTING_TOOLS_TELEMETRY
 config ZMK_POINTING_TOOLS_RUNTIME_TUNING
     bool "Temporary runtime tuning over USB serial"
     default y
-    depends on ZMK_POINTING_TOOLS_SCROLL || ZMK_POINTING_TOOLS_TEXT_NAV
+    depends on ZMK_POINTING_TOOLS_SCROLL || ZMK_POINTING_TOOLS_TEXT_NAV || ZMK_POINTING_TOOLS_NOISE_FILTER
     help
       Discover semantic processors and preview validated parameter changes.
       Runtime values are never persisted and return to devicetree defaults on

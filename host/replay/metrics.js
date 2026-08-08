@@ -84,6 +84,27 @@ export function parseTextMetrics(output, fixture) {
   };
 }
 
+export function parseNoiseFilterMetrics(output, fixture) {
+  const { decisions, outputs } = parseLines(output, fixture, 13, 3);
+  const phaseNames = ["idle", "pending", "active", "bypass"];
+  const phaseFrames = Object.fromEntries(phaseNames.map((phase) => [phase, 0]));
+  for (const decision of decisions) phaseFrames[phaseNames[decision[1]]] += 1;
+  return {
+    inputFrames: decisions.length,
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    outputFrames: outputs.length,
+    outputCadence: outputCadence(outputs),
+    horizontal: axisMetrics(outputs, 1),
+    vertical: axisMetrics(outputs, 2),
+    phaseFrames,
+    idleResets: decisions.filter((decision) => decision[6] !== 0).length,
+    qualificationResets: decisions.filter((decision) => decision[7] !== 0).length,
+    suppressedFrames: decisions.filter((decision) => decision[8] !== 0).length,
+    qualifications: decisions.filter((decision) => decision[9] !== 0).length,
+    discardedFrames: decisions.filter((decision) => decision[10] !== 0).length,
+  };
+}
+
 export function compareMetrics(expected, actual, prefix = "") {
   const differences = [];
   for (const [key, value] of Object.entries(expected ?? {})) {

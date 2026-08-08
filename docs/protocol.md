@@ -3,7 +3,7 @@
 The first transport is USB CDC-ACM for use through Web Serial. The protocol is
 otherwise transport-independent. All multi-byte integers are little-endian.
 
-The current protocol is version 5. Firmware and host are updated together; the
+The current protocol is version 6. Firmware and host are updated together; the
 tuner rejects every other version instead of carrying compatibility parsers or
 feature gates for older firmware.
 
@@ -96,8 +96,9 @@ repeat target-count times:
   label:utf8[label-length]
 ```
 
-Target kind `1` is a synchronized scroll processor and kind `2` is a
-gesture-locked text-navigation processor.
+Target kind `1` is a synchronized scroll processor, kind `2` is a
+gesture-locked text-navigation processor, and kind `3` is a vector-aware noise
+filter.
 
 ### Tuning target description
 
@@ -256,6 +257,8 @@ Intent values are undecided (`0`), free (`1`), horizontal (`2`), and vertical
 | 5 | semantic output emitted |
 | 6 | horizontal output clipped to the HID range |
 | 7 | vertical output clipped to the HID range |
+| 8 | pending movement qualified as intentional |
+| 9 | pending movement discarded |
 
 The ten values are defined by target kind and event:
 
@@ -264,6 +267,7 @@ The ten values are defined by target kind and event:
 | scroll frame | input X/Y, horizontal/vertical energy, undecided X/Y, pending X/Y, remainder X/Y |
 | scroll flush | output H/V, horizontal/vertical energy, pre-flush undecided X/Y, post-flush pending X/Y, remainder X/Y |
 | text frame | input X/Y, accumulated X/Y, direction, then five reserved zeros |
+| noise-filter frame | input X/Y, output X/Y, pending X/Y, pending frame count, squared energy, phase, enabled |
 
 Text direction is none (`-1`), left (`0`), right (`1`), up (`2`), or down
 (`3`). Reserved values and unknown flags must be ignored for forward
