@@ -23,6 +23,7 @@
         #input-processor-cells = <0>;
         stable-id = "test-cursor";
         source-id = <1>;
+        resolution-cpi = <700>;
     };
 
     zpt_test_cursor_output: zpt_test_cursor_output {

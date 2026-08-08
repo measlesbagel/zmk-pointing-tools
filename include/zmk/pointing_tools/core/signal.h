@@ -49,6 +49,7 @@ struct zpt_signal_metadata {
     uint32_t flags;
     uint16_t source_id;
     uint16_t sequence;
+    uint16_t resolution_cpi;
 };
 
 struct zpt_signal_annotations {

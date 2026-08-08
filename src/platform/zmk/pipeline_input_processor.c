@@ -13,23 +13,23 @@
 #include <drivers/input_processor.h>
 
 #include <zmk/pointing_tools/sink/cursor.h>
-#include <zmk/pointing_tools/source/frame_assembler.h>
+#include <zmk/pointing_tools/source/motion_source.h>
+#include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/pointer_identity.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct zpt_pipeline_processor_config {
     const char *stable_id;
-    uint32_t source_flags;
-    uint16_t source_id;
+    struct zpt_motion_source_config source;
+    struct zpt_orientation_config orientation;
 };
 
 struct zpt_pipeline_processor_data {
     struct k_spinlock frame_lock;
-    struct zpt_frame_assembler frame;
-    uint16_t sequence;
+    struct zpt_motion_source_state source;
     struct zpt_cursor_sink_config sink_config;
-    struct zpt_stage stages[1];
+    struct zpt_stage stages[2];
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
 };
@@ -38,8 +38,19 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
     const struct zpt_pipeline_processor_config *config = dev->config;
     struct zpt_pipeline_processor_data *data = dev->data;
 
+    int ret = zpt_motion_source_init(&data->source, &config->source);
+    if (ret < 0) {
+        LOG_ERR("Failed to initialize motion source for %s: %d", config->stable_id, ret);
+        return ret;
+    }
+
     data->sink_config.output_device = dev;
     data->stages[0] = (struct zpt_stage){
+        .stable_id = "orientation",
+        .api = &zpt_orthogonal_orientation_stage_api,
+        .config = &config->orientation,
+    };
+    data->stages[1] = (struct zpt_stage){
         .stable_id = "raw-pointer-identity",
         .api = &zpt_raw_pointer_identity_stage_api,
     };
@@ -54,10 +65,10 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
         .stages = data->stages,
         .stage_count = ARRAY_SIZE(data->stages),
         .sink = &data->sink,
-        .dispatch_budget = 4,
+        .dispatch_budget = 6,
     };
 
-    int ret = zpt_pipeline_validate(&data->pipeline);
+    ret = zpt_pipeline_validate(&data->pipeline);
     if (ret < 0) {
         LOG_ERR("Failed to validate motion pipeline %s: %d", config->stable_id, ret);
         return ret;
@@ -78,24 +89,20 @@ static int zpt_pipeline_processor_handle_event(const struct device *dev, struct 
 
     const struct zpt_pipeline_processor_config *config = dev->config;
     struct zpt_pipeline_processor_data *data = dev->data;
-    struct zpt_raw_motion motion;
-    uint32_t frame_flags;
-    uint16_t sequence = 0;
+    struct zpt_signal signal;
     bool frame_ready = false;
+    uint32_t now = event->sync ? k_uptime_get_32() : 0U;
 
     k_spinlock_key_t key = k_spin_lock(&data->frame_lock);
     if (event->type == INPUT_EV_REL && event->code == INPUT_REL_X) {
-        zpt_frame_assembler_add(&data->frame, ZPT_MOTION_AXIS_X, event->value);
+        zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_X, event->value);
         event->value = 0;
     } else if (event->type == INPUT_EV_REL && event->code == INPUT_REL_Y) {
-        zpt_frame_assembler_add(&data->frame, ZPT_MOTION_AXIS_Y, event->value);
+        zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_Y, event->value);
         event->value = 0;
     }
     if (event->sync) {
-        frame_ready = zpt_frame_assembler_take(&data->frame, &motion, &frame_flags);
-        if (frame_ready) {
-            sequence = data->sequence++;
-        }
+        frame_ready = zpt_motion_source_take(&data->source, now, 0U, 0U, &signal);
     }
     k_spin_unlock(&data->frame_lock, key);
 
@@ -103,21 +110,6 @@ static int zpt_pipeline_processor_handle_event(const struct device *dev, struct 
         return ZMK_INPUT_PROC_CONTINUE;
     }
 
-    const struct zpt_signal signal = {
-        .kind = ZPT_SIGNAL_RAW_MOTION,
-        .metadata =
-            {
-                .observed_at_ms = k_uptime_get_32(),
-                .flags = config->source_flags | frame_flags,
-                .source_id = config->source_id,
-                .sequence = sequence,
-            },
-        .annotations =
-            {
-                .axis_intent = ZPT_SIGNAL_AXIS_UNDECIDED,
-            },
-        .data.raw_motion = motion,
-    };
     struct zpt_pipeline_result result;
     int ret = zpt_pipeline_push(&data->pipeline, &signal, &result);
     if (ret < 0) {
@@ -135,12 +127,25 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
 #define ZPT_PIPELINE_PROCESSOR_DEFINE(inst)                                                        \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) >= 0, "source-id cannot be negative");              \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) <= UINT16_MAX, "source-id must fit in 16 bits");    \
+    BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) > 0, "resolution-cpi must be positive");       \
+    BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) <= UINT16_MAX,                                 \
+                 "resolution-cpi must fit in 16 bits");                                            \
     static struct zpt_pipeline_processor_data zpt_pipeline_processor_data_##inst;                  \
     static const struct zpt_pipeline_processor_config zpt_pipeline_processor_config_##inst = {     \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
-        .source_flags = COND_CODE_1(DT_INST_PROP(inst, transported),                               \
-                                    (ZPT_SIGNAL_FLAG_TRANSPORTED), (ZPT_SIGNAL_FLAG_LOCAL)),       \
-        .source_id = DT_INST_PROP(inst, source_id),                                                \
+        .source =                                                                                  \
+            {                                                                                      \
+                .flags = COND_CODE_1(DT_INST_PROP(inst, transported),                              \
+                                     (ZPT_SIGNAL_FLAG_TRANSPORTED), (ZPT_SIGNAL_FLAG_LOCAL)),      \
+                .source_id = DT_INST_PROP(inst, source_id),                                        \
+                .resolution_cpi = DT_INST_PROP(inst, resolution_cpi),                              \
+            },                                                                                     \
+        .orientation =                                                                             \
+            {                                                                                      \
+                .swap_xy = DT_INST_PROP(inst, swap_xy),                                            \
+                .invert_x = DT_INST_PROP(inst, invert_x),                                          \
+                .invert_y = DT_INST_PROP(inst, invert_y),                                          \
+            },                                                                                     \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(                                                                         \
         inst, zpt_pipeline_processor_init, NULL, &zpt_pipeline_processor_data_##inst,              \

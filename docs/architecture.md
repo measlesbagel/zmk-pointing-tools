@@ -254,14 +254,15 @@ struct raw_motion_frame {
     uint32_t sample_span_us;
     uint16_t source_id;
     uint16_t sequence;
+    uint16_t resolution_cpi;
     uint32_t flags;
 };
 ```
 
-The actual integer widths and optional fields will be fixed by the host
-prototype. `observed_at_ms` is central arrival time unless a source or codec
-provides better information. `sample_span_us` records the motion interval when
-known and may be estimated from configuration.
+`observed_at_ms` is central arrival time unless a source or codec provides
+better information. `sample_span_us` records the motion interval when known and
+may be estimated from configuration. `resolution_cpi` is the source's current
+nominal counts-per-inch setting, not a calibrated gain.
 
 Useful flags include:
 
@@ -275,19 +276,20 @@ Useful flags include:
 
 ### Normalized motion
 
-An explicit normalization stage applies orientation, CPI/resolution, and
-calibration to produce fixed-point displacement. It does not overwrite the raw
-trace. Algorithms that compare physical speed or use device-independent
-distance should consume normalized motion.
+Ordered orthogonal-orientation and resolution-normalization stages produce
+fixed-point displacement without overwriting the source raw trace. Calibration
+remains a separate optional transform so nominal sensor resolution, measured
+device correction, and semantic gain are never conflated. Algorithms that
+compare physical speed or use device-independent distance should consume
+normalized motion.
 
-The prototype must compare fixed-point representations before choosing one.
-The target must:
+Normalized motion uses signed Q16 millimetres. This representation:
 
-- retain fractional movement across stages;
-- cover realistic coalesced sensor deltas without overflow;
-- avoid floating-point requirements in firmware;
-- convert deterministically in host and firmware;
-- expose understandable physical or reference units to the tuner.
+- retains fractional movement across stages;
+- covers realistic coalesced sensor deltas without overflow;
+- avoids floating-point requirements in firmware;
+- converts deterministically in host and firmware;
+- exposes understandable physical units to the tuner.
 
 Algorithms may explicitly consume raw motion when quantization at low CPI is
 part of the intended policy. This must be declared rather than inferred.
@@ -302,7 +304,7 @@ Initial domains to validate are:
 | Domain | Meaning |
 | --- | --- |
 | raw motion | Reconstructed source counts and evidence |
-| normalized motion | Fixed-point calibrated two-dimensional displacement |
+| normalized motion | Q16 nominal or calibrated two-dimensional millimetres |
 | pointer delta | Continuous host-pointer displacement |
 | scroll delta | Continuous logical two-dimensional scroll displacement |
 | scroll steps | Integral horizontal/vertical wheel steps |
@@ -749,13 +751,11 @@ The host-only runtime fixes these representation details:
 
 See [`pipeline-runtime.md`](pipeline-runtime.md) for the prototype contract.
 
-The normalized unit remains domain-specific until source normalization is
-implemented. The standard ZMK input listener is the accepted source-specific
-ingress host; the future router will attach there once rather than using
-per-layer processor overrides. These questions remain for later measured
-slices:
+Normalized motion uses Q16 millimetres. The standard ZMK input listener is the
+accepted source-specific ingress host; the future router will attach there once
+rather than using per-layer processor overrides. These questions remain for
+later measured slices:
 
-- physical/reference unit chosen by the normalization stage;
 - buffered-output policy for each production stage and reset reason;
 - compact split packet axis/sequence/time bit allocation;
 - which type errors devicetree can catch at build time versus initialization;

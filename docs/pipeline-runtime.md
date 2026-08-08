@@ -12,15 +12,17 @@ pointer deltas, continuous scroll deltas, discrete scroll steps, and actions.
 Each signal carries source and timing metadata plus reusable annotations.
 
 Raw motion preserves signed sensor counts. Continuous processed domains use a
-signed 64-bit fixed-point value with 16 fractional bits. The meaning of one
-whole unit is domain-specific until the normalization and mapper stages are
-implemented; the representation itself is fixed so host and firmware can use
-identical integer arithmetic. The complete tagged signal has a compile-time
-maximum size of 64 bytes so stages can copy and buffer it without allocation.
+signed 64-bit fixed-point value with 16 fractional bits. One normalized-motion
+unit is one millimetre; later semantic mappers define pointer and scroll units.
+The representation is fixed so host and firmware use identical integer
+arithmetic. The complete tagged signal has a compile-time maximum size of 64
+bytes so stages can copy and buffer it without allocation.
 
-Source flags distinguish local, transported, coalesced, estimated, clipped,
-gapped, malformed, and discontinuous input. Stages copy or deliberately amend
-this evidence rather than reconstructing it independently.
+Source metadata includes stable identity, sequence, current CPI, observation
+time, and optional sample span. Flags distinguish local, transported,
+coalesced, estimated, clipped, gapped, malformed, and discontinuous input.
+Stages copy or deliberately amend this evidence rather than reconstructing it
+independently.
 
 ## Pipeline validation
 
@@ -101,7 +103,8 @@ shipping premature production algorithms. They prove:
 - deactivation emission followed by reset;
 - rejection of a stage emitting a kind outside its contract.
 
-The first shared production stage maps raw counts to whole pointer deltas for
-identity testing. The ZMK boundary adds a generic frame assembler and a thin
-cursor sink. It uses the standard ZMK input listener as its source-specific
-processor host; routing and timer scheduling remain later slices.
+Production stateless stages now provide exact orthogonal orientation,
+counts-per-inch normalization to Q16 millimetres, and raw-count pointer identity
+for boundary testing. The ZMK adapter uses the standard input listener as its
+source-specific processor host; routing and timer scheduling remain later
+slices.
