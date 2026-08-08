@@ -1,8 +1,8 @@
 # Composable motion pipeline architecture
 
-Status: accepted direction; the shared runtime and minimal ZMK identity
-boundary are implemented, while the complete devicetree model remains
-provisional.
+Status: accepted direction; the shared runtime, minimal ZMK identity boundary,
+and ordered devicetree stage references are implemented. Configurable sinks,
+routing, and observer discovery remain provisional.
 
 This document defines the intended architecture for issue
 [#36](https://github.com/measlesbagel/zmk-pointing-tools/issues/36). It is a

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+
+description: Common properties for a composable pointing-tool stage
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity unique within the owning pipeline

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+
+description: Coherent displacement motion-gate stage over normalized motion
+
+compatible: "measlesbagel,zpt-stage-coherent-displacement"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  enabled:
+    type: boolean
+    description: Enable qualification; when absent complete vectors bypass the gate
+
+  activation-distance-micrometers:
+    type: int
+    required: true
+    description: Radial net displacement required to qualify intentional movement
+
+  coherence-percent:
+    type: int
+    required: true
+    description: Minimum rotation-invariant directional coherence from 0 through 100
+
+  qualification-timeout-ms:
+    type: int
+    required: true
+    description: Maximum time allowed for pending movement to qualify
+
+  idle-timeout-ms:
+    type: int
+    required: true
+    description: Gap after which active movement must qualify again

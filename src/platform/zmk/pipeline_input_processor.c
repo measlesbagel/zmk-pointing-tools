@@ -12,18 +12,19 @@
 
 #include <drivers/input_processor.h>
 
+#include <zmk/pointing_tools/platform/zmk/stage_provider.h>
 #include <zmk/pointing_tools/sink/cursor.h>
 #include <zmk/pointing_tools/source/motion_source.h>
 #include <zmk/pointing_tools/source/transport/compact_split_codec.h>
-#include <zmk/pointing_tools/stage/orientation.h>
-#include <zmk/pointing_tools/stage/pointer_identity.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct zpt_pipeline_processor_config {
     const char *stable_id;
     struct zpt_motion_source_config source;
-    struct zpt_orientation_config orientation;
+    const struct device *const *stage_devices;
+    size_t stage_count;
+    uint32_t dispatch_budget;
     uint16_t compact_event_code;
     bool compact_transport;
     bool compact_transport_coalesced;
@@ -34,8 +35,7 @@ struct zpt_pipeline_processor_data {
     struct zpt_motion_source_state source;
     struct zpt_compact_split_decoder compact_decoder;
     struct zpt_cursor_sink_config sink_config;
-    struct zpt_stage stage_storage[2];
-    struct zpt_stage *stages[2];
+    struct zpt_stage **stages;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
 };
@@ -51,18 +51,16 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
     }
     zpt_compact_split_decoder_init(&data->compact_decoder);
 
+    for (size_t index = 0; index < config->stage_count; index++) {
+        ret = zpt_zmk_stage_provider_get(config->stage_devices[index], &data->stages[index]);
+        if (ret < 0) {
+            LOG_ERR("Failed to resolve stage %u for %s: %d", (unsigned int)index, config->stable_id,
+                    ret);
+            return ret;
+        }
+    }
+
     data->sink_config.output_device = dev;
-    data->stage_storage[0] = (struct zpt_stage){
-        .stable_id = "orientation",
-        .api = &zpt_orthogonal_orientation_stage_api,
-        .config = &config->orientation,
-    };
-    data->stage_storage[1] = (struct zpt_stage){
-        .stable_id = "raw-pointer-identity",
-        .api = &zpt_raw_pointer_identity_stage_api,
-    };
-    data->stages[0] = &data->stage_storage[0];
-    data->stages[1] = &data->stage_storage[1];
     data->sink = (struct zpt_sink){
         .stable_id = "cursor",
         .api = &zpt_cursor_sink_api,
@@ -72,9 +70,9 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
         .stable_id = config->stable_id,
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
         .stages = data->stages,
-        .stage_count = ARRAY_SIZE(data->stages),
+        .stage_count = config->stage_count,
         .sink = &data->sink,
-        .dispatch_budget = 6,
+        .dispatch_budget = config->dispatch_budget,
     };
 
     ret = zpt_pipeline_validate(&data->pipeline);
@@ -152,6 +150,7 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
 };
 
 #define ZPT_PIPELINE_PROCESSOR_DEFINE(inst)                                                        \
+    BUILD_ASSERT(DT_INST_PROP_LEN(inst, stages) > 0, "pipeline requires at least one stage");      \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) >= 0, "source-id cannot be negative");              \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) <= UINT16_MAX, "source-id must fit in 16 bits");    \
     BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) > 0, "resolution-cpi must be positive");       \
@@ -168,7 +167,12 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
                      (DT_INST_PROP_OR(inst, compact_event_code, 0) != INPUT_REL_X &&               \
                       DT_INST_PROP_OR(inst, compact_event_code, 0) != INPUT_REL_Y),                \
                  "compact-event-code must not overlap a native axis");                             \
-    static struct zpt_pipeline_processor_data zpt_pipeline_processor_data_##inst;                  \
+    static const struct device *const zpt_pipeline_stage_devices_##inst[] = {                      \
+        DT_INST_FOREACH_PROP_ELEM_SEP(inst, stages, ZPT_PIPELINE_STAGE_DEVICE, (, ))};             \
+    static struct zpt_stage *zpt_pipeline_stages_##inst[DT_INST_PROP_LEN(inst, stages)];           \
+    static struct zpt_pipeline_processor_data zpt_pipeline_processor_data_##inst = {               \
+        .stages = zpt_pipeline_stages_##inst,                                                      \
+    };                                                                                             \
     static const struct zpt_pipeline_processor_config zpt_pipeline_processor_config_##inst = {     \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
         .source =                                                                                  \
@@ -178,12 +182,9 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
                 .source_id = DT_INST_PROP(inst, source_id),                                        \
                 .resolution_cpi = DT_INST_PROP(inst, resolution_cpi),                              \
             },                                                                                     \
-        .orientation =                                                                             \
-            {                                                                                      \
-                .swap_xy = DT_INST_PROP(inst, swap_xy),                                            \
-                .invert_x = DT_INST_PROP(inst, invert_x),                                          \
-                .invert_y = DT_INST_PROP(inst, invert_y),                                          \
-            },                                                                                     \
+        .stage_devices = zpt_pipeline_stage_devices_##inst,                                        \
+        .stage_count = ARRAY_SIZE(zpt_pipeline_stage_devices_##inst),                              \
+        .dispatch_budget = DT_INST_PROP(inst, dispatch_budget),                                    \
         .compact_event_code = DT_INST_PROP_OR(inst, compact_event_code, 0),                        \
         .compact_transport = DT_INST_NODE_HAS_PROP(inst, compact_event_code),                      \
         .compact_transport_coalesced = DT_INST_PROP(inst, compact_transport_coalesced),            \
@@ -192,5 +193,8 @@ static const struct zmk_input_processor_driver_api zpt_pipeline_processor_driver
         inst, zpt_pipeline_processor_init, NULL, &zpt_pipeline_processor_data_##inst,              \
         &zpt_pipeline_processor_config_##inst, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,   \
         &zpt_pipeline_processor_driver_api);
+
+#define ZPT_PIPELINE_STAGE_DEVICE(node_id, prop, index)                                            \
+    DEVICE_DT_GET(DT_PHANDLE_BY_IDX(node_id, prop, index))
 
 DT_INST_FOREACH_STATUS_OKAY(ZPT_PIPELINE_PROCESSOR_DEFINE)
