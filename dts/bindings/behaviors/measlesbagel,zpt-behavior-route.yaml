@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+
+description: Momentarily override a pointing router with one named pipeline
+
+compatible: "measlesbagel,zpt-behavior-route"
+
+include: zero_param.yaml
+
+properties:
+  router:
+    type: phandle
+    required: true
+    description: Pointing router receiving the temporary override
+
+  pipeline:
+    type: phandle
+    required: true
+    description: Pipeline selected from press until release
