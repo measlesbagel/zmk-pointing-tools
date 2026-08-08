@@ -18,6 +18,19 @@
         label = "Test output";
     };
 
+    zpt_test_cursor_pipeline: zpt_test_cursor_pipeline {
+        compatible = "measlesbagel,zpt-input-processor-pipeline";
+        #input-processor-cells = <0>;
+        stable-id = "test-cursor";
+        source-id = <1>;
+    };
+
+    zpt_test_cursor_output: zpt_test_cursor_output {
+        compatible = "zmk,input-listener";
+        device = <&zpt_test_cursor_pipeline>;
+        input-processors = <&zpt_test_output>;
+    };
+
     zpt_test_scroll: zpt_test_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;
@@ -56,7 +69,7 @@
     zpt_test_noise_output: zpt_test_noise_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_noise_filter>;
-        input-processors = <&zpt_test_output>;
+        input-processors = <&zpt_test_raw &zpt_test_cursor_pipeline>;
     };
 
     zpt_test_text_nav: zpt_test_text_nav {

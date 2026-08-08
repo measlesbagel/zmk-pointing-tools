@@ -1,8 +1,9 @@
-# Host motion pipeline prototype
+# Motion pipeline runtime
 
-The pipeline runtime is the host-only reference implementation for the
-architecture in [`architecture.md`](architecture.md). It does not yet register
-a ZMK input processor or change firmware behavior.
+The pipeline runtime is the shared C implementation of the architecture in
+[`architecture.md`](architecture.md). Host tests exercise the complete runtime
+without Zephyr. The first firmware adapter uses it for the identity cursor path
+documented in [`zmk-pipeline-boundary.md`](zmk-pipeline-boundary.md).
 
 ## Signals
 
@@ -85,9 +86,9 @@ connection changes, transport discontinuity, external suppression, retuning,
 default restoration, and administrative reset. Individual production stages
 will document which values they preserve for each reason.
 
-## Current test stages
+## Current stages
 
-The host tests intentionally use local fake stages and sinks rather than
+Most host tests intentionally use local fake stages and sinks rather than
 shipping premature production algorithms. They prove:
 
 - raw-to-normalized-to-pointer typed flow;
@@ -100,6 +101,7 @@ shipping premature production algorithms. They prove:
 - deactivation emission followed by reset;
 - rejection of a stage emitting a kind outside its contract.
 
-The next architecture slice will use this core behind a minimal ZMK ingress
-and thin cursor sink. That work must first decide whether the standard ZMK
-input listener or a dedicated callback is the safer ingress host.
+The first shared production stage maps raw counts to whole pointer deltas for
+identity testing. The ZMK boundary adds a generic frame assembler and a thin
+cursor sink. It uses the standard ZMK input listener as its source-specific
+processor host; routing and timer scheduling remain later slices.

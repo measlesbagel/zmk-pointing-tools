@@ -2,6 +2,7 @@ DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
 DT_COMPAT_ZPT_NOISE_FILTER := measlesbagel,zpt-input-processor-noise-filter
+DT_COMPAT_ZPT_PIPELINE := measlesbagel,zpt-input-processor-pipeline
 DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
 DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
 
@@ -30,6 +31,16 @@ config ZMK_POINTING_TOOLS_NOISE_FILTER
     help
       Buffer idle vectors until coherent radial movement qualifies, then pass
       the complete gesture without per-axis bias or lost distance.
+
+config ZMK_POINTING_TOOLS_PIPELINE
+    bool "Composable motion pipeline boundary"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_PIPELINE))
+    depends on ZMK_POINTING
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    help
+      Reconstruct synchronized X/Y frames, execute the shared motion pipeline
+      runtime, and emit terminal cursor output through a virtual input device.
+      The initial implementation provides an identity cursor pipeline only.
 
 config ZMK_POINTING_TOOLS_TEXT_NAV
     bool "Gesture-locked text navigation processor"
