@@ -50,8 +50,9 @@ The exploratory review established these initial decisions:
 4. Transport batching and semantic output batching are separate operations.
 5. Strategies are selected at compile time initially; runtime tuning changes
    validated numeric and boolean settings only.
-6. Compact split transport is optional, matched at both ends, and receives a
-   trace-backed packet design before its bit allocation is fixed.
+6. Compact split transport is optional and matched at both ends. Its initial
+   packet allocation is trace-backed and documented in
+   [`compact-split-codec.md`](compact-split-codec.md).
 7. Sinks are thin terminal adapters. Interpretation, accumulation,
    quantization, and scheduling happen in preceding stages.
 
@@ -558,9 +559,9 @@ The codec design must evaluate:
 - version mismatch detection without compatibility parsing;
 - BLE traffic savings versus native split events.
 
-The current Bridges 16-bit X/Y packing is evidence for the need but not the
-required final format. Its sign-extension repair becomes unnecessary once
-the codec owns signed decoding explicitly.
+The current codec uses exact signed 11-bit axes, source-side span, a rolling
+sequence, and a current-format guard. The previous Bridges sign-extension
+repair becomes unnecessary because the codec owns signed decoding explicitly.
 
 ### Source versus output batching
 
@@ -724,7 +725,9 @@ parity.
 4. **Source normalization:** add orientation, source metadata, fixed-point
    normalization, and native split reconstruction.
 5. **Transport codec:** evaluate and implement the optional matched compact
-   encoder/decoder with diagnostics.
+   encoder/decoder with diagnostics. The reusable codec and initial ZMK
+   endpoints are implemented; Bridges migration remains gated on composed
+   scroll parity.
 6. **Motion gate migration:** reframe the current noise filter as a generic
    stage and remove its independent virtual-device plumbing.
 7. **Scroll migration:** compose intent, constraint, transfer, quantizer,
@@ -757,7 +760,6 @@ rather than using per-layer processor overrides. These questions remain for
 later measured slices:
 
 - buffered-output policy for each production stage and reset reason;
-- compact split packet axis/sequence/time bit allocation;
 - which type errors devicetree can catch at build time versus initialization;
 
 These questions do not change the thin-sink, typed-stage, explicit-lifecycle,

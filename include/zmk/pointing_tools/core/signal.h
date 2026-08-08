@@ -34,6 +34,7 @@ enum zpt_signal_flag {
     ZPT_SIGNAL_FLAG_SEQUENCE_GAP = UINT32_C(1) << 5,
     ZPT_SIGNAL_FLAG_MALFORMED = UINT32_C(1) << 6,
     ZPT_SIGNAL_FLAG_DISCONTINUITY = UINT32_C(1) << 7,
+    ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED = UINT32_C(1) << 8,
 };
 
 enum zpt_signal_axis_intent {
