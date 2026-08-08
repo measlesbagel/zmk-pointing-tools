@@ -36,7 +36,9 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/pipeline_provider.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
-    src/platform/zmk/pipeline_executor.c)
+    src/platform/zmk/router_executor.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/platform/zmk/router.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/orientation.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -46,7 +48,7 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
-    src/platform/zmk/pipeline_input_processor.c)
+    src/platform/zmk/source_input_processor.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
     src/platform/zmk/compact_split_encoder.c)
 

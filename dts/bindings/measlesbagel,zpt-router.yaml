@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+
+description: Layer-aware router for named pointing-tool pipelines
+
+compatible: "measlesbagel,zpt-router"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable router identity used by telemetry and tuning
+
+  pipelines:
+    type: phandles
+    required: true
+    description: Complete set of independently allocated pipelines owned by this router
+
+  default-pipeline:
+    type: phandle
+    required: true
+    description: Pipeline selected when no configured route layer is active
+
+child-binding:
+  description: Route selected while any listed keymap layer is active
+
+  properties:
+    layers:
+      type: array
+      required: true
+      description: Keymap layer indexes selecting this route
+
+    pipeline:
+      type: phandle
+      required: true
+      description: Pipeline selected by these layers

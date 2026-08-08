@@ -8,8 +8,10 @@ semantics.
 ```text
 physical or proxied input events
   -> standard ZMK input listener
-  -> pipeline ingress input processor
+  -> source ingress input processor
   -> complete raw X/Y frame with source metadata
+  -> layer-aware router
+  -> selected named pipeline
   -> orthogonal mounting orientation
   -> raw-pointer identity stage
   -> thin cursor sink
@@ -33,10 +35,10 @@ continue unchanged. A `sync` marker on any later scalar event completes the
 pending X/Y frame, so the adapter does not assume that Y is always the final
 event.
 
-Attach this processor to the base listener, not to per-layer overrides. The
-future router will remain attached once and observe route changes explicitly;
-using ZMK's per-event overrides as a router would reintroduce incomplete-frame
-and missing-lifecycle problems.
+Attach this source processor to the base listener, not to per-layer overrides.
+It remains attached once while the separate router observes route changes
+explicitly; using ZMK's per-event overrides as a router would reintroduce
+incomplete-frame and missing-lifecycle problems.
 
 ## Identity stage and cursor sink
 
@@ -49,7 +51,7 @@ pointer mapper and quantizer are available.
 The cursor sink accepts only whole pointer deltas within ZMK's signed 16-bit
 HID movement range. It performs no scaling, clipping, accumulation, or cadence
 selection. After validating both axes, it emits `REL_X` followed by a
-synchronized `REL_Y` from the pipeline processor's virtual input device.
+synchronized `REL_Y` from the router's virtual input device.
 
 ## Devicetree wiring
 
@@ -79,19 +81,33 @@ synchronized `REL_Y` from the pipeline processor's virtual input device.
         sink = <&my_cursor_sink>;
     };
 
+    my_router: my_router {
+        compatible = "measlesbagel,zpt-router";
+        stable-id = "right-router";
+        pipelines = <&my_cursor_pipeline>;
+        default-pipeline = <&my_cursor_pipeline>;
+
+        /* Additional routes reference other independently allocated pipelines:
+         * precision-route {
+         *     layers = <3>;
+         *     pipeline = <&my_precision_pipeline>;
+         * };
+         */
+    };
+
     my_cursor_source: my_cursor_source {
-        compatible = "measlesbagel,zpt-input-processor-pipeline";
+        compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
         source-id = <1>;
         resolution-cpi = <700>;
-        pipeline = <&my_cursor_pipeline>;
+        router = <&my_router>;
         /* Add for a central-side split proxy source. */
         /* transported; */
     };
 
     my_cursor_output: my_cursor_output {
         compatible = "zmk,input-listener";
-        device = <&my_cursor_source>;
+        device = <&my_router>;
     };
 };
 
@@ -110,9 +126,10 @@ unchanged when later profiles and telemetry address pipeline boundaries.
 
 Pipeline and sink nodes are also independently allocated providers. Pipeline
 validation claims all referenced stages and its sink, so none of those mutable
-instances can be shared with another pipeline. The source ingress binds the
-sink's platform output device once, then validates and activates the prepared
-pipeline.
+instances can be shared with another pipeline. The router binds each sink's
+platform output device once, validates all owned pipelines, and activates the
+default route. The source ingress only reconstructs canonical frames and sends
+them to that router.
 
 A transported source may additionally set `compact-event-code` to accept the
 matched complete-frame format documented in
@@ -145,10 +162,10 @@ more bounded dispatches.
 
 ## Firmware deadlines and concurrency
 
-Each composed pipeline is hosted by a ZMK executor that serializes input-thread
-pushes and Zephyr work-queue flushes. After every operation it asks the core
-runtime for the nearest absolute deadline, reschedules one delayable work item,
-and calls `zpt_pipeline_flush()` when that deadline is due. A stage therefore
+Each router is hosted by a ZMK executor that serializes source pushes, route
+changes, and Zephyr work-queue flushes. After every operation it asks the active
+pipeline for the nearest absolute deadline, reschedules one delayable work
+item, and flushes the router when that deadline is due. A stage therefore
 expires buffered state without requiring a later physical motion frame.
 
 Resetting or deactivating a pipeline clears its core deadlines and cancels
@@ -157,10 +174,23 @@ rechecks pipeline state while holding the same executor mutex. The adapter
 requires Zephyr's threaded input mode so input processing never tries to take
 the mutex from an interrupt context.
 
+## Layer routing
+
+Every `measlesbagel,zpt-router` lists its complete pipeline ownership set and a
+default. Child route nodes map one or more stable ZMK layer IDs to a pipeline.
+The router subscribes directly to `zmk_layer_state_changed`, so outgoing state
+is deactivated and cleared as soon as a route changes rather than on the next
+scalar motion event.
+
+When multiple configured route layers are active, the route whose layer is
+highest in the current ZMK layer order wins. If two route nodes name the same
+layer, declaration order breaks the tie. If no configured route is active, the
+default pipeline is selected.
+
 ## Current limits
 
 - Only the cursor sink provider is implemented so far; sink selection is explicit.
-- There is no layer or behavior router yet.
+- Explicit behavior-driven route overrides are not implemented yet.
 - Resolution normalization is available but not yet connected to a pointer
   mapper and quantizer in this identity cursor.
 - There are no calibration, tuning, or observer stages.

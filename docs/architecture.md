@@ -1,8 +1,9 @@
 # Composable motion pipeline architecture
 
-Status: accepted direction; the shared runtime, minimal ZMK identity boundary,
-and ordered devicetree stage references are implemented. Configurable sinks,
-routing, and observer discovery remain provisional.
+Status: accepted direction; the shared runtime, source/router ZMK boundary,
+ordered devicetree stage references, explicit sink selection, and layer routing
+are implemented. Explicit behavior routing and observer discovery remain
+provisional.
 
 This document defines the intended architecture for issue
 [#36](https://github.com/measlesbagel/zmk-pointing-tools/issues/36). It is a
@@ -762,9 +763,10 @@ The host-only runtime fixes these representation details:
 See [`pipeline-runtime.md`](pipeline-runtime.md) for the prototype contract.
 
 Normalized motion uses Q16 millimetres. The standard ZMK input listener is the
-accepted source-specific ingress host; the future router will attach there once
-rather than using per-layer processor overrides. These questions remain for
-later measured slices:
+accepted source-specific ingress host. One source processor remains attached
+there while a separate router observes ZMK layer events and applies complete
+pipeline lifecycle rather than using per-event processor overrides. These
+questions remain for later measured slices:
 
 - buffered-output policy for each production stage and reset reason;
 - which type errors devicetree can catch at build time versus initialization;

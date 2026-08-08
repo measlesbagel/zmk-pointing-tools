@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 
-description: Frame-aware source ingress backed by one pipeline provider
+description: Frame-aware motion source ingress feeding one pointing-tool router
 
-compatible: "measlesbagel,zpt-input-processor-pipeline"
+compatible: "measlesbagel,zpt-input-processor-source"
 
 include: ip_zero_param.yaml
 
@@ -17,10 +17,10 @@ properties:
     required: true
     description: Compiled sensor resolution used for source metadata
 
-  pipeline:
+  router:
     type: phandle
     required: true
-    description: Named pipeline provider receiving reconstructed source frames
+    description: Router receiving reconstructed canonical source frames
 
   transported:
     type: boolean

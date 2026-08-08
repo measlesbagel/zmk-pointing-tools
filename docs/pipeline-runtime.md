@@ -128,7 +128,8 @@ for boundary testing. The first production stateful stage provides coherent
 displacement motion gating over normalized motion, including buffered evidence,
 external suppression policy, and idle/qualification deadlines. The ZMK adapter
 uses the standard input listener as its source-specific processor host and
-resolves its ordered stages from devicetree providers. Its cursor sink remains
-implicit. A Zephyr executor serializes input pushes with delayable-work flushes
-and reschedules the nearest requested stage deadline after every operation;
-routing remains a later slice.
+feeds reconstructed frames to a separate router device. Pipelines, their
+ordered stages, and cursor sinks are independently allocated devicetree
+providers. A Zephyr router executor serializes source pushes, route changes,
+and delayable-work flushes while rescheduling the active pipeline's nearest
+requested stage deadline after every operation.
