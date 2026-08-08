@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/noise_filter.h>
+#include <zmk/pointing_tools/legacy_processor/noise_filter.h>
 
 int main(void) {
     struct zpt_noise_filter_settings settings = {0};

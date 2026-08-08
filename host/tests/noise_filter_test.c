@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/noise_filter.h>
+#include <zmk/pointing_tools/legacy_processor/noise_filter.h>
 
 static const struct zpt_noise_filter_settings settings = {
     .enabled = true,

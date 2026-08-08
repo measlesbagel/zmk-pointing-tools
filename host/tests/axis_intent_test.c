@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/axis_intent.h>
+#include <zmk/pointing_tools/legacy_processor/axis_intent.h>
 
 static const struct zpt_axis_intent_config config = {
     .engage_ratio_percent = 220,

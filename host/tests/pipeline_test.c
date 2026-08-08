@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <zmk/pointing_tools/pipeline.h>
-#include <zmk/pointing_tools/pointer_identity.h>
+#include <zmk/pointing_tools/core/pipeline.h>
+#include <zmk/pointing_tools/stage/pointer_identity.h>
 
 #define ARRAY_SIZE(values) (sizeof(values) / sizeof((values)[0]))
 #define TEST_OUTPUT_CAPACITY 16U
