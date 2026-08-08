@@ -20,6 +20,7 @@ work with arbitrary ZMK pointing devices.
 - Firmware-provided hover/focus explanations for tuning parameters
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic regression replay of exported hardware traces
+- Guided scroll, text, cursor, click, and drag playground activities
 
 Planned capabilities include:
 
@@ -49,6 +50,7 @@ See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
 semantics.
 See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor
 regression testing.
+See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 

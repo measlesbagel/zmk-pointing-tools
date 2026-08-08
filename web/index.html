@@ -28,6 +28,48 @@
         Connect the central half over USB using desktop Chrome, or use the simulator without hardware.
       </p>
 
+      <section id="playground" class="panel playground-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Guided playground</h2>
+            <span>Repeatable scroll, text, cursor, click, and drag activities.</span>
+          </div>
+          <button type="button" data-playground-open>Open playground</button>
+        </div>
+
+        <dialog class="playground-dialog" aria-labelledby="playground-title">
+          <div class="playground-dialog-heading">
+            <div>
+              <p class="eyebrow">Guided measurement</p>
+              <h2 id="playground-title">Pointing playground</h2>
+            </div>
+            <button type="button" data-playground-close aria-label="Close playground">Close</button>
+          </div>
+
+          <div class="playground-controls">
+            <label>
+              Activity
+              <select data-playground-activity></select>
+            </label>
+            <button type="button" class="primary" data-playground-start>Start</button>
+            <button type="button" data-playground-reset disabled>Reset</button>
+            <button type="button" data-playground-finish disabled>Finish</button>
+            <button type="button" data-playground-export disabled>Export run</button>
+            <strong data-playground-status role="status">Ready</strong>
+          </div>
+
+          <p class="playground-instructions" data-playground-instructions></p>
+          <div class="playground-metrics" data-playground-metrics aria-live="polite">
+            Start the activity to collect measurements.
+          </div>
+          <div class="playground-surface" data-playground-surface></div>
+          <p class="muted playground-note">
+            Starting or resetting always restores the same activity state. While a run is active,
+            the modal contains scrolling so the tuner page cannot move accidentally.
+          </p>
+        </dialog>
+      </section>
+
       <section class="panel">
         <div class="panel-heading">
           <div>
