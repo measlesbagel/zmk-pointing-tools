@@ -49,9 +49,9 @@ void zpt_motion_source_add(struct zpt_motion_source_state *state, enum zpt_motio
     }
 }
 
-bool zpt_motion_source_take(struct zpt_motion_source_state *state, uint32_t observed_at_ms,
-                            uint32_t sample_span_us, uint32_t additional_flags,
-                            struct zpt_signal *signal) {
+static bool take_at_sequence(struct zpt_motion_source_state *state, uint32_t observed_at_ms,
+                             uint32_t sample_span_us, uint16_t sequence, uint32_t additional_flags,
+                             struct zpt_signal *signal) {
     if (state == NULL || signal == NULL) {
         return false;
     }
@@ -71,7 +71,7 @@ bool zpt_motion_source_take(struct zpt_motion_source_state *state, uint32_t obse
                 .flags =
                     state->flags | (additional_flags & ~ZPT_SOURCE_LOCATION_FLAGS) | frame_flags,
                 .source_id = state->source_id,
-                .sequence = state->sequence++,
+                .sequence = sequence,
                 .resolution_cpi = state->resolution_cpi,
             },
         .annotations =
@@ -80,5 +80,24 @@ bool zpt_motion_source_take(struct zpt_motion_source_state *state, uint32_t obse
             },
         .data.raw_motion = motion,
     };
+    state->sequence = sequence + 1U;
     return true;
+}
+
+bool zpt_motion_source_take(struct zpt_motion_source_state *state, uint32_t observed_at_ms,
+                            uint32_t sample_span_us, uint32_t additional_flags,
+                            struct zpt_signal *signal) {
+    if (state == NULL) {
+        return false;
+    }
+    return take_at_sequence(state, observed_at_ms, sample_span_us, state->sequence,
+                            additional_flags, signal);
+}
+
+bool zpt_motion_source_take_at_sequence(struct zpt_motion_source_state *state,
+                                        uint32_t observed_at_ms, uint32_t sample_span_us,
+                                        uint16_t sequence, uint32_t additional_flags,
+                                        struct zpt_signal *signal) {
+    return take_at_sequence(state, observed_at_ms, sample_span_us, sequence, additional_flags,
+                            signal);
 }

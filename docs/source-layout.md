@@ -8,7 +8,7 @@ placeholder directories.
 | Directory | Responsibility |
 | --- | --- |
 | `core/` | Typed signal execution, pipeline lifecycle, and shared runtime machinery |
-| `source/` | Source-independent frame reconstruction and source metadata handling |
+| `source/` | Source-independent frame reconstruction, metadata handling, and optional transport codecs |
 | `stage/` | Ordered reusable transforms, gates, filters, estimators, constraints, mappers, quantizers, and batchers |
 | `sink/` | Thin terminal output adapters for already-decided values |
 | `platform/zmk/` | ZMK and Zephyr integration around reusable source, pipeline, stage, and sink code |

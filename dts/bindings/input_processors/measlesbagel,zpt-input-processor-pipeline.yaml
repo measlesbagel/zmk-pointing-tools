@@ -26,6 +26,14 @@ properties:
     type: boolean
     description: Mark source frames as having crossed split transport
 
+  compact-event-code:
+    type: int
+    description: Relative event code carrying a compact complete split frame
+
+  compact-transport-coalesced:
+    type: boolean
+    description: Mark decoded compact frames as source-coalesced
+
   swap-xy:
     type: boolean
     description: Swap physical X and Y before the cursor identity stage

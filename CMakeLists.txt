@@ -1,5 +1,6 @@
 if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
    CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
+   CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC OR
    CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER OR
    CONFIG_ZMK_POINTING_TOOLS_PIPELINE OR
    CONFIG_ZMK_POINTING_TOOLS_SCROLL OR
@@ -13,6 +14,8 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/core/pipeline.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/frame_assembler.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/motion_source.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
+    src/source/transport/compact_split_codec.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/orientation.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -20,6 +23,8 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/sink/cursor.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/pipeline_input_processor.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
+    src/platform/zmk/compact_split_encoder.c)
 
   # Monolithic processors retained during pipeline migration.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TRACE

@@ -96,6 +96,28 @@ static void test_transported_source_and_clipping_evidence(void) {
     assert(zpt_motion_source_init(&source, &invalid_location) == -EINVAL);
 }
 
+static void test_transported_source_can_preserve_codec_sequence(void) {
+    const struct zpt_motion_source_config config = {
+        .flags = ZPT_SIGNAL_FLAG_TRANSPORTED,
+        .source_id = 3,
+        .resolution_cpi = 700,
+    };
+    struct zpt_motion_source_state source;
+    assert(zpt_motion_source_init(&source, &config) == 0);
+
+    zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, -12);
+    zpt_motion_source_add(&source, ZPT_MOTION_AXIS_Y, 8);
+    struct zpt_signal signal;
+    assert(zpt_motion_source_take_at_sequence(&source, 90, 16000, 42, ZPT_SIGNAL_FLAG_SEQUENCE_GAP,
+                                              &signal));
+    assert(signal.metadata.sequence == 42);
+    assert((signal.metadata.flags & ZPT_SIGNAL_FLAG_SEQUENCE_GAP) != 0U);
+
+    zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, 1);
+    assert(zpt_motion_source_take(&source, 106, 16000, 0, &signal));
+    assert(signal.metadata.sequence == 43);
+}
+
 static void test_orthogonal_orientation(void) {
     const struct zpt_raw_motion input = {.x_counts = 3, .y_counts = -8};
     struct zpt_raw_motion output;
@@ -189,6 +211,7 @@ static void test_orient_then_normalize_pipeline(void) {
 int main(void) {
     test_local_source_metadata_and_sequence();
     test_transported_source_and_clipping_evidence();
+    test_transported_source_can_preserve_codec_sequence();
     test_orthogonal_orientation();
     test_resolution_conversion();
     test_orient_then_normalize_pipeline();
