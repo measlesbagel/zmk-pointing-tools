@@ -93,7 +93,8 @@ struct zpt_sink {
 struct zpt_pipeline {
     const char *stable_id;
     enum zpt_signal_kind input_kind;
-    struct zpt_stage *stages;
+    /* Ordered references to independently owned stage instances. */
+    struct zpt_stage *const *stages;
     size_t stage_count;
     struct zpt_sink *sink;
     uint32_t dispatch_budget;

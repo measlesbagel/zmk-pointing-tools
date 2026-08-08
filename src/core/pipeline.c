@@ -52,7 +52,7 @@ static int dispatch_at(struct zpt_pipeline_operation *operation, size_t stage_in
         return ret;
     }
 
-    struct zpt_stage *stage = &pipeline->stages[stage_index];
+    struct zpt_stage *stage = pipeline->stages[stage_index];
     if (!kind_accepted(stage->api->accepted_kinds, signal->kind)) {
         return -EPROTOTYPE;
     }
@@ -70,7 +70,7 @@ int zpt_stage_emit(struct zpt_stage_context *context, const struct zpt_signal *s
         return -EINVAL;
     }
 
-    const struct zpt_stage *stage = &context->operation->pipeline->stages[context->stage_index];
+    const struct zpt_stage *stage = context->operation->pipeline->stages[context->stage_index];
     if (signal->kind != stage->api->output_kind) {
         return -EPROTOTYPE;
     }
@@ -83,7 +83,7 @@ int zpt_stage_schedule_flush(struct zpt_stage_context *context, uint32_t deadlin
         return -EINVAL;
     }
 
-    struct zpt_stage *stage = &context->operation->pipeline->stages[context->stage_index];
+    struct zpt_stage *stage = context->operation->pipeline->stages[context->stage_index];
     if ((stage->api->flags & ZPT_STAGE_STATEFUL) == 0U || stage->api->flush == NULL) {
         return -ENOTSUP;
     }
@@ -97,7 +97,7 @@ void zpt_stage_cancel_flush(struct zpt_stage_context *context) {
         context->stage_index >= context->operation->pipeline->stage_count) {
         return;
     }
-    context->operation->pipeline->stages[context->stage_index].deadline_pending = false;
+    context->operation->pipeline->stages[context->stage_index]->deadline_pending = false;
 }
 
 uint32_t zpt_stage_now_ms(const struct zpt_stage_context *context) {
@@ -116,10 +116,11 @@ static int validate_structure(const struct zpt_pipeline *pipeline) {
 
     enum zpt_signal_kind current_kind = pipeline->input_kind;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        const struct zpt_stage *stage = &pipeline->stages[index];
-        if (stage->stable_id == NULL || stage->stable_id[0] == '\0' || stage->api == NULL ||
-            stage->api->strategy_id == NULL || stage->api->strategy_id[0] == '\0' ||
-            stage->api->process == NULL || !zpt_signal_kind_valid(stage->api->output_kind) ||
+        const struct zpt_stage *stage = pipeline->stages[index];
+        if (stage == NULL || stage->stable_id == NULL || stage->stable_id[0] == '\0' ||
+            stage->api == NULL || stage->api->strategy_id == NULL ||
+            stage->api->strategy_id[0] == '\0' || stage->api->process == NULL ||
+            !zpt_signal_kind_valid(stage->api->output_kind) ||
             !kind_accepted(stage->api->accepted_kinds, current_kind)) {
             return -EINVAL;
         }
@@ -130,11 +131,12 @@ static int validate_structure(const struct zpt_pipeline *pipeline) {
             return -EBUSY;
         }
         for (size_t previous = 0; previous < index; previous++) {
-            if (strcmp(pipeline->stages[previous].stable_id, stage->stable_id) == 0) {
+            const struct zpt_stage *previous_stage = pipeline->stages[previous];
+            if (strcmp(previous_stage->stable_id, stage->stable_id) == 0) {
                 return -EEXIST;
             }
             if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U &&
-                pipeline->stages[previous].state == stage->state) {
+                previous_stage->state == stage->state) {
                 return -EBUSY;
             }
         }
@@ -145,7 +147,7 @@ static int validate_structure(const struct zpt_pipeline *pipeline) {
         return -EPROTOTYPE;
     }
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        if (strcmp(pipeline->stages[index].stable_id, pipeline->sink->stable_id) == 0) {
+        if (strcmp(pipeline->stages[index]->stable_id, pipeline->sink->stable_id) == 0) {
             return -EEXIST;
         }
     }
@@ -163,8 +165,8 @@ int zpt_pipeline_validate(struct zpt_pipeline *pipeline) {
     }
 
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        pipeline->stages[index].owner = pipeline;
-        pipeline->stages[index].deadline_pending = false;
+        pipeline->stages[index]->owner = pipeline;
+        pipeline->stages[index]->deadline_pending = false;
     }
     pipeline->validated = true;
     pipeline->active = false;
@@ -177,7 +179,7 @@ void zpt_pipeline_reset(struct zpt_pipeline *pipeline, enum zpt_reset_reason rea
         return;
     }
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        struct zpt_stage *stage = &pipeline->stages[index];
+        struct zpt_stage *stage = pipeline->stages[index];
         stage->deadline_pending = false;
         if (stage->api != NULL && stage->api->reset != NULL) {
             stage->api->reset(stage, reason);
@@ -199,7 +201,7 @@ int zpt_pipeline_activate(struct zpt_pipeline *pipeline, enum zpt_reset_reason r
 
     zpt_pipeline_reset(pipeline, reason);
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        struct zpt_stage *stage = &pipeline->stages[index];
+        struct zpt_stage *stage = pipeline->stages[index];
         if (stage->api->activate != NULL) {
             int ret = stage->api->activate(stage, reason);
             if (ret < 0) {
@@ -260,7 +262,7 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
 
     struct zpt_pipeline_operation operation = begin_operation(pipeline, now_ms, result);
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        struct zpt_stage *stage = &pipeline->stages[index];
+        struct zpt_stage *stage = pipeline->stages[index];
         if (!stage->deadline_pending || !time_reached(now_ms, stage->deadline_ms)) {
             continue;
         }
@@ -288,7 +290,7 @@ bool zpt_pipeline_next_deadline(const struct zpt_pipeline *pipeline, uint32_t no
     uint32_t best_delta = UINT32_MAX;
     uint32_t best_deadline = 0U;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        const struct zpt_stage *stage = &pipeline->stages[index];
+        const struct zpt_stage *stage = pipeline->stages[index];
         if (!stage->deadline_pending) {
             continue;
         }
@@ -319,7 +321,7 @@ int zpt_pipeline_deactivate(struct zpt_pipeline *pipeline, uint32_t now_ms,
     struct zpt_pipeline_operation operation = begin_operation(pipeline, now_ms, result);
     int first_error = 0;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        struct zpt_stage *stage = &pipeline->stages[index];
+        struct zpt_stage *stage = pipeline->stages[index];
         stage->deadline_pending = false;
         if (stage->api->deactivate == NULL) {
             continue;
