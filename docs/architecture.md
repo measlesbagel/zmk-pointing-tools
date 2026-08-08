@@ -730,22 +730,31 @@ parity.
 10. **New algorithms:** evaluate adaptive smoothing and cursor acceleration
     only on the established architecture.
 
-## Prototype questions
+## Host prototype decisions and remaining questions
 
-The accepted direction fixes the ownership model but intentionally leaves
-several representation details for measured prototype work:
+The host-only runtime fixes these representation details:
 
-- exact fixed-point width and normalized unit;
-- exact tagged-signal C representation;
-- bounded maximum emissions from one push/flush;
-- scheduler shape for multiple stage deadlines;
-- behavior of buffered output on every reset reason;
+- continuous domains use signed 64-bit values with 16 fractional bits;
+- signals use a tagged union with shared source metadata and annotations;
+- every push, flush, or deactivation has a configured dispatch budget;
+- each stateful stage can own one wrap-safe 32-bit uptime deadline;
+- stage output is synchronous, streaming, and can contain zero, one, or many
+  signals;
+- stages receive explicit activation, deactivation, flush, and reset reasons;
+- runtime validation checks signal compatibility, stage ownership, and
+  duplicate state within a pipeline.
+
+See [`pipeline-runtime.md`](pipeline-runtime.md) for the prototype contract.
+
+The normalized unit remains domain-specific until source normalization is
+implemented. These questions remain for later measured slices:
+
+- physical/reference unit chosen by the normalization stage;
+- buffered-output policy for each production stage and reset reason;
 - compact split packet axis/sequence/time bit allocation;
-- compile-time versus initialization-time type validation limits in
-  devicetree;
+- which type errors devicetree can catch at build time versus initialization;
 - whether standard ZMK input listeners host ingress or a dedicated library
   callback is safer for all source types.
 
-These questions must be answered in the host-runtime and minimal-ZMK pull
-requests before migration begins. They do not change the thin-sink, typed
-stage, explicit lifecycle, or source ownership decisions in this document.
+These questions do not change the thin-sink, typed-stage, explicit-lifecycle,
+or source-ownership decisions in this document.
