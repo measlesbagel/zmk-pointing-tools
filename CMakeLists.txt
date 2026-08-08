@@ -20,6 +20,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/resolution_normalize.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/motion_gate/coherent_displacement.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/motion_gate/coherent_displacement_stage.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/sink/cursor.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/pipeline_input_processor.c)
