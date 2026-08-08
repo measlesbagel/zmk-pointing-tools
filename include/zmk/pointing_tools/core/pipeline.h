@@ -88,6 +88,9 @@ struct zpt_sink {
     const struct zpt_sink_api *api;
     const void *config;
     void *state;
+
+    /* Runtime-owned field. Statically initialize it to zero. */
+    struct zpt_pipeline *owner;
 };
 
 struct zpt_pipeline {

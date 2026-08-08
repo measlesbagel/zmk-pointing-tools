@@ -113,6 +113,9 @@ static int validate_structure(const struct zpt_pipeline *pipeline) {
         (pipeline->stage_count > 0U && pipeline->stages == NULL)) {
         return -EINVAL;
     }
+    if (pipeline->sink->owner != NULL && pipeline->sink->owner != pipeline) {
+        return -EBUSY;
+    }
 
     enum zpt_signal_kind current_kind = pipeline->input_kind;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
@@ -168,6 +171,7 @@ int zpt_pipeline_validate(struct zpt_pipeline *pipeline) {
         pipeline->stages[index]->owner = pipeline;
         pipeline->stages[index]->deadline_pending = false;
     }
+    pipeline->sink->owner = pipeline;
     pipeline->validated = true;
     pipeline->active = false;
     zpt_pipeline_reset(pipeline, ZPT_RESET_INITIALIZATION);
