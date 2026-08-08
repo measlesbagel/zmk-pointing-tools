@@ -12,6 +12,7 @@
 
 #include <drivers/input_processor.h>
 
+#include <zmk/pointing_tools/platform/zmk/pipeline_executor.h>
 #include <zmk/pointing_tools/platform/zmk/stage_provider.h>
 #include <zmk/pointing_tools/sink/cursor.h>
 #include <zmk/pointing_tools/source/motion_source.h>
@@ -38,6 +39,7 @@ struct zpt_pipeline_processor_data {
     struct zpt_stage **stages;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
+    struct zpt_zmk_pipeline_executor executor;
 };
 
 static int zpt_pipeline_processor_init(const struct device *dev) {
@@ -75,12 +77,12 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
         .dispatch_budget = config->dispatch_budget,
     };
 
-    ret = zpt_pipeline_validate(&data->pipeline);
+    ret = zpt_zmk_pipeline_executor_init(&data->executor, &data->pipeline);
     if (ret < 0) {
         LOG_ERR("Failed to validate motion pipeline %s: %d", config->stable_id, ret);
         return ret;
     }
-    ret = zpt_pipeline_activate(&data->pipeline, ZPT_RESET_PIPELINE_ENTERED);
+    ret = zpt_zmk_pipeline_executor_activate(&data->executor, ZPT_RESET_PIPELINE_ENTERED);
     if (ret < 0) {
         LOG_ERR("Failed to activate motion pipeline %s: %d", config->stable_id, ret);
     }
@@ -136,7 +138,7 @@ static int zpt_pipeline_processor_handle_event(const struct device *dev, struct 
     }
 
     struct zpt_pipeline_result result;
-    int ret = zpt_pipeline_push(&data->pipeline, &signal, &result);
+    int ret = zpt_zmk_pipeline_executor_push(&data->executor, &signal, &result);
     if (ret < 0) {
         LOG_ERR("Motion pipeline %s rejected frame: %d", config->stable_id, ret);
         return ret;
