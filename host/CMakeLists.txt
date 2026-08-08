@@ -7,13 +7,13 @@ include(CTest)
 set(ZPT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_library(zpt_models STATIC
-  "${ZPT_ROOT}/src/axis_intent.c"
-  "${ZPT_ROOT}/src/frame_assembler.c"
-  "${ZPT_ROOT}/src/noise_filter.c"
-  "${ZPT_ROOT}/src/pipeline.c"
-  "${ZPT_ROOT}/src/pointer_identity.c"
-  "${ZPT_ROOT}/src/scroll.c"
-  "${ZPT_ROOT}/src/text_nav.c"
+  "${ZPT_ROOT}/src/core/pipeline.c"
+  "${ZPT_ROOT}/src/source/frame_assembler.c"
+  "${ZPT_ROOT}/src/stage/pointer_identity.c"
+  "${ZPT_ROOT}/src/legacy_processor/axis_intent.c"
+  "${ZPT_ROOT}/src/legacy_processor/noise_filter.c"
+  "${ZPT_ROOT}/src/legacy_processor/scroll.c"
+  "${ZPT_ROOT}/src/legacy_processor/text_nav.c"
 )
 target_compile_features(zpt_models PUBLIC c_std_11)
 target_include_directories(zpt_models PUBLIC "${ZPT_ROOT}/include")

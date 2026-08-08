@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/text_nav.h>
+#include <zmk/pointing_tools/legacy_processor/text_nav.h>
 
 int main(void) {
     struct zpt_text_nav_settings settings = {0};

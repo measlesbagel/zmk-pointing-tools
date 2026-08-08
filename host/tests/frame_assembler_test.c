@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include <zmk/pointing_tools/frame_assembler.h>
+#include <zmk/pointing_tools/source/frame_assembler.h>
 
 static void test_empty_frame_is_ignored(void) {
     struct zpt_frame_assembler assembler = {0};

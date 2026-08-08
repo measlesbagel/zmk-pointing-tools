@@ -39,6 +39,8 @@ not contain keyboard matrix definitions, sensor wiring, or personal keymaps.
 
 See [`docs/architecture.md`](docs/architecture.md) for the accepted direction
 for composable sources, typed motion stages, routing, and thin output sinks.
+See [`docs/source-layout.md`](docs/source-layout.md) for how those ownership
+boundaries map to source and public-header directories.
 
 ## Status
 
