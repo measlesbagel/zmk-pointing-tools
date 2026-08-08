@@ -40,6 +40,25 @@
         input-processors = <&zpt_test_output>;
     };
 
+    zpt_test_noise_filter: zpt_test_noise_filter {
+        compatible = "measlesbagel,zpt-input-processor-noise-filter";
+        #input-processor-cells = <0>;
+        tuning-id = "test-noise-filter";
+        tuning-label = "Test noise filter";
+        enabled;
+        activation-distance = <6>;
+        coherence-percent = <60>;
+        qualification-timeout-ms = <160>;
+        idle-timeout-ms = <120>;
+        suppress-after-keypress-ms = <40>;
+    };
+
+    zpt_test_noise_output: zpt_test_noise_output {
+        compatible = "zmk,input-listener";
+        device = <&zpt_test_noise_filter>;
+        input-processors = <&zpt_test_output>;
+    };
+
     zpt_test_text_nav: zpt_test_text_nav {
         compatible = "measlesbagel,zpt-input-processor-text-nav";
         #input-processor-cells = <0>;

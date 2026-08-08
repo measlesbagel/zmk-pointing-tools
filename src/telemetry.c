@@ -31,7 +31,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #error "measlesbagel,zpt-telemetry-uart chosen node is required"
 #endif
 
-#define ZPT_PROTOCOL_VERSION 5
+#define ZPT_PROTOCOL_VERSION 6
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 

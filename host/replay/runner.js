@@ -5,11 +5,18 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { encodeRunnerInput, validateFixture } from "./fixture.js";
-import { compareMetrics, parseScrollMetrics, parseTextMetrics } from "./metrics.js";
+import {
+  compareMetrics,
+  parseNoiseFilterMetrics,
+  parseScrollMetrics,
+  parseTextMetrics,
+} from "./metrics.js";
 
 export function replayFixture(path, runners, update = false) {
   const fixture = validateFixture(JSON.parse(readFileSync(path, "utf8")), path);
-  const runner = fixture.processor.kind === "adaptive-scroll" ? runners.scroll : runners.text;
+  const runner = fixture.processor.kind === "adaptive-scroll"
+    ? runners.scroll
+    : fixture.processor.kind === "text-navigation" ? runners.text : runners.noise;
   const result = spawnSync(resolve(runner), [], {
     input: encodeRunnerInput(fixture),
     encoding: "utf8",
@@ -20,7 +27,9 @@ export function replayFixture(path, runners, update = false) {
 
   const metrics = fixture.processor.kind === "adaptive-scroll"
     ? parseScrollMetrics(result.stdout, fixture)
-    : parseTextMetrics(result.stdout, fixture);
+    : fixture.processor.kind === "text-navigation"
+      ? parseTextMetrics(result.stdout, fixture)
+      : parseNoiseFilterMetrics(result.stdout, fixture);
   if (update) {
     fixture.expect = metrics;
     writeFileSync(path, `${JSON.stringify(fixture, null, 2)}\n`);

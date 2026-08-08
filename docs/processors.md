@@ -1,5 +1,8 @@
 # Semantic processors
 
+See [Dead-zone and noise filter](noise-filter.md) for reusable vector-aware
+movement qualification before cursor, scroll, or text processing.
+
 ## Axis policies
 
 Include the policy constants in a keymap:

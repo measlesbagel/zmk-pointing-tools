@@ -1,0 +1,96 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "noise-diagonal",
+  "description": "A coherent diagonal qualifies without bias and retains equal axes.",
+  "metadata": {
+    "device": "right-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "cursor",
+    "provenance": "Synthetic diagonal boundary regression"
+  },
+  "processor": {
+    "kind": "noise-filter",
+    "settings": {
+      "enabled": true,
+      "activationDistance": 6,
+      "coherencePercent": 80,
+      "qualificationTimeoutMs": 160,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 0
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      1,
+      1
+    ],
+    [
+      "motion",
+      8,
+      1,
+      1
+    ],
+    [
+      "motion",
+      8,
+      1,
+      1
+    ],
+    [
+      "motion",
+      8,
+      1,
+      1
+    ],
+    [
+      "motion",
+      8,
+      1,
+      1
+    ],
+    [
+      "motion",
+      8,
+      2,
+      2
+    ]
+  ],
+  "expect": {
+    "inputFrames": 6,
+    "durationMs": 40,
+    "outputFrames": 2,
+    "outputCadence": {
+      "meanIntervalMs": 8,
+      "maximumIntervalMs": 8
+    },
+    "horizontal": {
+      "signedDistance": 7,
+      "absoluteDistance": 7,
+      "nonzeroFrames": 2,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 7,
+      "absoluteDistance": 7,
+      "nonzeroFrames": 2,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "phaseFrames": {
+      "idle": 0,
+      "pending": 4,
+      "active": 2,
+      "bypass": 0
+    },
+    "idleResets": 0,
+    "qualificationResets": 0,
+    "suppressedFrames": 0,
+    "qualifications": 1,
+    "discardedFrames": 0
+  }
+}

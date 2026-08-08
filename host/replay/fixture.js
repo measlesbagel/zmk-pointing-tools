@@ -15,7 +15,7 @@ export function validateFixture(fixture, path = "fixture") {
   if (fixture.schema !== FIXTURE_SCHEMA || fixture.version !== FIXTURE_VERSION) {
     throw new Error(`${path}: expected ${FIXTURE_SCHEMA} v${FIXTURE_VERSION}`);
   }
-  if (!fixture.id || !["adaptive-scroll", "text-navigation"].includes(fixture.processor?.kind)) {
+  if (!fixture.id || !["adaptive-scroll", "text-navigation", "noise-filter"].includes(fixture.processor?.kind)) {
     throw new Error(`${path}: id and a supported processor are required`);
   }
 
@@ -31,10 +31,23 @@ export function validateFixture(fixture, path = "fixture") {
       throw new Error(`${path}: discardUnclassified must be boolean`);
     }
     if (!(fixture.processor.policy in POLICIES)) throw new Error(`${path}: unknown axis policy`);
-  } else {
+  } else if (fixture.processor.kind === "text-navigation") {
     for (const key of ["horizontalThreshold", "verticalThreshold", "idleTimeoutMs",
       "activationDistance", "engageRatioPercent"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+  } else {
+    if (typeof settings?.enabled !== "boolean") {
+      throw new Error(`${path}: settings.enabled must be boolean`);
+    }
+    for (const key of ["activationDistance", "qualificationTimeoutMs", "idleTimeoutMs"]) {
+      requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+    requireInteger(settings?.coherencePercent, `${path}: settings.coherencePercent`, 0);
+    requireInteger(settings?.suppressAfterKeypressMs,
+      `${path}: settings.suppressAfterKeypressMs`, 0);
+    if (settings.coherencePercent > 100) {
+      throw new Error(`${path}: settings.coherencePercent must not exceed 100`);
     }
   }
 
@@ -70,8 +83,12 @@ export function encodeRunnerInput(fixture) {
       Number(settings.discardUnclassified), settings.engageRatioPercent,
       settings.releaseRatioPercent, settings.activationDistance, settings.intentWindowMs,
       POLICIES[fixture.processor.policy]]
-    : ["C", settings.horizontalThreshold, settings.verticalThreshold, settings.idleTimeoutMs,
-      settings.activationDistance, settings.engageRatioPercent];
+    : fixture.processor.kind === "text-navigation"
+      ? ["C", settings.horizontalThreshold, settings.verticalThreshold, settings.idleTimeoutMs,
+        settings.activationDistance, settings.engageRatioPercent]
+      : ["C", Number(settings.enabled), settings.activationDistance, settings.coherencePercent,
+        settings.qualificationTimeoutMs, settings.idleTimeoutMs,
+        settings.suppressAfterKeypressMs];
 
   const lines = [configuration.join(" ")];
   let timestamp = 0;

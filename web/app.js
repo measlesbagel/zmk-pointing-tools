@@ -202,6 +202,8 @@ function stateFlagLabels(flags) {
     [STATE.FLAG_OUTPUT, "output"],
     [STATE.FLAG_CLIPPED_HORIZONTAL, "H clipped"],
     [STATE.FLAG_CLIPPED_VERTICAL, "V clipped"],
+    [STATE.FLAG_QUALIFIED, "qualified"],
+    [STATE.FLAG_PENDING_DISCARDED, "pending discarded"],
   ].filter(([flag]) => flags & flag).map(([, label]) => label);
 }
 
@@ -217,6 +219,10 @@ function describeStateEvent(event) {
   if (event.targetKind === 2) {
     const direction = event.values[4] >= 0 ? DIRECTION_LABELS[event.values[4]] : "none";
     return `input ${event.values[0]}/${event.values[1]} · ${intent} · accumulated ${event.values[2]}/${event.values[3]} · step ${direction}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
+  }
+  if (event.targetKind === 3) {
+    const phase = ["idle", "pending", "active", "bypass"][event.intent] ?? `phase ${event.intent}`;
+    return `input ${event.values[0]}/${event.values[1]} · output ${event.values[2]}/${event.values[3]} · ${phase} · pending ${event.values[4]}/${event.values[5]} (${event.values[6]} frames)${flags.length ? ` · ${flags.join(", ")}` : ""}`;
   }
   return `${intent}${flags.length ? ` · ${flags.join(", ")}` : ""} · values ${event.values.join("/")}`;
 }

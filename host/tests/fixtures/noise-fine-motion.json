@@ -1,0 +1,108 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "noise-fine-motion",
+  "description": "Repeated one-count movement qualifies and preserves all buffered distance.",
+  "metadata": {
+    "device": "right-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "cursor",
+    "provenance": "Curated from slow precision hardware captures"
+  },
+  "processor": {
+    "kind": "noise-filter",
+    "settings": {
+      "enabled": true,
+      "activationDistance": 6,
+      "coherencePercent": 60,
+      "qualificationTimeoutMs": 160,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 40
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      1,
+      -1
+    ],
+    [
+      "motion",
+      8,
+      2,
+      0
+    ]
+  ],
+  "expect": {
+    "inputFrames": 8,
+    "durationMs": 56,
+    "outputFrames": 3,
+    "outputCadence": {
+      "meanIntervalMs": 8,
+      "maximumIntervalMs": 8
+    },
+    "horizontal": {
+      "signedDistance": 9,
+      "absoluteDistance": 9,
+      "nonzeroFrames": 3,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": -1,
+      "absoluteDistance": 1,
+      "nonzeroFrames": 1,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "phaseFrames": {
+      "idle": 0,
+      "pending": 5,
+      "active": 3,
+      "bypass": 0
+    },
+    "idleResets": 0,
+    "qualificationResets": 0,
+    "suppressedFrames": 0,
+    "qualifications": 1,
+    "discardedFrames": 0
+  }
+}

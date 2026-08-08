@@ -24,7 +24,7 @@ export const MESSAGE = Object.freeze({
   STATE_SAMPLE: 0x91,
 });
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 export const STATE_SCHEMA_VERSION = 1;
 
 export const TUNING = Object.freeze({
@@ -49,6 +49,8 @@ export const STATE = Object.freeze({
   FLAG_OUTPUT: 1 << 5,
   FLAG_CLIPPED_HORIZONTAL: 1 << 6,
   FLAG_CLIPPED_VERTICAL: 1 << 7,
+  FLAG_QUALIFIED: 1 << 8,
+  FLAG_PENDING_DISCARDED: 1 << 9,
 });
 
 const MAGIC_0 = 0x5a;
