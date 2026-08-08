@@ -1,6 +1,7 @@
 if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
    CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
    CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER OR
+   CONFIG_ZMK_POINTING_TOOLS_PIPELINE OR
    CONFIG_ZMK_POINTING_TOOLS_SCROLL OR
    CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV OR
    CONFIG_ZMK_POINTING_TOOLS_SIGN_EXTEND_XY)
@@ -12,6 +13,11 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING src/tuning.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER src/noise_filter.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER src/input_processor_noise_filter.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/frame_assembler.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/pipeline.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/pointer_identity.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/cursor_sink.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/input_processor_pipeline.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/axis_intent.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/scroll.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/input_processor_scroll.c)

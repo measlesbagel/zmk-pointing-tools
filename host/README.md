@@ -3,8 +3,10 @@
 The host subsystem builds the firmware's pure C processor models as a native
 library and exercises them without Zephyr or keyboard hardware.
 
-The host-only composable pipeline core and its lifecycle contract are
-documented in [`../docs/pipeline-runtime.md`](../docs/pipeline-runtime.md).
+The shared composable pipeline core and its lifecycle contract are documented
+in [`../docs/pipeline-runtime.md`](../docs/pipeline-runtime.md). Host tests also
+exercise the generic frame assembler and identity cursor stage used by the
+minimal ZMK boundary.
 
 ```sh
 cmake -S host -B build/host -G Ninja
