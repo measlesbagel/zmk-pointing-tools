@@ -9,6 +9,7 @@ set(ZPT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/axis_intent.c"
   "${ZPT_ROOT}/src/noise_filter.c"
+  "${ZPT_ROOT}/src/pipeline.c"
   "${ZPT_ROOT}/src/scroll.c"
   "${ZPT_ROOT}/src/text_nav.c"
 )
@@ -29,6 +30,7 @@ endfunction()
 
 zpt_host_executable(axis_intent_test tests/axis_intent_test.c)
 zpt_host_executable(noise_filter_test tests/noise_filter_test.c)
+zpt_host_executable(pipeline_test tests/pipeline_test.c)
 zpt_host_executable(text_nav_test tests/text_nav_test.c)
 zpt_host_executable(zpt_noise_filter_replay runners/noise_filter_replay.c)
 zpt_host_executable(zpt_scroll_replay runners/scroll_replay.c)
@@ -36,6 +38,7 @@ zpt_host_executable(zpt_text_nav_replay runners/text_nav_replay.c)
 
 add_test(NAME axis_intent COMMAND axis_intent_test)
 add_test(NAME noise_filter COMMAND noise_filter_test)
+add_test(NAME motion_pipeline COMMAND pipeline_test)
 add_test(NAME text_navigation COMMAND text_nav_test)
 
 find_program(NODE_EXECUTABLE node REQUIRED)
