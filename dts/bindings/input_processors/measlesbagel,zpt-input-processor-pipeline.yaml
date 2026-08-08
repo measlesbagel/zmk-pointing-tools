@@ -17,6 +17,23 @@ properties:
     required: true
     description: Stable identity for raw motion received by this ingress
 
+  resolution-cpi:
+    type: int
+    required: true
+    description: Compiled sensor resolution used for source metadata
+
   transported:
     type: boolean
     description: Mark source frames as having crossed split transport
+
+  swap-xy:
+    type: boolean
+    description: Swap physical X and Y before the cursor identity stage
+
+  invert-x:
+    type: boolean
+    description: Invert the oriented X axis
+
+  invert-y:
+    type: boolean
+    description: Invert the oriented Y axis

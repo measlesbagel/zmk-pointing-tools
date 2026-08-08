@@ -10,6 +10,7 @@ work with arbitrary ZMK pointing devices.
 ## Capabilities
 
 - Frame-aware movement coalescing
+- Canonical source identity, transport, CPI metadata, and Q16 millimetre normalization
 - Synchronized two-axis scrolling with fractional accumulation
 - Adaptive, vertical-only, horizontal-only, and free scroll policies
 - Rotation-invariant buffered dead-zone and noise qualification
@@ -41,6 +42,9 @@ See [`docs/architecture.md`](docs/architecture.md) for the accepted direction
 for composable sources, typed motion stages, routing, and thin output sinks.
 See [`docs/source-layout.md`](docs/source-layout.md) for how those ownership
 boundaries map to source and public-header directories.
+See [`docs/source-normalization.md`](docs/source-normalization.md) for source
+metadata, mounting orientation, native split reconstruction, and Q16 physical
+units.
 
 ## Status
 

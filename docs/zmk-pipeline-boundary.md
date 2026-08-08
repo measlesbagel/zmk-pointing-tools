@@ -8,7 +8,8 @@ semantics or prematurely fixing the full pipeline devicetree model.
 physical or proxied input events
   -> standard ZMK input listener
   -> pipeline ingress input processor
-  -> complete raw X/Y frame
+  -> complete raw X/Y frame with source metadata
+  -> orthogonal mounting orientation
   -> raw-pointer identity stage
   -> thin cursor sink
   -> virtual input device
@@ -38,10 +39,11 @@ and missing-lifecycle problems.
 
 ## Identity stage and cursor sink
 
-The identity stage maps signed raw counts to whole Q16 pointer deltas without
-gain, orientation, filtering, or rounding. It exists to prove exact cursor
-parity and will be bypassed by the normalized cursor composition once source
-normalization is available.
+An orthogonal orientation stage first applies the configured axis swap and
+inversions. The identity stage then maps those signed raw counts to whole Q16
+pointer deltas without gain, filtering, or rounding. It exists to prove exact
+cursor parity and will be bypassed by the normalized cursor composition once a
+pointer mapper and quantizer are available.
 
 The cursor sink accepts only whole pointer deltas within ZMK's signed 16-bit
 HID movement range. It performs no scaling, clipping, accumulation, or cadence
@@ -57,6 +59,9 @@ synchronized `REL_Y` from the pipeline processor's virtual input device.
         #input-processor-cells = <0>;
         stable-id = "right-cursor";
         source-id = <1>;
+        resolution-cpi = <700>;
+        invert-x;
+        invert-y;
         /* Add for a central-side split proxy source. */
         /* transported; */
     };
@@ -73,15 +78,18 @@ synchronized `REL_Y` from the pipeline processor's virtual input device.
 ```
 
 `source-id` and `stable-id` are metadata identities, not boot-time registration
-indexes. Keep them stable when later profiles and telemetry begin addressing
-pipeline boundaries.
+indexes. `resolution-cpi` must match the sensor's compiled/current setting.
+`swap-xy`, `invert-x`, and `invert-y` describe physical mounting. Keep stable
+identities unchanged when later profiles and telemetry address pipeline
+boundaries.
 
 ## Current limits
 
 - Only the fixed identity cursor composition is constructed.
 - There is no layer or behavior router yet.
-- There are no normalization, orientation, calibration, tuning, or observer
-  stages.
+- Resolution normalization is available but not yet connected to a pointer
+  mapper and quantizer in this identity cursor.
+- There are no calibration, tuning, or observer stages.
 - The Zephyr adapter does not schedule runtime stage deadlines because the
   identity stage is stateless.
 - The Bridges configuration is not migrated by this slice.

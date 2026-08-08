@@ -6,7 +6,8 @@ library and exercises them without Zephyr or keyboard hardware.
 The shared composable pipeline core and its lifecycle contract are documented
 in [`../docs/pipeline-runtime.md`](../docs/pipeline-runtime.md). Host tests also
 exercise the generic frame assembler and identity cursor stage used by the
-minimal ZMK boundary.
+minimal ZMK boundary, plus source metadata, mounting orientation, and CPI-to-Q16
+millimetre normalization.
 
 ```sh
 cmake -S host -B build/host -G Ninja

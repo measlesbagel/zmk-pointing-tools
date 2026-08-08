@@ -217,6 +217,7 @@ static struct zpt_signal raw_signal(uint32_t timestamp_ms, int64_t x, int64_t y)
                 .flags = ZPT_SIGNAL_FLAG_LOCAL,
                 .source_id = 7,
                 .sequence = 42,
+                .resolution_cpi = 700,
             },
         .annotations =
             {
@@ -284,6 +285,7 @@ static void test_typed_pipeline_and_metadata(void) {
     assert(output->metadata.sample_span_us == 8000);
     assert(output->metadata.flags == ZPT_SIGNAL_FLAG_LOCAL);
     assert(output->metadata.source_id == 7 && output->metadata.sequence == 42);
+    assert(output->metadata.resolution_cpi == 700);
 }
 
 static void test_raw_pointer_identity_stage(void) {
