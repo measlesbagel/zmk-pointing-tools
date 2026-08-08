@@ -4,13 +4,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Model retained until motion gating is migrated to a composable stage. */
+#include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
+
+/* Transitional count-domain adapter retained by the current Bridges firmware. */
 
 enum zpt_noise_filter_phase {
-    ZPT_NOISE_FILTER_IDLE = 0,
-    ZPT_NOISE_FILTER_PENDING = 1,
-    ZPT_NOISE_FILTER_ACTIVE = 2,
-    ZPT_NOISE_FILTER_BYPASS = 3,
+    ZPT_NOISE_FILTER_IDLE = ZPT_MOTION_GATE_IDLE,
+    ZPT_NOISE_FILTER_PENDING = ZPT_MOTION_GATE_PENDING,
+    ZPT_NOISE_FILTER_ACTIVE = ZPT_MOTION_GATE_ACTIVE,
+    ZPT_NOISE_FILTER_BYPASS = ZPT_MOTION_GATE_BYPASS,
 };
 
 struct zpt_noise_filter_settings {
@@ -23,14 +25,7 @@ struct zpt_noise_filter_settings {
 };
 
 struct zpt_noise_filter_state {
-    int32_t pending_x;
-    int32_t pending_y;
-    uint64_t squared_energy;
-    uint32_t sample_count;
-    uint32_t pending_started_ms;
-    uint32_t last_frame_ms;
-    bool have_last_frame;
-    bool active;
+    struct zpt_coherent_displacement_state strategy;
 };
 
 struct zpt_noise_filter_result {

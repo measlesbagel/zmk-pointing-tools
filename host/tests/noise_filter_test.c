@@ -45,7 +45,7 @@ static void test_jitter_and_keypress_are_suppressed(void) {
         zpt_noise_filter_update(&state, &settings, 4, 1, 100, true);
     assert(result.suppressed);
     assert(result.discarded);
-    assert(state.sample_count == 0);
+    assert(state.strategy.sample_count == 0);
 }
 
 static void test_diagonal_is_unbiased(void) {

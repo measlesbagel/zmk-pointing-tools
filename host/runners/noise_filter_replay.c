@@ -50,11 +50,12 @@ int main(void) {
                         timestamp - last_keypress < settings.suppress_after_keypress_ms;
         struct zpt_noise_filter_result result =
             zpt_noise_filter_update(&state, &settings, x, y, timestamp, suppress);
-        printf("D\t%" PRIu32 "\t%d\t%" PRId32 "\t%" PRId32 "\t%" PRIu32 "\t%" PRIu64
+        printf("D\t%" PRIu32 "\t%d\t%" PRId64 "\t%" PRId64 "\t%" PRIu32 "\t%" PRIu64
                "\t%d\t%d\t%d\t%d\t%d\t%" PRId32 "\t%" PRId32 "\n",
-               timestamp, result.phase, state.pending_x, state.pending_y, state.sample_count,
-               state.squared_energy, result.reset_for_idle, result.reset_for_timeout,
-               result.suppressed, result.qualified, result.discarded, result.x, result.y);
+               timestamp, result.phase, state.strategy.pending_x, state.strategy.pending_y,
+               state.strategy.sample_count, state.strategy.squared_energy, result.reset_for_idle,
+               result.reset_for_timeout, result.suppressed, result.qualified, result.discarded,
+               result.x, result.y);
         if (result.x != 0 || result.y != 0) {
             printf("O\t%" PRIu32 "\t%" PRId32 "\t%" PRId32 "\n", timestamp, result.x, result.y);
         }

@@ -729,8 +729,8 @@ parity.
    endpoints are implemented; Bridges migration remains gated on composed
    scroll parity.
 6. **Motion gate migration:** the coherent-displacement strategy and normalized
-   stage are implemented. Next, make the legacy adapter reuse the strategy;
-   remove its independent virtual-device plumbing only after firmware routing
+   stage are implemented, and the legacy adapter reuses the same strategy.
+   Remove its independent virtual-device plumbing only after firmware routing
    reaches parity.
 7. **Scroll migration:** compose intent, constraint, transfer, quantizer,
    batcher, and thin scroll sink with parity fixtures.
