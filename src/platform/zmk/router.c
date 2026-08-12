@@ -14,6 +14,7 @@
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/keymap.h>
 
+#include <zmk/pointing_tools/core/route_override.h>
 #include <zmk/pointing_tools/platform/zmk/pipeline_provider.h>
 #include <zmk/pointing_tools/platform/zmk/router.h>
 #include <zmk/pointing_tools/platform/zmk/router_executor.h>
@@ -35,20 +36,13 @@ struct zpt_router_config {
     size_t layer_route_count;
 };
 
-struct zpt_explicit_route_override {
-    uint32_t position;
-    size_t pipeline_index;
-    uint64_t order;
-    bool active;
-};
-
 struct zpt_router_data {
     struct zpt_pipeline **pipelines;
     size_t *layer_route_pipeline_indices;
     struct k_mutex route_lock;
-    struct zpt_explicit_route_override
-        overrides[CONFIG_ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES];
-    uint64_t next_override_order;
+    struct zpt_route_override
+        override_storage[CONFIG_ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES];
+    struct zpt_route_override_table override_table;
     struct zpt_router router;
     struct zpt_zmk_router_executor executor;
 };
@@ -97,25 +91,10 @@ static int selected_layer_pipeline(const struct device *dev, size_t *pipeline_in
     return 0;
 }
 
-static bool selected_override_pipeline(const struct zpt_router_data *data, size_t *pipeline_index) {
-    const struct zpt_explicit_route_override *selected = NULL;
-    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
-        const struct zpt_explicit_route_override *candidate = &data->overrides[index];
-        if (candidate->active && (selected == NULL || candidate->order > selected->order)) {
-            selected = candidate;
-        }
-    }
-    if (selected == NULL) {
-        return false;
-    }
-    *pipeline_index = selected->pipeline_index;
-    return true;
-}
-
 static int select_desired_route_locked(const struct device *dev, uint32_t now_ms) {
     struct zpt_router_data *data = dev->data;
     size_t pipeline_index;
-    int ret = selected_override_pipeline(data, &pipeline_index)
+    int ret = zpt_route_override_selected(&data->override_table, &pipeline_index)
                   ? 0
                   : selected_layer_pipeline(dev, &pipeline_index);
     if (ret < 0) {
@@ -160,26 +139,10 @@ static int router_override_press(const struct device *dev, const struct device *
         return ret;
     }
 
-    struct zpt_explicit_route_override *available = NULL;
-    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
-        struct zpt_explicit_route_override *candidate = &data->overrides[index];
-        if (candidate->active && candidate->position == position) {
-            available = candidate;
-            break;
-        }
-        if (!candidate->active && available == NULL) {
-            available = candidate;
-        }
+    ret = zpt_route_override_press(&data->override_table, position, pipeline_index);
+    if (ret < 0) {
+        return unlock_route(data, ret);
     }
-    if (available == NULL) {
-        return unlock_route(data, -ENOSPC);
-    }
-    *available = (struct zpt_explicit_route_override){
-        .position = position,
-        .pipeline_index = pipeline_index,
-        .order = ++data->next_override_order,
-        .active = true,
-    };
     return unlock_route(data, select_desired_route_locked(dev, now_ms));
 }
 
@@ -189,13 +152,11 @@ static int router_override_release(const struct device *dev, uint32_t position, 
     if (ret < 0) {
         return ret;
     }
-    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
-        if (data->overrides[index].active && data->overrides[index].position == position) {
-            data->overrides[index].active = false;
-            return unlock_route(data, select_desired_route_locked(dev, now_ms));
-        }
+    ret = zpt_route_override_release(&data->override_table, position);
+    if (ret < 0) {
+        return unlock_route(data, ret);
     }
-    return unlock_route(data, 0);
+    return unlock_route(data, select_desired_route_locked(dev, now_ms));
 }
 
 static int router_push(const struct device *dev, const struct zpt_signal *signal,
@@ -271,6 +232,8 @@ static int router_init(const struct device *dev) {
     const struct zpt_router_config *config = dev->config;
     struct zpt_router_data *data = dev->data;
     k_mutex_init(&data->route_lock);
+    zpt_route_override_table_init(&data->override_table, data->override_storage,
+                                  ARRAY_SIZE(data->override_storage));
 
     for (size_t index = 0; index < config->pipeline_count; index++) {
         int ret = zpt_zmk_pipeline_provider_prepare(config->pipeline_devices[index], dev,
