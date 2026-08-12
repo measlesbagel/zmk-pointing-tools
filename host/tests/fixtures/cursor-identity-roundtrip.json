@@ -1,0 +1,78 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "cursor-identity-roundtrip",
+  "description": "Counts through normalization, identity gain, and the count-domain quantizer at 700 CPI; sub-count remainders carry between frames.",
+  "metadata": {
+    "device": "right-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "cursor",
+    "provenance": "Curated synthetic regression for the composed cursor pipeline"
+  },
+  "processor": {
+    "kind": "cursor-pipeline",
+    "settings": {
+      "cpi": 700,
+      "scaleMultiplier": 1,
+      "scaleDivisor": 1,
+      "unitsPerMeter": 27559
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      2,
+      1
+    ],
+    [
+      "motion",
+      8,
+      3,
+      -1
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      2
+    ],
+    [
+      "motion",
+      8,
+      1,
+      0
+    ],
+    [
+      "motion",
+      8,
+      2,
+      -2
+    ]
+  ],
+  "expect": {
+    "inputFrames": 5,
+    "durationMs": 32,
+    "outputFrames": 5,
+    "outputCadence": {
+      "meanIntervalMs": 8,
+      "maximumIntervalMs": 8
+    },
+    "horizontal": {
+      "signedDistance": 5,
+      "absoluteDistance": 7,
+      "nonzeroFrames": 4,
+      "directionChanges": 2,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": 0,
+      "absoluteDistance": 2,
+      "nonzeroFrames": 2,
+      "directionChanges": 1,
+      "clippedFrames": 0
+    },
+    "clippedFrames": 0
+  }
+}

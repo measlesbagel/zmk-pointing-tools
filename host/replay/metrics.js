@@ -84,6 +84,19 @@ export function parseTextMetrics(output, fixture) {
   };
 }
 
+export function parseCursorMetrics(output, fixture) {
+  const { decisions, outputs } = parseLines(output, fixture, 6, 3);
+  return {
+    inputFrames: decisions.length,
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    outputFrames: outputs.length,
+    outputCadence: outputCadence(outputs),
+    horizontal: axisMetrics(outputs, 1),
+    vertical: axisMetrics(outputs, 2),
+    clippedFrames: decisions.filter((decision) => decision[5] !== 0).length,
+  };
+}
+
 export function parseNoiseFilterMetrics(output, fixture) {
   const { decisions, outputs } = parseLines(output, fixture, 13, 3);
   const phaseNames = ["idle", "pending", "active", "bypass"];

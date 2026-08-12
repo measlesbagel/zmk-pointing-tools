@@ -16,7 +16,7 @@ export function validateFixture(fixture, path = "fixture") {
     throw new Error(`${path}: expected ${FIXTURE_SCHEMA} v${FIXTURE_VERSION}`);
   }
   if (!fixture.id || !["adaptive-scroll", "text-navigation", "noise-filter",
-    "composed-scroll", "composed-text"].includes(fixture.processor?.kind)) {
+    "composed-scroll", "composed-text", "cursor-pipeline"].includes(fixture.processor?.kind)) {
     throw new Error(`${path}: id and a supported processor are required`);
   }
 
@@ -32,6 +32,10 @@ export function validateFixture(fixture, path = "fixture") {
       throw new Error(`${path}: discardUnclassified must be boolean`);
     }
     if (!(fixture.processor.policy in POLICIES)) throw new Error(`${path}: unknown axis policy`);
+  } else if (fixture.processor.kind === "cursor-pipeline") {
+    for (const key of ["cpi", "scaleMultiplier", "scaleDivisor", "unitsPerMeter"]) {
+      requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
   } else if (fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text") {
     for (const key of ["horizontalThreshold", "verticalThreshold", "idleTimeoutMs",
       "activationDistance", "engageRatioPercent"]) {
@@ -88,9 +92,12 @@ export function encodeRunnerInput(fixture) {
     : fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text"
       ? ["C", settings.horizontalThreshold, settings.verticalThreshold, settings.idleTimeoutMs,
         settings.activationDistance, settings.engageRatioPercent]
-      : ["C", Number(settings.enabled), settings.activationDistance, settings.coherencePercent,
-        settings.qualificationTimeoutMs, settings.idleTimeoutMs,
-        settings.suppressAfterKeypressMs];
+      : fixture.processor.kind === "cursor-pipeline"
+        ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor,
+          settings.unitsPerMeter]
+        : ["C", Number(settings.enabled), settings.activationDistance, settings.coherencePercent,
+          settings.qualificationTimeoutMs, settings.idleTimeoutMs,
+          settings.suppressAfterKeypressMs];
 
   const lines = [configuration.join(" ")];
   let timestamp = 0;
