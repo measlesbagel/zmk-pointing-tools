@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+
+description: Cursor quantizer stage converting normalized motion to pointer deltas
+
+compatible: "measlesbagel,zpt-stage-cursor-quantizer"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  units-per-meter:
+    type: int
+    required: true
+    description: Output units per metre of travel (sensor counts or display pixels)
