@@ -132,6 +132,12 @@ static int unlock_route(struct zpt_router_data *data, int result) {
 }
 
 static int router_refresh_layer_route(const struct device *dev, uint32_t now_ms) {
+    const struct zpt_router_config *config = dev->config;
+    /* Routers without any route child always select the default pipeline, so
+     * layer events cannot change their selection; skip the mutex and scan. */
+    if (config->layer_route_count == 0U) {
+        return 0;
+    }
     struct zpt_router_data *data = dev->data;
     int ret = k_mutex_lock(&data->route_lock, K_FOREVER);
     if (ret < 0) {
