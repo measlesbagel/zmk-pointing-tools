@@ -41,15 +41,85 @@
         sink = <&zpt_test_cursor_sink>;
     };
 
+    zpt_test_keypress_guard: zpt_test_keypress_guard {
+        compatible = "measlesbagel,zpt-keypress-suppression";
+        suppress-after-keypress-ms = <40>;
+    };
+
+    zpt_test_scroll_axis_intent: zpt_test_scroll_axis_intent {
+        compatible = "measlesbagel,zpt-stage-axis-intent";
+        stable-id = "scroll-axis-intent";
+        policy = <1>;
+        engage-ratio-percent = <300>;
+        release-ratio-percent = <180>;
+        activation-distance-counts = <16>;
+        window-ms = <64>;
+        idle-timeout-ms = <120>;
+        suppression = <&zpt_test_keypress_guard>;
+    };
+
+    zpt_test_scroll_constraint: zpt_test_scroll_constraint {
+        compatible = "measlesbagel,zpt-stage-axis-constraint";
+        stable-id = "scroll-constraint";
+        discard-unclassified;
+        idle-timeout-ms = <120>;
+        suppression = <&zpt_test_keypress_guard>;
+    };
+
+    zpt_test_scroll_batcher: zpt_test_scroll_batcher {
+        compatible = "measlesbagel,zpt-stage-scroll-batcher";
+        stable-id = "scroll-batcher";
+        scale-multiplier = <1>;
+        scale-divisor = <8>;
+        report-interval-ms = <16>;
+        suppression = <&zpt_test_keypress_guard>;
+    };
+
+    zpt_test_scroll_sink: zpt_test_scroll_sink {
+        compatible = "measlesbagel,zpt-sink-scroll";
+        stable-id = "scroll";
+    };
+
+    zpt_test_scroll_pipeline: zpt_test_scroll_pipeline {
+        compatible = "measlesbagel,zpt-pipeline";
+        stable-id = "test-scroll";
+        stages = <&zpt_test_scroll_axis_intent &zpt_test_scroll_constraint &zpt_test_scroll_batcher>;
+        sink = <&zpt_test_scroll_sink>;
+    };
+
+    zpt_test_composed_text_nav: zpt_test_composed_text_nav {
+        compatible = "measlesbagel,zpt-stage-text-nav";
+        stable-id = "text-nav";
+        horizontal-threshold = <75>;
+        vertical-threshold = <75>;
+        idle-timeout-ms = <40>;
+        activation-distance = <35>;
+        engage-ratio-percent = <150>;
+    };
+
+    zpt_test_action_sink: zpt_test_action_sink {
+        compatible = "measlesbagel,zpt-sink-action";
+        stable-id = "text";
+        bindings = <&kp LEFT>, <&kp RIGHT>, <&kp UP>, <&kp DOWN>;
+        tap-ms = <5>;
+    };
+
+    zpt_test_text_pipeline: zpt_test_text_pipeline {
+        compatible = "measlesbagel,zpt-pipeline";
+        stable-id = "test-text";
+        stages = <&zpt_test_composed_text_nav>;
+        sink = <&zpt_test_action_sink>;
+    };
+
     zpt_test_cursor_router: zpt_test_cursor_router {
         compatible = "measlesbagel,zpt-router";
         stable-id = "test-cursor-router";
-        pipelines = <&zpt_test_cursor_pipeline>;
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
         default-pipeline = <&zpt_test_cursor_pipeline>;
 
         test-layer-route {
             /* Layer 0 is the only keymap layer; the route stays within range
-             * and always selects the single smoke pipeline. */
+             * and always selects the smoke cursor pipeline. */
             layers = <0>;
             pipeline = <&zpt_test_cursor_pipeline>;
         };
@@ -60,6 +130,20 @@
         #binding-cells = <0>;
         router = <&zpt_test_cursor_router>;
         pipeline = <&zpt_test_cursor_pipeline>;
+    };
+
+    zpt_test_scroll_route: zpt_test_scroll_route {
+        compatible = "measlesbagel,zpt-behavior-route";
+        #binding-cells = <0>;
+        router = <&zpt_test_cursor_router>;
+        pipeline = <&zpt_test_scroll_pipeline>;
+    };
+
+    zpt_test_text_route: zpt_test_text_route {
+        compatible = "measlesbagel,zpt-behavior-route";
+        #binding-cells = <0>;
+        router = <&zpt_test_cursor_router>;
+        pipeline = <&zpt_test_text_pipeline>;
     };
 
     zpt_test_cursor_source: zpt_test_cursor_source {
@@ -228,7 +312,7 @@
         compatible = "zmk,keymap";
         base {
             bindings = <
-                &zpt_test_cursor_route &none &none &none &none &none   &none &none &none &none &none &none
+                &zpt_test_cursor_route &zpt_test_scroll_route &zpt_test_text_route &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                                   &none &none &none   &none &none &none

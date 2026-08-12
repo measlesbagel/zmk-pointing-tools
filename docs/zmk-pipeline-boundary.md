@@ -220,6 +220,15 @@ selection is intentionally left for a separate behavior policy.
 - The Bridges configuration is not migrated by this slice.
 
 The smoke firmware wires the output of the existing test noise device through
-the identity processor and into a dedicated output listener. Host tests cover
-frame reconstruction, saturation evidence, identity mapping, metadata
-preservation, and overflow rejection.
+the identity processor and into a dedicated output listener. The smoke router
+now owns cursor, scroll, and text pipelines selected by route behaviors: the
+scroll pipeline composes the count-domain axis-intent, axis-constraint, and
+scroll-batcher stages with a thin wheel sink and a shared
+`measlesbagel,zpt-keypress-suppression` guard, and the text pipeline composes
+the text-navigation stage with an action sink invoking bound keymap behaviors.
+
+Host tests cover frame reconstruction, saturation evidence, identity mapping,
+metadata preservation, and overflow rejection. Every legacy scroll and text
+fixture has a composed-pipeline twin (`composed-scroll` and `composed-text`
+fixture kinds) that replays the same trace through the composed stages and must
+produce byte-identical runner output, proving migration parity.
