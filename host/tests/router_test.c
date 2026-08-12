@@ -194,7 +194,7 @@ static void test_route_change_cancels_inactive_deadlines(void) {
     assert(!zpt_router_next_deadline(&fixture.router, 110, &deadline));
 }
 
-static void test_failed_route_can_recover(void) {
+static void test_failed_route_rolls_back(void) {
     struct router_fixture fixture;
     router_fixture_init(&fixture);
     fixture.sink_states[1].fail_activation = true;
@@ -203,9 +203,13 @@ static void test_failed_route_can_recover(void) {
 
     struct zpt_pipeline_result result;
     assert(zpt_router_select(&fixture.router, 1, 20, &result) == -EIO);
-    assert(zpt_router_active_pipeline(&fixture.router) == NULL);
+    /* The previous pipeline stays active and keeps handling input. */
+    assert(zpt_router_active_pipeline(&fixture.router) == &fixture.pipeline_storage[0]);
+    struct zpt_signal signal = raw_signal(21);
+    assert(zpt_router_push(&fixture.router, &signal, &result) == 0);
+    assert(fixture.sink_states[0].outputs == 1);
     fixture.sink_states[1].fail_activation = false;
-    assert(zpt_router_select(&fixture.router, 1, 21, &result) == 0);
+    assert(zpt_router_select(&fixture.router, 1, 22, &result) == 0);
     assert(zpt_router_active_pipeline(&fixture.router) == &fixture.pipeline_storage[1]);
 }
 
@@ -227,7 +231,7 @@ static void test_validation_rejects_invalid_composition(void) {
 int main(void) {
     test_routes_input_and_applies_lifecycle();
     test_route_change_cancels_inactive_deadlines();
-    test_failed_route_can_recover();
+    test_failed_route_rolls_back();
     test_validation_rejects_invalid_composition();
     puts("router tests passed");
     return 0;

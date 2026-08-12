@@ -103,9 +103,9 @@ deadlines and buffered state, before activating the incoming pipeline with
 
 Push, flush, and nearest-deadline queries delegate only to the active pipeline.
 Selecting the current pipeline is a lifecycle no-op. If incoming activation
-fails after the old route was left, the router deliberately has no active
-pipeline but remains available for a later recovery selection; stale input is
-never sent back through a pipeline that has already been deactivated.
+fails after the old route was left, the router rolls back to the previously
+active pipeline so input remains handled; stale input is never sent through a
+pipeline that has already been deactivated.
 
 ## Current stages
 
