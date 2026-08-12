@@ -104,6 +104,19 @@ uint32_t zpt_stage_now_ms(const struct zpt_stage_context *context) {
     return context != NULL && context->operation != NULL ? context->operation->now_ms : 0U;
 }
 
+void zpt_stage_notify(struct zpt_stage_context *context, enum zpt_stage_event event,
+                      int64_t value) {
+    if (context == NULL || context->operation == NULL ||
+        context->stage_index >= context->operation->pipeline->stage_count) {
+        return;
+    }
+    struct zpt_stage *stage = context->operation->pipeline->stages[context->stage_index];
+    if (stage->observer.callback != NULL) {
+        stage->observer.callback(stage, event, value, context->operation->now_ms,
+                                 stage->observer.user_data);
+    }
+}
+
 static int validate_structure(const struct zpt_pipeline *pipeline) {
     if (pipeline == NULL || pipeline->stable_id == NULL || pipeline->stable_id[0] == '\0' ||
         !zpt_signal_kind_valid(pipeline->input_kind) || pipeline->sink == NULL ||

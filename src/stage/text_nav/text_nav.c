@@ -136,6 +136,7 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     output.metadata.observed_at_ms = now;
     output.data.action.id = (uint32_t)direction;
     output.data.action.value = 1;
+    zpt_stage_notify(context, ZPT_STAGE_EVENT_ACTION, (int64_t)direction);
     return zpt_stage_emit(context, &output);
 }
 

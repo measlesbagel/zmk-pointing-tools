@@ -72,6 +72,7 @@ static int scroll_batcher_stage_process(struct zpt_stage *stage, const struct zp
     if (suppression_active(config, signal, now)) {
         state->pending_x = 0;
         state->pending_y = 0;
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
         return 0;
     }
 
@@ -111,6 +112,9 @@ static int scroll_batcher_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
     output.metadata.observed_at_ms = stage->deadline_ms;
     output.data.steps.x = horizontal;
     output.data.steps.y = vertical;
+    zpt_stage_notify(context, ZPT_STAGE_EVENT_FLUSHED,
+                     (int64_t)(horizontal > 0 ? horizontal : -horizontal) +
+                         (vertical > 0 ? vertical : -vertical));
     return zpt_stage_emit(context, &output);
 }
 
