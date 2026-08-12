@@ -97,9 +97,11 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
     int ret = zpt_zmk_router_push(config->router_device, &signal, &result);
     if (ret < 0) {
         LOG_ERR("Motion router rejected source %u frame: %d", config->source.source_id, ret);
-        return ret;
     }
 
+    /* Keep the processor chain intact: ZMK's input listener treats any
+     * non-CONTINUE return as termination and drops the whole event on a
+     * negative value, which would also discard the frame boundary. */
     return ZMK_INPUT_PROC_CONTINUE;
 }
 
