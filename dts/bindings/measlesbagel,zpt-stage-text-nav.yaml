@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+
+description: Text-navigation stage emitting actions from threshold crossings
+
+compatible: "measlesbagel,zpt-stage-text-nav"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  horizontal-threshold:
+    type: int
+    required: true
+    description: Counts required to emit a horizontal text action
+
+  vertical-threshold:
+    type: int
+    required: true
+    description: Counts required to emit a vertical text action
+
+  idle-timeout-ms:
+    type: int
+    required: true
+    description: Gap after which the gesture accumulator resets
+
+  activation-distance:
+    type: int
+    required: true
+    description: Total accumulated magnitude required to engage an axis
+
+  engage-ratio-percent:
+    type: int
+    required: true
+    description: Major axis dominance required to engage an axis

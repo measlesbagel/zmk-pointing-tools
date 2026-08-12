@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+
+description: Thin synchronized ZMK scroll output sink
+
+compatible: "measlesbagel,zpt-sink-scroll"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity unique within the owning pipeline

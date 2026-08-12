@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+
+description: ZMK action sink invoking bound keymap behaviors
+
+compatible: "measlesbagel,zpt-sink-action"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Stable identity unique within the owning pipeline
+
+  bindings:
+    type: phandle-array
+    required: true
+    description: Left, right, up, and down behaviors, in that order
+
+  tap-ms:
+    type: int
+    default: 0
+    description: Delay before the queued press is released
