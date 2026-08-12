@@ -68,20 +68,29 @@ static int selected_layer_pipeline(const struct device *dev, size_t *pipeline_in
     const struct zpt_router_config *config = dev->config;
     struct zpt_router_data *data = dev->data;
 
+    /* Match ZMK's binding resolution: walk the keymap stack from the top,
+     * compare route values against positional layer indices (stable even when
+     * layer reordering reassigns layer IDs at runtime), and stop after the
+     * default layer because ZMK never resolves bindings below it. */
     for (int layer_index = ZMK_KEYMAP_LAYERS_LEN - 1; layer_index >= 0; layer_index--) {
         zmk_keymap_layer_id_t layer = zmk_keymap_layer_index_to_id(layer_index);
-        if (layer == ZMK_KEYMAP_LAYER_ID_INVAL || !zmk_keymap_layer_active(layer)) {
+        if (layer == ZMK_KEYMAP_LAYER_ID_INVAL) {
             continue;
         }
-        for (size_t route_index = 0; route_index < config->layer_route_count; route_index++) {
-            const struct zpt_layer_route_config *route = &config->layer_routes[route_index];
-            for (size_t route_layer_index = 0; route_layer_index < route->layer_count;
-                 route_layer_index++) {
-                if (route->layers[route_layer_index] == layer) {
-                    *pipeline_index = data->layer_route_pipeline_indices[route_index];
-                    return 0;
+        if (zmk_keymap_layer_active(layer)) {
+            for (size_t route_index = 0; route_index < config->layer_route_count; route_index++) {
+                const struct zpt_layer_route_config *route = &config->layer_routes[route_index];
+                for (size_t route_layer_index = 0; route_layer_index < route->layer_count;
+                     route_layer_index++) {
+                    if (route->layers[route_layer_index] == layer_index) {
+                        *pipeline_index = data->layer_route_pipeline_indices[route_index];
+                        return 0;
+                    }
                 }
             }
+        }
+        if (layer == zmk_keymap_layer_default()) {
+            break;
         }
     }
     *pipeline_index = data->router.default_pipeline_index;
