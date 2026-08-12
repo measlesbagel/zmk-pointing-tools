@@ -1,0 +1,111 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 1,
+  "id": "scroll-cardinal-turn-composed",
+  "description": "A horizontal gesture, idle release, and vertical gesture with minor cross-axis noise. (Composed pipeline twin: same trace and expectations as the legacy fixture.)",
+  "metadata": {
+    "device": "right-trackball",
+    "cpi": 700,
+    "cadenceMs": 8,
+    "mode": "scroll",
+    "provenance": "Curated synthetic regression derived from cardinal hardware captures"
+  },
+  "processor": {
+    "kind": "composed-scroll",
+    "policy": "adaptive",
+    "settings": {
+      "scaleMultiplier": 1,
+      "scaleDivisor": 8,
+      "reportIntervalMs": 16,
+      "idleTimeoutMs": 120,
+      "suppressAfterKeypressMs": 0,
+      "discardUnclassified": false,
+      "engageRatioPercent": 300,
+      "releaseRatioPercent": 180,
+      "activationDistance": 16,
+      "intentWindowMs": 64
+    }
+  },
+  "events": [
+    [
+      "motion",
+      0,
+      10,
+      1
+    ],
+    [
+      "motion",
+      8,
+      10,
+      1
+    ],
+    [
+      "motion",
+      8,
+      16,
+      -2
+    ],
+    [
+      "motion",
+      8,
+      12,
+      2
+    ],
+    [
+      "motion",
+      130,
+      1,
+      -12
+    ],
+    [
+      "motion",
+      8,
+      -1,
+      -12
+    ],
+    [
+      "motion",
+      8,
+      2,
+      -16
+    ],
+    [
+      "motion",
+      8,
+      -2,
+      -12
+    ]
+  ],
+  "expect": {
+    "inputFrames": 8,
+    "durationMs": 178,
+    "outputFrames": 4,
+    "outputCadence": {
+      "meanIntervalMs": 56.667,
+      "maximumIntervalMs": 138
+    },
+    "horizontal": {
+      "signedDistance": 6,
+      "absoluteDistance": 6,
+      "nonzeroFrames": 2,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "vertical": {
+      "signedDistance": -6,
+      "absoluteDistance": 6,
+      "nonzeroFrames": 2,
+      "directionChanges": 0,
+      "clippedFrames": 0
+    },
+    "intentFrames": {
+      "undecided": 2,
+      "free": 0,
+      "horizontal": 3,
+      "vertical": 3
+    },
+    "intentTransitions": 3,
+    "idleResets": 2,
+    "suppressedFrames": 0
+  }
+}

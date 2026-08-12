@@ -11,6 +11,8 @@ function main() {
     allowPositionals: true,
     options: {
       "scroll-runner": { type: "string" },
+      "scroll-pipeline-runner": { type: "string" },
+      "text-pipeline-runner": { type: "string" },
       "text-runner": { type: "string" },
       "noise-runner": { type: "string" },
       update: { type: "boolean", default: false },
@@ -18,6 +20,7 @@ function main() {
     },
   });
   if (!values["scroll-runner"] || !values["text-runner"] || !values["noise-runner"] ||
+      !values["scroll-pipeline-runner"] || !values["text-pipeline-runner"] ||
       fixtures.length === 0) {
     throw new Error("All processor runners and at least one fixture are required");
   }
@@ -26,6 +29,8 @@ function main() {
     noise: values["noise-runner"],
     scroll: values["scroll-runner"],
     text: values["text-runner"],
+    scrollPipeline: values["scroll-pipeline-runner"],
+    textPipeline: values["text-pipeline-runner"],
   };
   const reports = fixtures.map((fixture) => replayFixture(fixture, runners, values.update));
   for (const report of reports) {
