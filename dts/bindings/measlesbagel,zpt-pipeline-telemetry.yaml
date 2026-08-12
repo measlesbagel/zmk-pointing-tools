@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+
+description: Stage observer telemetry for composed pipelines
+
+compatible: "measlesbagel,zpt-pipeline-telemetry"
+
+properties:
+  pipelines:
+    type: phandles
+    required: true
+    description: Pipelines whose stages are observed and reported by stable identity

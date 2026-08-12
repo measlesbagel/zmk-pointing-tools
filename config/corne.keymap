@@ -304,6 +304,11 @@
         compatible = "measlesbagel,zpt-telemetry";
     };
 
+    zpt_telemetry_pipeline {
+        compatible = "measlesbagel,zpt-pipeline-telemetry";
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
+    };
+
     chosen {
         measlesbagel,zpt-telemetry-uart = &zpt_acm;
     };

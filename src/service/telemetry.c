@@ -141,6 +141,20 @@ enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id) {
     return (enum zpt_state_level)atomic_get(&zpt_state_levels[target_id]);
 }
 
+int zpt_state_telemetry_register_target(uint8_t *target_id) {
+    if (target_id == NULL) {
+        return -EINVAL;
+    }
+    for (size_t index = 0; index < ARRAY_SIZE(zpt_state_levels); index++) {
+        if (atomic_get(&zpt_state_levels[index]) == ZPT_STATE_LEVEL_OFF &&
+            index >= zpt_tuning_target_count()) {
+            *target_id = (uint8_t)index;
+            return 0;
+        }
+    }
+    return -ENOSPC;
+}
+
 void zpt_state_telemetry_submit(const struct zpt_state_sample *sample) {
     if (sample == NULL || zpt_state_telemetry_level(sample->target_id) == ZPT_STATE_LEVEL_OFF) {
         return;
