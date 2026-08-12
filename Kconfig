@@ -1,38 +1,9 @@
-DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
-DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
-DT_COMPAT_ZPT_NOISE_FILTER := measlesbagel,zpt-input-processor-noise-filter
 DT_COMPAT_ZPT_ROUTER := measlesbagel,zpt-router
 DT_COMPAT_ZPT_ROUTE_BEHAVIOR := measlesbagel,zpt-behavior-route
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
-DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
-DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
 
 menu "ZMK Pointing Tools"
-
-config ZMK_POINTING_TOOLS_TRACE
-    bool "Pass-through pointing trace processor"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TRACE))
-    depends on ZMK_POINTING
-    help
-      Observe complete relative-input frames without modifying their output.
-
-config ZMK_POINTING_TOOLS_SCROLL
-    bool "Frame-aware synchronized scroll processor"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_SCROLL))
-    depends on ZMK_POINTING
-    help
-      Coalesce complete X/Y frames and emit synchronized horizontal and
-      vertical scrolling with free, adaptive, or forced axis policies.
-
-config ZMK_POINTING_TOOLS_NOISE_FILTER
-    bool "Vector-aware dead-zone and noise filter"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_NOISE_FILTER))
-    depends on ZMK_POINTING
-    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
-    help
-      Buffer idle vectors until coherent radial movement qualifies, then pass
-      the complete gesture without per-axis bias or lost distance.
 
 config ZMK_POINTING_TOOLS_PIPELINE
     bool "Composable motion pipeline boundary"
@@ -42,15 +13,13 @@ config ZMK_POINTING_TOOLS_PIPELINE
     depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
     help
       Reconstruct synchronized X/Y frames with source identity, transport, and
-      CPI metadata; route it through ordered devicetree pipeline compositions;
-      apply explicit enter/leave lifecycle on ZMK layer changes; schedule
-      stateful-stage deadlines; and emit terminal cursor output through the
-      router's virtual input device. The only terminal sink currently provided
-      is cursor output.
-
-config ZMK_POINTING_TOOLS_MOTION_GATE_CORE
-    bool
-    default y if ZMK_POINTING_TOOLS_PIPELINE || ZMK_POINTING_TOOLS_NOISE_FILTER
+      CPI metadata; route them through ordered devicetree pipeline
+      compositions; apply explicit enter/leave lifecycle on ZMK layer changes;
+      schedule stateful-stage deadlines; and emit terminal output through the
+      router's virtual input device. Cursor, scroll, and text pipelines share
+      the same estimator, constraint, transfer, quantizer, and batching
+      stages, with a keypress suppression guard participating in every
+      pass/buffer/drop decision.
 
 config ZMK_POINTING_TOOLS_ROUTE_BEHAVIOR
     bool "Momentary pointing pipeline route behavior"
@@ -79,42 +48,24 @@ config ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
       peripheral. A composable central-side pipeline ingress provides the
       matching decoder with cadence and sequence diagnostics.
 
-config ZMK_POINTING_TOOLS_TEXT_NAV
-    bool "Gesture-locked text navigation processor"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TEXT_NAV))
-    depends on ZMK_POINTING
-    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
-    help
-      Convert complete relative movement gestures into directional behavior
-      taps while retaining one axis until the gesture becomes idle.
-
-config ZMK_POINTING_TOOLS_SIGN_EXTEND_XY
-    bool "Sign-extend packed split X/Y values"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_SIGN_EXTEND_XY))
-    depends on ZMK_POINTING
-    help
-      Restore negative signed 16-bit relative axes after unpacking a combined
-      split-transport event that represented its fields as unsigned values.
-
 config ZMK_POINTING_TOOLS_TELEMETRY
     bool "USB serial pointing telemetry service"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TELEMETRY))
-    depends on ZMK_POINTING_TOOLS_TRACE
     depends on SERIAL
     depends on UART_INTERRUPT_DRIVEN
     help
-      Expose trace streams over a dedicated USB CDC-ACM serial interface.
+      Expose state samples and discovery over a dedicated USB CDC-ACM serial
+      interface.
 
 if ZMK_POINTING_TOOLS_TELEMETRY
 
 config ZMK_POINTING_TOOLS_RUNTIME_TUNING
     bool "Temporary runtime tuning over USB serial"
     default y
-    depends on ZMK_POINTING_TOOLS_SCROLL || ZMK_POINTING_TOOLS_TEXT_NAV || ZMK_POINTING_TOOLS_NOISE_FILTER
     help
-      Discover semantic processors and preview validated parameter changes.
-      Runtime values are never persisted and return to devicetree defaults on
-      reset or reboot.
+      Discover targets and preview validated parameter changes. Runtime
+      values are never persisted and return to devicetree defaults on reset
+      or reboot.
 
 if ZMK_POINTING_TOOLS_RUNTIME_TUNING
 
@@ -124,12 +75,12 @@ config ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS
     range 1 32
 
 config ZMK_POINTING_TOOLS_STATE_TELEMETRY
-    bool "Semantic processor-state telemetry"
+    bool "Semantic stage-state telemetry"
     default y
     help
       Optionally expose axis intent, suppression, accumulation, clipping, and
-      gesture lifecycle decisions. State telemetry remains off until requested
-      by a connected host.
+      gesture lifecycle decisions from observed pipeline stages. State
+      telemetry remains off until requested by a connected host.
 
 endif
 

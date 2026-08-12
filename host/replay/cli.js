@@ -10,27 +10,23 @@ function main() {
   const { values, positionals: fixtures } = parseArgs({
     allowPositionals: true,
     options: {
-      "scroll-runner": { type: "string" },
       "scroll-pipeline-runner": { type: "string" },
       "cursor-pipeline-runner": { type: "string" },
       "text-pipeline-runner": { type: "string" },
-      "text-runner": { type: "string" },
-      "noise-runner": { type: "string" },
+      "noise-pipeline-runner": { type: "string" },
       update: { type: "boolean", default: false },
       json: { type: "string" },
     },
   });
-  if (!values["scroll-runner"] || !values["text-runner"] || !values["noise-runner"] ||
-      !values["scroll-pipeline-runner"] || !values["text-pipeline-runner"] ||
-      !values["cursor-pipeline-runner"] ||
+  if (!values["noise-pipeline-runner"] || !values["scroll-pipeline-runner"] ||
+      !values["text-pipeline-runner"] || !values["cursor-pipeline-runner"] ||
       fixtures.length === 0) {
-    throw new Error("All processor runners and at least one fixture are required");
+    throw new Error("All pipeline runners and at least one fixture are required");
   }
 
   const runners = {
-    noise: values["noise-runner"],
-    scroll: values["scroll-runner"],
-    text: values["text-runner"],
+    noise: values["noise-pipeline-runner"],
+    noisePipeline: values["noise-pipeline-runner"],
     scrollPipeline: values["scroll-pipeline-runner"],
     textPipeline: values["text-pipeline-runner"],
     cursorPipeline: values["cursor-pipeline-runner"],

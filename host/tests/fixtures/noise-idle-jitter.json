@@ -11,7 +11,7 @@
     "provenance": "Curated from typing, table-tap, and moving-keyboard hardware captures"
   },
   "processor": {
-    "kind": "noise-filter",
+    "kind": "composed-noise",
     "settings": {
       "enabled": true,
       "activationDistance": 6,

@@ -211,17 +211,17 @@ selection is intentionally left for a separate behavior policy.
 
 ## Current limits
 
-- Only the cursor sink provider is implemented so far; sink selection is explicit.
+- Sink providers cover cursor, scroll, and text actions; sink selection is
+  explicit.
 - Persistent explicit route selection is not implemented yet; the current
   behavior is momentary.
-- Resolution normalization is available but not yet connected to a pointer
-  mapper and quantizer in this identity cursor.
-- There are no calibration, tuning, or observer stages.
+- Acceleration curves and report coalescing for the cursor path are future
+  transfer-stage work.
 - The Bridges configuration is not migrated by this slice.
 
-The smoke firmware wires the output of the existing test noise device through
-the identity processor and into a dedicated output listener. The smoke router
-now owns cursor, scroll, text, and normalized-cursor pipelines selected by
+The smoke firmware instantiates the composed cursor, scroll, text, and
+normalized-cursor pipelines and their providers; the smoke router owns them
+selected by
 route behaviors. The normalized cursor path composes resolution normalization,
 the motion gate, the cursor transfer gain, and the sub-pixel cursor quantizer,
 terminating at the thin cursor sink; the cursor-identity-roundtrip fixture
@@ -240,7 +240,8 @@ lookup API locates a stage by stable id without coupling the algorithms to
 telemetry.
 
 Host tests cover frame reconstruction, saturation evidence, identity mapping,
-metadata preservation, and overflow rejection. Every legacy scroll and text
-fixture has a composed-pipeline twin (`composed-scroll` and `composed-text`
-fixture kinds) that replays the same trace through the composed stages and must
-produce byte-identical runner output, proving migration parity.
+metadata preservation, and overflow rejection. The `composed-noise`,
+`composed-scroll`, `composed-text`, and `cursor-pipeline` fixture kinds replay
+traces through the composed stages and must produce byte-identical runner
+output against the expectations captured from the superseded processors,
+proving migration parity before their removal.

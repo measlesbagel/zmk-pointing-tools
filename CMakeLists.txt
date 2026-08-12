@@ -1,11 +1,6 @@
-if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
-   CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
+if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
    CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC OR
-   CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER OR
-   CONFIG_ZMK_POINTING_TOOLS_PIPELINE OR
-   CONFIG_ZMK_POINTING_TOOLS_SCROLL OR
-   CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV OR
-   CONFIG_ZMK_POINTING_TOOLS_SIGN_EXTEND_XY)
+   CONFIG_ZMK_POINTING_TOOLS_PIPELINE)
   zephyr_library()
   zephyr_include_directories(include)
   zephyr_include_directories(${APPLICATION_SOURCE_DIR}/include)
@@ -38,7 +33,7 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/stage/cursor_transfer/cursor_transfer.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/cursor_quantizer/cursor_quantizer.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_MOTION_GATE_CORE
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/motion_gate/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/motion_gate/coherent_displacement_stage.c)
@@ -92,25 +87,6 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/platform/zmk/source_input_processor.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
     src/platform/zmk/compact_split_encoder.c)
-
-  # Monolithic processors retained during pipeline migration.
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TRACE
-    src/legacy_processor/zmk/input_processor_trace.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER
-    src/legacy_processor/noise_filter.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_NOISE_FILTER
-    src/legacy_processor/zmk/input_processor_noise_filter.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL
-    src/legacy_processor/axis_intent.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL src/legacy_processor/scroll.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SCROLL
-    src/legacy_processor/zmk/input_processor_scroll.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV
-    src/legacy_processor/zmk/input_processor_text_nav.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TEXT_NAV
-    src/legacy_processor/text_nav.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SIGN_EXTEND_XY
-    src/legacy_processor/zmk/input_processor_sign_extend_xy.c)
 
   # Cross-cutting runtime services.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY src/service/telemetry.c)

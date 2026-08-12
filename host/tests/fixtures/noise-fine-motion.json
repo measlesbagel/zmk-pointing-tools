@@ -11,7 +11,7 @@
     "provenance": "Curated from slow precision hardware captures"
   },
   "processor": {
-    "kind": "noise-filter",
+    "kind": "composed-noise",
     "settings": {
       "enabled": true,
       "activationDistance": 6,

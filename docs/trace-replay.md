@@ -53,12 +53,14 @@ Motion is `["motion", deltaMs, x, y]`. Scroll fixtures may also contain
 `["keypress", deltaMs]` to reproduce the physical-keypress guard. Delta time is relative to the
 previous event, making replay independent of uptime and timestamp wrap in the original capture.
 
-Supported models are currently:
+Supported pipeline kinds are currently:
 
-- `noise-filter`, backed by `src/legacy_processor/noise_filter.c`;
-- `adaptive-scroll`, backed by `src/legacy_processor/scroll.c` and
-  `src/legacy_processor/axis_intent.c`;
-- `text-navigation`, backed by `src/legacy_processor/text_nav.c`.
+- `composed-noise`, backed by the raw coherent-displacement gate stage;
+- `composed-scroll`, backed by the axis-intent, axis-constraint, and scroll
+  batcher stages;
+- `composed-text`, backed by the text-navigation stage;
+- `cursor-pipeline`, backed by resolution normalization, the cursor transfer,
+  and the sub-pixel cursor quantizer.
 
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as

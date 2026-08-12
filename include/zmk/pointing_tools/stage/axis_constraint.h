@@ -22,6 +22,9 @@ struct zpt_axis_constraint_config {
     bool discard_unclassified;
     /* Gap after which buffered undecided motion is folded or discarded. */
     uint16_t idle_timeout_ms;
+    /* Report cadence at which buffered undecided motion is folded or
+     * discarded, mirroring the legacy scroll flush; 0 uses the idle timeout. */
+    uint16_t fold_interval_ms;
     /* Optional external condition clearing buffered motion and dropping the
      * frame, mirroring the legacy keypress guard. */
     const struct zpt_suppression_policy *suppression;

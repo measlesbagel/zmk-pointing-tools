@@ -3,22 +3,6 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-    zpt_test_raw: zpt_test_raw {
-        compatible = "measlesbagel,zpt-input-processor-trace";
-        #input-processor-cells = <0>;
-        pointing-device-id = <1>;
-        stage = <0>;
-        label = "Test raw";
-    };
-
-    zpt_test_output: zpt_test_output {
-        compatible = "measlesbagel,zpt-input-processor-trace";
-        #input-processor-cells = <0>;
-        pointing-device-id = <1>;
-        stage = <1>;
-        label = "Test output";
-    };
-
     zpt_test_orientation: zpt_test_orientation {
         compatible = "measlesbagel,zpt-stage-orientation";
         stable-id = "orientation";
@@ -63,6 +47,7 @@
         stable-id = "scroll-constraint";
         discard-unclassified;
         idle-timeout-ms = <120>;
+        fold-interval-ms = <16>;
         suppression = <&zpt_test_keypress_guard>;
     };
 
@@ -180,18 +165,10 @@
         pipeline = <&zpt_test_normalized_cursor_pipeline>;
     };
 
-    zpt_test_cursor_source: zpt_test_cursor_source {
-        compatible = "measlesbagel,zpt-input-processor-source";
-        #input-processor-cells = <0>;
-        source-id = <1>;
-        resolution-cpi = <700>;
-        router = <&zpt_test_cursor_router>;
-    };
 
     zpt_test_cursor_output: zpt_test_cursor_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_cursor_router>;
-        input-processors = <&zpt_test_output>;
     };
 
     /* Compile both ends of the optional split codec without routing the test
@@ -231,16 +208,6 @@
         default-pipeline = <&zpt_test_compact_pipeline>;
     };
 
-    zpt_test_compact_source: zpt_test_compact_source {
-        compatible = "measlesbagel,zpt-input-processor-source";
-        #input-processor-cells = <0>;
-        source-id = <2>;
-        resolution-cpi = <700>;
-        transported;
-        compact-event-code = <INPUT_REL_Z>;
-        compact-transport-coalesced;
-        router = <&zpt_test_compact_router>;
-    };
 
     zpt_test_compact_output: zpt_test_compact_output {
         compatible = "zmk,input-listener";
@@ -272,66 +239,6 @@
         release-ratio-percent = <180>;
         activation-distance-micrometers = <580>;
         window-ms = <64>;
-    };
-
-    zpt_test_scroll: zpt_test_scroll {
-        compatible = "measlesbagel,zpt-input-processor-scroll";
-        #input-processor-cells = <1>;
-        tuning-id = "test-scroll";
-        tuning-label = "Test scroll";
-        scale-multiplier = <1>;
-        scale-divisor = <8>;
-        report-interval-ms = <16>;
-        idle-timeout-ms = <120>;
-        intent-window-ms = <64>;
-        activation-distance = <16>;
-        engage-ratio-percent = <300>;
-        release-ratio-percent = <180>;
-        suppress-after-keypress-ms = <75>;
-    };
-
-    zpt_test_scroll_output: zpt_test_scroll_output {
-        compatible = "zmk,input-listener";
-        device = <&zpt_test_scroll>;
-        input-processors = <&zpt_test_output>;
-    };
-
-    zpt_test_noise_filter: zpt_test_noise_filter {
-        compatible = "measlesbagel,zpt-input-processor-noise-filter";
-        #input-processor-cells = <0>;
-        tuning-id = "test-noise-filter";
-        tuning-label = "Test noise filter";
-        enabled;
-        activation-distance = <6>;
-        coherence-percent = <60>;
-        qualification-timeout-ms = <160>;
-        idle-timeout-ms = <120>;
-        suppress-after-keypress-ms = <40>;
-    };
-
-    zpt_test_noise_output: zpt_test_noise_output {
-        compatible = "zmk,input-listener";
-        device = <&zpt_test_noise_filter>;
-        input-processors = <&zpt_test_raw &zpt_test_cursor_source>;
-    };
-
-    zpt_test_text_nav: zpt_test_text_nav {
-        compatible = "measlesbagel,zpt-input-processor-text-nav";
-        #input-processor-cells = <0>;
-        tuning-id = "test-text-navigation";
-        tuning-label = "Test text navigation";
-        horizontal-threshold = <25>;
-        vertical-threshold = <50>;
-        bindings = <&kp LEFT>, <&kp RIGHT>, <&kp UP>, <&kp DOWN>;
-        tap-ms = <5>;
-        idle-timeout-ms = <120>;
-        activation-distance = <12>;
-        engage-ratio-percent = <150>;
-    };
-
-    zpt_test_sign_extend: zpt_test_sign_extend {
-        compatible = "measlesbagel,zpt-input-processor-sign-extend-xy";
-        #input-processor-cells = <0>;
     };
 
     zpt_telemetry {
