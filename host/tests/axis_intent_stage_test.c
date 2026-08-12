@@ -92,6 +92,16 @@ static struct zpt_signal normalized_signal(uint32_t timestamp, zpt_fixed_t x, zp
     };
 }
 
+static void test_fixed_micrometre_conversion(void) {
+    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(0) == 0);
+    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1000) == ZPT_FIXED_ONE);
+    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(500) == ZPT_FIXED_ONE / 2);
+    /* Rounds to the nearest micrometre. */
+    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1) == 66);
+    /* The smoke keymap's 580 um activation distance. */
+    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(580) == 38011);
+}
+
 static void test_strategy_forced_policies(void) {
     struct zpt_axis_intent_state state = {0};
     assert(zpt_axis_intent_estimate(&state, &settings, ZPT_AXIS_POLICY_FREE, 20, 1, 8) ==
@@ -249,6 +259,7 @@ static void test_stage_reset_clears_state(void) {
 }
 
 int main(void) {
+    test_fixed_micrometre_conversion();
     test_strategy_forced_policies();
     test_strategy_cardinal_and_diagonal();
     test_strategy_hysteresis_and_turning();

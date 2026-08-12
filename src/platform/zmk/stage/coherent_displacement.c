@@ -27,9 +27,6 @@ static int coherent_displacement_provider_init(const struct device *dev) {
                                        &config->stage, &data->state);
 }
 
-#define ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(value)                                                \
-    ((((int64_t)(value) * ZPT_FIXED_ONE) + 500) / 1000)
-
 #define ZPT_COHERENT_DISPLACEMENT_PROVIDER_DEFINE(inst)                                            \
     BUILD_ASSERT(DT_INST_PROP(inst, activation_distance_micrometers) > 0,                          \
                  "activation-distance-micrometers must be positive");                              \
