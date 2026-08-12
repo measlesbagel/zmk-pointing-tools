@@ -14,6 +14,9 @@ void zpt_route_override_table_init(struct zpt_route_override_table *table,
         .overrides = overrides,
         .capacity = capacity,
     };
+    for (size_t index = 0; index < capacity && overrides != NULL; index++) {
+        overrides[index] = (struct zpt_route_override){0};
+    }
 }
 
 int zpt_route_override_press(struct zpt_route_override_table *table, uint32_t position,
