@@ -22,6 +22,9 @@ rotation-invariant directional coherence reaches `coherence_percent`:
 |sum(v)| / sqrt(sample_count * sum(|v|^2))
 ```
 
+A `coherence_percent` of 0 disables the coherence requirement entirely, so
+any accumulated vector reaching the activation distance qualifies.
+
 Qualification emits the complete buffered vector rather than losing its fine
 movement. Later vectors pass unchanged until an idle deadline ends the active
 gesture. Pending motion that cannot qualify before its own deadline is
