@@ -7,27 +7,45 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/util.h>
 
+#include <zmk/pointing_tools/platform/zmk/keypress_suppression.h>
 #include <zmk/pointing_tools/platform/zmk/stage_provider.h>
+#include <zmk/pointing_tools/policy/suppression.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
 
 struct zpt_axis_intent_provider_config {
     const char *stable_id;
+    bool raw_domain;
     struct zpt_axis_intent_stage_config stage;
+    const struct device *suppression_device;
 };
 
 struct zpt_axis_intent_provider_data {
     struct zpt_zmk_stage_provider_data provider;
+    struct zpt_axis_intent_stage_config stage;
     struct zpt_axis_intent_stage_state state;
 };
 
 static int axis_intent_provider_init(const struct device *dev) {
     const struct zpt_axis_intent_provider_config *config = dev->config;
     struct zpt_axis_intent_provider_data *data = dev->data;
-    return zpt_zmk_stage_provider_init(dev, config->stable_id, &zpt_axis_intent_stage_api,
-                                       &config->stage, &data->state);
+
+    data->stage = config->stage;
+    if (config->suppression_device != NULL) {
+        int ret =
+            zpt_zmk_keypress_suppression_get(config->suppression_device, &data->stage.suppression);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    const struct zpt_stage_api *api =
+        config->raw_domain ? &zpt_axis_intent_raw_stage_api : &zpt_axis_intent_stage_api;
+    return zpt_zmk_stage_provider_init(dev, config->stable_id, api, &data->stage, &data->state);
 }
 
 #define ZPT_AXIS_INTENT_PROVIDER_DEFINE(inst)                                                      \
+    BUILD_ASSERT(DT_INST_NODE_HAS_PROP(inst, activation_distance_micrometers) !=                   \
+                     DT_INST_NODE_HAS_PROP(inst, activation_distance_counts),                      \
+                 "exactly one of activation-distance-micrometers or activation-distance-counts");  \
     BUILD_ASSERT(DT_INST_PROP(inst, policy) >= ZPT_AXIS_POLICY_FREE &&                             \
                      DT_INST_PROP(inst, policy) <= ZPT_AXIS_POLICY_VERTICAL,                       \
                  "policy must be free, adaptive, horizontal, or vertical");                        \
@@ -37,13 +55,17 @@ static int axis_intent_provider_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_PROP(inst, release_ratio_percent) > 0 &&                                  \
                      DT_INST_PROP(inst, release_ratio_percent) <= UINT16_MAX,                      \
                  "release-ratio-percent must fit in 16 bits and be positive");                     \
-    BUILD_ASSERT(DT_INST_PROP(inst, activation_distance_micrometers) > 0,                          \
-                 "activation-distance-micrometers must be positive");                              \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, activation_distance_micrometers, 0) > 0 ||                  \
+                     DT_INST_PROP_OR(inst, activation_distance_counts, 0) > 0,                     \
+                 "activation distance must be positive");                                          \
     BUILD_ASSERT(DT_INST_PROP(inst, window_ms) > 0 && DT_INST_PROP(inst, window_ms) <= UINT16_MAX, \
                  "window-ms must fit in 16 bits and be positive");                                 \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, idle_timeout_ms, 0) <= UINT16_MAX,                          \
+                 "idle-timeout-ms must fit in 16 bits");                                           \
     static struct zpt_axis_intent_provider_data zpt_axis_intent_provider_data_##inst;              \
     static const struct zpt_axis_intent_provider_config zpt_axis_intent_provider_config_##inst = { \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
+        .raw_domain = DT_INST_NODE_HAS_PROP(inst, activation_distance_counts),                     \
         .stage =                                                                                   \
             {                                                                                      \
                 .policy = DT_INST_PROP(inst, policy),                                              \
@@ -51,11 +73,18 @@ static int axis_intent_provider_init(const struct device *dev) {
                     {                                                                              \
                         .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),          \
                         .release_ratio_percent = DT_INST_PROP(inst, release_ratio_percent),        \
-                        .activation_distance = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(               \
-                            DT_INST_PROP(inst, activation_distance_micrometers)),                  \
+                        .activation_distance =                                                     \
+                            DT_INST_NODE_HAS_PROP(inst, activation_distance_counts)                \
+                                ? DT_INST_PROP_OR(inst, activation_distance_counts, 0)             \
+                                : ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                            \
+                                      DT_INST_PROP_OR(inst, activation_distance_micrometers, 0)),  \
                         .window_ms = DT_INST_PROP(inst, window_ms),                                \
                     },                                                                             \
+                .idle_timeout_ms = DT_INST_PROP_OR(inst, idle_timeout_ms, 0),                      \
             },                                                                                     \
+        .suppression_device = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, suppression),              \
+                                       (DEVICE_DT_GET(DT_INST_PHANDLE(inst, suppression))),        \
+                                       (NULL)),                                                     \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, axis_intent_provider_init, NULL,                                   \
                           &zpt_axis_intent_provider_data_##inst,                                   \

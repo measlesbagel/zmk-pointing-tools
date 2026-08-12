@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <zmk/pointing_tools/core/pipeline.h>
+#include <zmk/pointing_tools/policy/suppression.h>
 
 /*
  * Reusable semantic-neutral axis-intent estimator.
@@ -58,6 +59,11 @@ uint16_t zpt_axis_intent_confidence(const struct zpt_axis_intent_state *state);
 struct zpt_axis_intent_stage_config {
     struct zpt_axis_intent_settings settings;
     enum zpt_axis_policy policy;
+    /* Gap after which the estimator resets; 0 disables the idle reset. */
+    uint16_t idle_timeout_ms;
+    /* Optional external condition resetting the estimator and dropping the
+     * frame, mirroring the legacy keypress guard. */
+    const struct zpt_suppression_policy *suppression;
 };
 
 struct zpt_axis_intent_stage_state {
@@ -66,4 +72,7 @@ struct zpt_axis_intent_stage_state {
     bool have_last_frame;
 };
 
+/* Normalized-motion variant carrying Q16 millimetre activation distances. */
 extern const struct zpt_stage_api zpt_axis_intent_stage_api;
+/* Raw-count variant carrying count-domain activation distances. */
+extern const struct zpt_stage_api zpt_axis_intent_raw_stage_api;
