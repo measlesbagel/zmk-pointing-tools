@@ -109,6 +109,22 @@ pipeline that has already been deactivated.
 
 ## Current stages
 
+The cursor transfer stage applies a base gain to Q16 millimetre motion,
+saturating at the fixed-point limits with a clipped flag, and the cursor
+quantizer converts normalized motion to integer-valued pointer deltas while
+carrying the fractional remainder between frames so sub-pixel movement
+accumulates exactly. With a units-per-meter factor derived from the sensor
+CPI and identity gain, the composed path reproduces the legacy count-domain
+cursor behavior within one sub-count unit.
+
+The cursor transfer stage applies a base gain to Q16 millimetre motion,
+saturating at the fixed-point limits with a clipped flag, and the cursor
+quantizer converts normalized motion to integer-valued pointer deltas while
+carrying the fractional remainder between frames so sub-pixel movement
+accumulates exactly. With a units-per-meter factor derived from the sensor
+CPI and identity gain, the composed path reproduces the legacy count-domain
+cursor behavior within one sub-count unit.
+
 Stages carry an optional observer slot that receives generic decision
 events (suppression, discard, qualification, intent changes, flushes, and
 actions) without coupling algorithms to any telemetry transport. A ZMK
