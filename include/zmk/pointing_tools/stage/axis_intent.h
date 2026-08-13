@@ -32,6 +32,17 @@ enum zpt_axis_intent {
     ZPT_AXIS_INTENT_VERTICAL,
 };
 
+/* The estimator values are stored directly in signal annotations; keep the
+ * two enums interchangeable at compile time. */
+_Static_assert((int)ZPT_SIGNAL_AXIS_UNDECIDED == (int)ZPT_AXIS_INTENT_UNDECIDED,
+               "annotation and estimator intents must agree");
+_Static_assert((int)ZPT_SIGNAL_AXIS_FREE == (int)ZPT_AXIS_INTENT_FREE,
+               "annotation and estimator intents must agree");
+_Static_assert((int)ZPT_SIGNAL_AXIS_HORIZONTAL == (int)ZPT_AXIS_INTENT_HORIZONTAL,
+               "annotation and estimator intents must agree");
+_Static_assert((int)ZPT_SIGNAL_AXIS_VERTICAL == (int)ZPT_AXIS_INTENT_VERTICAL,
+               "annotation and estimator intents must agree");
+
 struct zpt_axis_intent_settings {
     uint16_t engage_ratio_percent;
     uint16_t release_ratio_percent;
