@@ -6,6 +6,14 @@
 
 #include <zmk/pointing_tools/stage/cursor_quantizer.h>
 
+/* INT64_MIN-safe magnitude of a signed value. */
+static uint64_t magnitude_i64(int64_t value) {
+    if (value >= 0) {
+        return (uint64_t)value;
+    }
+    return (uint64_t)(-(value + 1)) + 1U;
+}
+
 /* Q16 by Q16 multiply with saturation: (left * right) >> 16. */
 static int64_t fixed_multiply(int64_t left, int64_t right) {
     if (left == 0 || right == 0) {
@@ -27,7 +35,8 @@ static int64_t fixed_multiply(int64_t left, int64_t right) {
         if (right < INT64_MIN / left) {
             return INT64_MIN;
         }
-    } else if (right > INT64_MAX / -left) {
+    } else if ((uint64_t)right > (UINT64_C(1) << 63) / magnitude_i64(left)) {
+        /* Avoid negating INT64_MIN while checking the product bound. */
         return INT64_MIN;
     }
     return (left * right) >> ZPT_FIXED_FRACTION_BITS;
