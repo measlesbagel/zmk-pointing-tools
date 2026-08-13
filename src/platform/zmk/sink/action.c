@@ -28,6 +28,8 @@ struct zpt_action_sink_provider_config {
     const char *stable_id;
     const struct zmk_behavior_binding *bindings;
     uint16_t tap_ms;
+    uint16_t input_device_index;
+    uint16_t behavior_index;
 };
 
 struct zpt_action_sink_provider_data {
@@ -91,6 +93,8 @@ static int action_sink_provider_init(const struct device *dev) {
     struct zpt_action_sink_provider_data *data = dev->data;
     data->sink_config.bindings = config->bindings;
     data->sink_config.tap_ms = config->tap_ms;
+    data->sink_config.input_device_index = config->input_device_index;
+    data->sink_config.behavior_index = config->behavior_index;
     return zpt_zmk_sink_provider_init(dev, config->stable_id, &action_sink_api, &data->sink_config,
                                       NULL);
 }
@@ -105,6 +109,8 @@ static int action_sink_provider_init(const struct device *dev) {
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
         .bindings = zpt_action_sink_bindings_##inst,                                               \
         .tap_ms = DT_INST_PROP_OR(inst, tap_ms, 0),                                                \
+        .input_device_index = DT_INST_PROP_OR(inst, input_device_index, 0),                        \
+        .behavior_index = DT_INST_PROP_OR(inst, behavior_index, 0),                                \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, action_sink_provider_init, NULL,                                   \
                           &zpt_action_sink_provider_data_##inst,                                   \
