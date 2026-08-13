@@ -76,9 +76,13 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     if (suppressed) {
         clear_undecided(state);
         zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
-        /* Pass the frame through so downstream stages observe the same
-         * suppression and clear their own buffered state. */
-        return zpt_stage_emit(context, signal);
+        /* Emit a zero-valued frame so downstream stages observe the same
+         * suppression and clear their buffered state without ever seeing
+         * suppressed motion values. */
+        struct zpt_signal output = *signal;
+        output.data.raw_motion.x_counts = 0;
+        output.data.raw_motion.y_counts = 0;
+        return zpt_stage_emit(context, &output);
     }
     if (!state->have_last_frame ||
         (config->idle_timeout_ms != 0U && elapsed >= config->idle_timeout_ms)) {
