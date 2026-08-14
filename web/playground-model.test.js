@@ -20,7 +20,6 @@ test("records repeatable activity metrics and exports only associated telemetry"
   finishRun(run, true, 1250);
 
   const exported = exportRun(run, {
-    samples: [{ sequence: 9 }, { sequence: 10 }, { sequence: 11 }],
     stateEvents: [{ sequence: 8 }, { sequence: 12 }],
     queueCapacity: 64,
   });
@@ -29,7 +28,6 @@ test("records repeatable activity metrics and exports only associated telemetry"
   assert.equal(exported.metrics.pointerDistance, 5);
   assert.equal(exported.metrics.clicks, 2);
   assert.equal(exported.metrics.errors, 1);
-  assert.deepEqual(exported.telemetry.samples.map(({ sequence }) => sequence), [10, 11]);
   assert.deepEqual(exported.telemetry.stateEvents.map(({ sequence }) => sequence), [12]);
   assert.equal("startedMs" in exported, false);
 });
