@@ -1,6 +1,5 @@
 export const MESSAGE = Object.freeze({
   DESCRIBE_REQUEST: 0x01,
-  TELEMETRY_CONTROL: 0x02,
   PING: 0x03,
   TUNING_TARGETS_REQUEST: 0x04,
   TUNING_DESCRIBE_REQUEST: 0x05,
@@ -20,7 +19,6 @@ export const MESSAGE = Object.freeze({
   TUNING_TARGET_METADATA_RESPONSE: 0x87,
   TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
   STATE_STATUS_RESPONSE: 0x89,
-  SAMPLE: 0x90,
   STATE_SAMPLE: 0x91,
 });
 
@@ -97,52 +95,18 @@ export class FrameDecoder {
 }
 
 export function parseDescribe(payload) {
-  const decoder = new TextDecoder();
-  let offset = 0;
-  const version = payload[offset++];
+  const version = payload[0];
   if (version !== PROTOCOL_VERSION) {
     throw new Error(`Firmware protocol ${version} does not match tuner protocol ${PROTOCOL_VERSION}`);
   }
-  const count = payload[offset++];
-  const streams = [];
-
-  for (let index = 0; index < count; index += 1) {
-    const deviceId = payload[offset++];
-    const stage = payload[offset++];
-    const length = payload[offset++];
-    if (offset + length > payload.length) throw new Error("Truncated stream descriptor");
-    const label = decoder.decode(payload.slice(offset, offset + length));
-    offset += length;
-    streams.push({ deviceId, stage, label, key: `${deviceId}:${stage}` });
-  }
-  return { version, streams };
+  return { version };
 }
 
 export function parseAck(payload) {
-  if (payload.length !== 9) throw new Error("Invalid acknowledgement length");
+  if (payload.length !== 4) throw new Error("Invalid acknowledgement length");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   return {
-    enabled: Boolean(payload[0]),
-    dropped: view.getUint32(1, true),
-    stateDropped: view.getUint32(5, true),
-  };
-}
-
-export function parseSample(payload) {
-  if (payload.length !== 26) throw new Error("Invalid trace sample length");
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const deviceId = payload[0];
-  const stage = payload[1];
-  return {
-    deviceId,
-    stage,
-    key: `${deviceId}:${stage}`,
-    timestamp: view.getUint32(2, true),
-    sequence: view.getUint32(6, true),
-    x: view.getInt32(10, true),
-    y: view.getInt32(14, true),
-    wheel: view.getInt32(18, true),
-    hWheel: view.getInt32(22, true),
+    stateDropped: view.getUint32(0, true),
   };
 }
 

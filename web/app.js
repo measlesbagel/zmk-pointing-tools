@@ -10,7 +10,6 @@ import {
   encodeTuningSetMany,
   parseAck,
   parseDescribe,
-  parseSample,
   parseStateSample,
   parseStateStatus,
   parseTuningDescription,
@@ -29,14 +28,13 @@ import { ResponseRequestQueue } from "./request-queue.js";
 import { PointingPlayground } from "./playground.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
-const COLORS = ["#78d6b0", "#e8c477", "#82aaff", "#ef8fa3", "#c099ff", "#79c7d9"];
-const MAX_SAMPLES = 20_000;
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
-const DIRECTION_LABELS = ["left", "right", "up", "down"];
+const STAGE_EVENT_LABELS = ["suppressed", "discarded", "qualified", "intent-changed", "flushed", "action"];
+const STAGE_EVENT_INTENT_CHANGED = 3;
 
 const elements = Object.fromEntries(
-  ["status", "connect", "telemetry", "simulate", "clear", "export", "notice", "trace", "streams", "sample-count", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
+  ["status", "connect", "simulate", "clear", "notice", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -45,14 +43,10 @@ let port;
 let reader;
 let writer;
 let readActive = false;
-let telemetryEnabled = false;
 let protocolReady = false;
-let traceDropped = 0;
 let simulator;
 let heartbeat;
-let streams = new Map();
 let tuningTargets = new Map();
-let samples = [];
 let stateEvents = [];
 let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
 let stateDirty = true;
@@ -77,17 +71,12 @@ function notice(text, error = false) {
 
 function updateHeartbeat() {
   const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
-  const needed = Boolean(writer) && (telemetryEnabled || stateEnabled);
+  const needed = Boolean(writer) && stateEnabled;
   if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
   if (!needed && heartbeat) {
     clearInterval(heartbeat);
     heartbeat = undefined;
   }
-}
-
-function streamColor(key) {
-  const keys = [...streams.keys()];
-  return COLORS[Math.max(0, keys.indexOf(key)) % COLORS.length];
 }
 
 function escapeHtml(value) {
@@ -100,53 +89,11 @@ function escapeHtml(value) {
 
 function setDescription(description) {
   protocolReady = true;
-  streams = new Map(
-    description.streams.map((stream) => [stream.key, { ...stream, count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} }]),
-  );
-  renderStreams();
   stateDirty = true;
-  notice(`Protocol v${description.version}; ${streams.size} trace streams available.`);
+  notice(`Protocol v${description.version} connected.`);
 }
 
-function addSample(sample) {
-  if (!streams.has(sample.key)) {
-    streams.set(sample.key, { key: sample.key, deviceId: sample.deviceId, stage: sample.stage, label: `Stream ${sample.key}`, count: 0, totalDt: 0, distance: 0, latest: {} });
-  }
-  const stream = streams.get(sample.key);
-  if (stream.lastTimestamp !== undefined) stream.totalDt += (sample.timestamp - stream.lastTimestamp) >>> 0;
-  stream.lastTimestamp = sample.timestamp;
-  stream.count += 1;
-  stream.distance += Math.hypot(sample.x, sample.y);
-  stream.latest = sample;
-  samples.push(sample);
-  if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
-  if ([...stateStatus.levels.values()].some((level) => level !== STATE.OFF)) stateDirty = true;
-  elements.export.disabled = samples.length === 0;
-}
 
-function renderStreams() {
-  if (!streams.size) {
-    elements.streams.innerHTML = '<p class="muted">No stream description received.</p>';
-    return;
-  }
-  elements.streams.innerHTML = [...streams.values()]
-    .map((stream) => {
-      const average = stream.count > 1 ? stream.totalDt / (stream.count - 1) : 0;
-      const latest = stream.latest;
-      return `<article class="stream" style="--stream-color:${streamColor(stream.key)}">
-        <h3>${escapeHtml(stream.label)}</h3>
-        <div class="metrics">
-          <span>Frames</span><strong>${stream.count}</strong>
-          <span>Mean interval</span><strong>${average.toFixed(1)} ms</strong>
-          <span>Distance</span><strong>${stream.distance.toFixed(0)}</strong>
-          <span>X / Y</span><strong>${latest.x ?? 0} / ${latest.y ?? 0}</strong>
-          <span>Wheel H / V</span><strong>${latest.hWheel ?? 0} / ${latest.wheel ?? 0}</strong>
-        </div>
-      </article>`;
-    })
-    .join("");
-  elements["sample-count"].textContent = `${samples.length.toLocaleString()} samples`;
-}
 
 function renderTuning() {
   const targets = [...tuningTargets.values()];
@@ -208,23 +155,15 @@ function stateFlagLabels(flags) {
 }
 
 function describeStateEvent(event) {
-  const intent = INTENT_LABELS[event.intent] ?? `intent ${event.intent}`;
-  const flags = stateFlagLabels(event.flags);
-  if (event.targetKind === 1 && event.event === STATE.EVENT_FRAME) {
-    return `input ${event.values[0]}/${event.values[1]} · ${intent} · energy ${event.values[2]}/${event.values[3]} · pending ${event.values[6]}/${event.values[7]}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
+  if (event.targetKind === 4) {
+    const label = STAGE_EVENT_LABELS[event.values[0]] ?? `stage-event ${event.values[0]}`;
+    const quantity = event.values[0] === STAGE_EVENT_INTENT_CHANGED
+      ? (INTENT_LABELS[event.values[1]] ?? `intent ${event.values[1]}`)
+      : (event.values[1] !== 0 ? String(event.values[1]) : "");
+    const flags = stateFlagLabels(event.flags);
+    return `${label}${quantity ? ` · ${quantity}` : ""}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
   }
-  if (event.targetKind === 1 && event.event === STATE.EVENT_FLUSH) {
-    return `wheel H/V ${event.values[0]}/${event.values[1]} · ${intent} · remainder ${event.values[8]}/${event.values[9]}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
-  }
-  if (event.targetKind === 2) {
-    const direction = event.values[4] >= 0 ? DIRECTION_LABELS[event.values[4]] : "none";
-    return `input ${event.values[0]}/${event.values[1]} · ${intent} · accumulated ${event.values[2]}/${event.values[3]} · step ${direction}${flags.length ? ` · ${flags.join(", ")}` : ""}`;
-  }
-  if (event.targetKind === 3) {
-    const phase = ["idle", "pending", "active", "bypass"][event.intent] ?? `phase ${event.intent}`;
-    return `input ${event.values[0]}/${event.values[1]} · output ${event.values[2]}/${event.values[3]} · ${phase} · pending ${event.values[4]}/${event.values[5]} (${event.values[6]} frames)${flags.length ? ` · ${flags.join(", ")}` : ""}`;
-  }
-  return `${intent}${flags.length ? ` · ${flags.join(", ")}` : ""} · values ${event.values.join("/")}`;
+  return `values ${event.values.join("/")}`;
 }
 
 function renderDiagnostics() {
@@ -254,15 +193,7 @@ function renderDiagnostics() {
       </label>
     </article>`;
   }).join("");
-  const timeline = [
-    ...samples.slice(-40).map((sample) => ({ ...sample, recordType: "trace" })),
-    ...stateEvents.slice(-40).map((event) => ({ ...event, recordType: "state" })),
-  ].sort((left, right) => left.sequence - right.sequence).slice(-30).reverse().map((event) => {
-    if (event.recordType === "trace") {
-      const stream = streams.get(event.key);
-      const detail = `relative ${event.x}/${event.y} · wheel H/V ${event.hWheel}/${event.wheel}`;
-      return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(stream?.label ?? `Stream ${event.key}`)}</strong><span>${escapeHtml(detail)}</span></li>`;
-    }
+  const timeline = stateEvents.slice(-30).reverse().map((event) => {
     const target = tuningTargets.get(event.targetId);
     return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(target?.label ?? `Target ${event.targetId}`)}</strong><span>${escapeHtml(describeStateEvent(event))}</span></li>`;
   }).join("");
@@ -278,7 +209,6 @@ function setStateStatus(status) {
 function addStateEvent(event) {
   stateEvents.push(event);
   if (stateEvents.length > MAX_STATE_EVENTS) stateEvents.splice(0, stateEvents.length - MAX_STATE_EVENTS);
-  elements.export.disabled = false;
   stateDirty = true;
 }
 
@@ -332,45 +262,9 @@ function setTuningParameterMetadata(metadata) {
   renderTuning();
 }
 
-function draw() {
-  const canvas = elements.trace;
-  const context = canvas.getContext("2d");
-  const ratio = devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  if (canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
-    canvas.width = Math.floor(width * ratio);
-    canvas.height = Math.floor(height * ratio);
-  }
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#252b34";
-  context.beginPath();
-  context.moveTo(width / 2, 0); context.lineTo(width / 2, height);
-  context.moveTo(0, height / 2); context.lineTo(width, height / 2);
-  context.stroke();
-
-  for (const stream of streams.values()) {
-    const selected = samples.slice(-3000).filter((sample) => sample.key === stream.key && (sample.x || sample.y));
-    let x = width / 2;
-    let y = height / 2;
-    context.beginPath();
-    context.moveTo(x, y);
-    for (const sample of selected) {
-      x += sample.x * 0.35;
-      y += sample.y * 0.35;
-      context.lineTo(x, y);
-    }
-    context.strokeStyle = streamColor(stream.key);
-    context.lineWidth = 1.5;
-    context.stroke();
-  }
-}
 
 function renderLoop() {
-  renderStreams();
   renderDiagnostics();
-  draw();
   requestAnimationFrame(renderLoop);
 }
 
@@ -419,15 +313,11 @@ function handleFrame(frame) {
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
-    traceDropped = ack.dropped;
-    telemetryEnabled = ack.enabled;
-    elements.telemetry.textContent = ack.enabled ? "Stop telemetry" : "Start telemetry";
     updateHeartbeat();
     stateStatus.dropped = ack.stateDropped;
     stateDirty = true;
-    notice(`Telemetry ${ack.enabled ? "active" : "stopped"}; ${ack.dropped} trace and ${ack.stateDropped} state samples dropped.`);
-  } else if (frame.type === MESSAGE.SAMPLE) addSample(parseSample(frame.payload));
-  else if (frame.type === MESSAGE.STATE_SAMPLE) addStateEvent(parseStateSample(frame.payload));
+    notice(`${ack.stateDropped} state samples dropped.`);
+  } else if (frame.type === MESSAGE.STATE_SAMPLE) addStateEvent(parseStateSample(frame.payload));
   else if (frame.type === MESSAGE.TUNING_TARGETS_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_TARGETS_REQUEST);
     setTuningTargets(parseTuningTargets(frame.payload));
@@ -494,22 +384,17 @@ async function readLoop() {
 
 async function disconnect() {
   try { if (writer && protocolReady) await writer.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
-  try { if (writer && telemetryEnabled) await send(MESSAGE.TELEMETRY_CONTROL, Uint8Array.of(0)); } catch {}
   readActive = false;
   try { if (reader) await reader.cancel(); } catch {}
   try { if (writer) writer.releaseLock(); } catch {}
   try { if (port) await port.close(); } catch {}
   port = writer = undefined;
-  telemetryEnabled = false;
   protocolReady = false;
-  traceDropped = 0;
   tuningRequests.clear();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
   elements.connect.textContent = "Connect keyboard";
-  elements.telemetry.disabled = true;
   elements.simulate.disabled = false;
-  elements.telemetry.textContent = "Start telemetry";
   tuningTargets = new Map();
   stateEvents = [];
   stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
@@ -532,18 +417,13 @@ async function connect() {
     readActive = true;
     readLoop();
     elements.connect.textContent = "Disconnect";
-    elements.telemetry.disabled = false;
     elements.simulate.disabled = true;
-    streams = new Map();
     tuningTargets = new Map();
-    samples = [];
-    traceDropped = 0;
     stateEvents = [];
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
     stateDirty = true;
     tuningRequests.clear();
     decoder = new FrameDecoder();
-    renderStreams();
     renderTuning();
     setStatus("Connected", true);
     await send(MESSAGE.DESCRIBE_REQUEST);
@@ -571,10 +451,7 @@ function startSimulator() {
     renderTuning();
     return;
   }
-  setDescription({ version: PROTOCOL_VERSION, streams: [
-    { deviceId: 1, stage: 0, key: "1:0", label: "Simulated raw" },
-    { deviceId: 1, stage: 1, key: "1:1", label: "Simulated output" },
-  ] });
+  setDescription({ version: PROTOCOL_VERSION });
   setTuningTargets([{ id: 0, stableId: "simulated-scroll", kind: 1, label: "Simulated adaptive scroll", devicetreePath: "/simulated_scroll", parameters: [
     { id: 6, key: "activation-distance", devicetreeProperty: "activation-distance", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
     { id: 9, key: "suppress-after-keypress-ms", devicetreeProperty: "suppress-after-keypress-ms", type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
@@ -589,16 +466,15 @@ function startSimulator() {
   setStateStatus({ schemaVersion: 1, dropped: 0, queueCapacity: 64, levels: new Map([[0, STATE.OFF], [1, STATE.OFF]]) });
   let tick = 0;
   simulator = setInterval(() => {
-    const raw = { deviceId: 1, stage: 0, key: "1:0", timestamp: tick * 8, sequence: tick * 2, x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1), wheel: 0, hWheel: 0 };
-    addSample(raw);
-    addSample({ ...raw, stage: 1, key: "1:1", sequence: tick * 2 + 1, x: Math.abs(raw.x) < 2 ? 0 : raw.x, y: Math.abs(raw.y) < 2 ? 0 : raw.y });
+    const raw = { x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1) };
     const level = stateStatus.levels.get(0) ?? STATE.OFF;
     if (level === STATE.VERBOSE || (level === STATE.DECISIONS && tick % 20 === 0)) {
-      addStateEvent({ targetId: 0, targetKind: 1, event: STATE.EVENT_FRAME,
-        intent: Math.abs(raw.x) >= Math.abs(raw.y) ? 2 : 3,
+      const intent = Math.abs(raw.x) >= Math.abs(raw.y) ? 2 : 3;
+      addStateEvent({ targetId: 0, targetKind: 4, event: STATE.EVENT_FRAME,
+        intent: tick % 20 === 0 ? intent : 0,
         flags: tick % 20 === 0 ? STATE.FLAG_INTENT_CHANGED : 0,
-        timestamp: raw.timestamp, sequence: tick * 3 + 2,
-        values: [raw.x, raw.y, Math.abs(raw.x) * 4, Math.abs(raw.y) * 4, 0, 0, raw.x, raw.y, 0, 0] });
+        timestamp: tick * 8, sequence: tick + 2,
+        values: [STAGE_EVENT_INTENT_CHANGED, intent, 0, 0, 0, 0, 0, 0, 0, 0] });
     }
     tick += 1;
   }, 8);
@@ -607,32 +483,10 @@ function startSimulator() {
 }
 
 elements.connect.addEventListener("click", () => (port ? disconnect() : connect()));
-elements.telemetry.addEventListener("click", () => send(MESSAGE.TELEMETRY_CONTROL, Uint8Array.of(telemetryEnabled ? 0 : 1)));
 elements.simulate.addEventListener("click", startSimulator);
 elements.clear.addEventListener("click", () => {
-  samples = [];
   stateEvents = [];
   stateDirty = true;
-  for (const stream of streams.values()) Object.assign(stream, { count: 0, lastTimestamp: undefined, totalDt: 0, distance: 0, latest: {} });
-  elements.export.disabled = true;
-});
-elements.export.addEventListener("click", () => {
-  const payload = JSON.stringify({
-    exportedAt: new Date().toISOString(),
-    streams: [...streams.values()].map(({ count, lastTimestamp, totalDt, distance, latest, ...descriptor }) => descriptor),
-    samples,
-    stateTelemetry: protocolReady ? {
-      schemaVersion: stateStatus.schemaVersion,
-      dropped: stateStatus.dropped,
-      queueCapacity: stateStatus.queueCapacity,
-      events: stateEvents,
-    } : undefined,
-  }, null, 2);
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
-  link.download = `zmk-pointing-trace-${new Date().toISOString().replaceAll(":", "-")}.json`;
-  link.click();
-  URL.revokeObjectURL(link.href);
 });
 
 elements.diagnostics.addEventListener("change", (event) => {
@@ -734,18 +588,12 @@ function playgroundContext() {
   } catch {
     tuningProfile = undefined;
   }
-  const latestSequence = [...samples.slice(-1), ...stateEvents.slice(-1)]
-    .reduce((latest, record) => Math.max(latest, record.sequence ?? 0), -1);
+  const latestSequence = stateEvents.slice(-1).reduce((latest, record) => Math.max(latest, record.sequence ?? 0), -1);
   return {
     nextSequence: latestSequence + 1,
     tuningProfile,
-    streams: [...streams.values()].map(
-      ({ count, lastTimestamp, totalDt, distance, latest, ...descriptor }) => descriptor,
-    ),
-    samples,
     stateEvents,
     stateSchemaVersion: stateStatus.schemaVersion,
-    traceDropped,
     stateDropped: stateStatus.dropped,
     queueCapacity: stateStatus.queueCapacity,
   };

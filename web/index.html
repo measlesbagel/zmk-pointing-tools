@@ -18,10 +18,8 @@
 
       <section class="actions" aria-label="Connection controls">
         <button id="connect" class="primary">Connect keyboard</button>
-        <button id="telemetry" disabled>Start telemetry</button>
         <button id="simulate">Simulate</button>
         <button id="clear">Clear</button>
-        <button id="export" disabled>Export trace</button>
       </section>
 
       <p id="notice" class="notice">
@@ -93,21 +91,13 @@
         </div>
       </section>
 
-      <section class="panel trace-panel">
-        <div class="panel-heading">
-          <h2>Gesture path</h2>
-          <span>Raw and processed streams are drawn independently from the center.</span>
-        </div>
-        <canvas id="trace" width="960" height="480"></canvas>
-      </section>
-
       <section class="panel">
         <div class="panel-heading">
           <div>
             <h2>Processor decisions</h2>
             <span id="state-count">0 state events</span>
           </div>
-          <span id="state-dropped">Requires protocol v5</span>
+          <span id="state-dropped">0 dropped</span>
         </div>
         <div class="temporary-warning">
           Diagnostics are observational and off by default. “Decisions” reports transitions and
@@ -115,16 +105,6 @@
         </div>
         <div id="diagnostics" class="diagnostics">
           <p class="muted">Connect current firmware to inspect processor decisions.</p>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-heading">
-          <h2>Streams</h2>
-          <span id="sample-count">0 samples</span>
-        </div>
-        <div id="streams" class="streams">
-          <p class="muted">No stream description received.</p>
         </div>
       </section>
 
