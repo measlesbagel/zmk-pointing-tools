@@ -92,13 +92,14 @@ part of the standard packet.
 
 See [ZMK split pointing devices](https://zmk.dev/docs/hardware-integration/pointing#listener-and-input-split-device).
 
-### Current workarounds expose missing lifecycle
+### The previous architecture exposed missing lifecycle
 
-The existing processors independently reassemble X/Y, own unrelated timers,
-observe key activity separately, and emit through virtual devices. The legacy
-pipeline switch delegates scalar events but cannot reset arbitrary processor
-state when a mode changes. More stages built this way would multiply event
-boundaries and stale-state risks.
+The previous processors independently reassembled X/Y, owned unrelated
+timers, observed key activity separately, and emitted through virtual
+devices. They could not reset arbitrary processor state when a mode changed.
+More stages built that way would multiply event boundaries and stale-state
+risks; the composable pipeline replaces the pattern with explicit
+enter/leave lifecycle.
 
 ## Terminology
 
@@ -513,9 +514,9 @@ policy that chooses a route.
 
 The host implementation uses the same core source files and integer arithmetic
 as firmware. Zephyr adapters provide clocks, work scheduling, keypress/layer
-signals, and output integration around that core. The first adapter hosts frame
-ingress in a standard ZMK input-listener processor chain and emits cursor
-events from a virtual device to a dedicated output listener.
+signals, and output integration around that core. The ZMK adapter hosts frame
+ingress in a standard input-listener processor chain and the router's sink
+emits input reports from the router device to a dedicated output listener.
 
 ## Routing and mode lifecycle
 

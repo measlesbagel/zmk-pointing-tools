@@ -31,10 +31,10 @@ gesture. Pending motion that cannot qualify before its own deadline is
 discarded and starts fresh.
 
 The reusable strategy uses signed 64-bit values and is unit-independent. The
-pipeline stage deliberately consumes `NORMALIZED_MOTION`, so its activation
-distance is signed Q16 millimetres rather than sensor counts. This gives the
-same physical policy to sources with different CPI. The existing legacy input
-processor remains count-based until its adapter is migrated.
+normalized pipeline stage consumes `NORMALIZED_MOTION` with a signed Q16
+millimetre activation distance, giving the same physical policy to sources
+with different CPI, while the raw stage variant keeps a count-domain
+activation distance for count-domain pipelines and fixtures.
 
 ## Evidence preservation
 

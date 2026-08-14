@@ -16,9 +16,10 @@ Generate a machine-readable report for review or comparison:
 
 ```sh
 node host/replay/cli.js \
-  --noise-runner build/host/zpt_noise_filter_replay \
-  --scroll-runner build/host/zpt_scroll_replay \
-  --text-runner build/host/zpt_text_nav_replay \
+  --noise-pipeline-runner build/host/zpt_noise_pipeline_replay \
+  --scroll-pipeline-runner build/host/zpt_scroll_pipeline_replay \
+  --text-pipeline-runner build/host/zpt_text_nav_pipeline_replay \
+  --cursor-pipeline-runner build/host/zpt_cursor_pipeline_replay \
   --json /tmp/replay.json \
   host/tests/fixtures/*.json
 ```
@@ -45,7 +46,7 @@ Fixtures use `zmk-pointing-tools/trace-fixture` version 1. Each fixture records:
 
 - an ID and human description;
 - device, CPI, nominal cadence, mode, and provenance metadata;
-- the processor kind, exact settings, and optional axis policy;
+- the pipeline kind, exact settings, and optional axis policy;
 - ordered events encoded as `[type, deltaMs, ...values]`;
 - expected metrics, which may be a subset of the generated report.
 
@@ -75,7 +76,7 @@ replace its event list from an exported tuner trace:
 node host/replay/import.js \
   --input ~/Downloads/zmk-pointing-trace.json \
   --stream 0:0 \
-  --template host/tests/fixtures/left-split-transport.json \
+  --template host/tests/fixtures/left-split-transport-composed.json \
   --output /tmp/new-left-fixture.json \
   --start 100 \
   --count 500
@@ -89,9 +90,10 @@ that reproduces the behavior; large raw exports should remain outside the reposi
 The tuner export does not currently contain physical key events. Add keypress events manually
 when reproducing keypress-guard behavior.
 
-## Adding another processor
+## Adding another pipeline kind
 
-Keep algorithms host-buildable and deterministic: isolate Zephyr device, workqueue, HID, and
-event-manager integration in the firmware wrapper. Add a small stdin/stdout runner under
-`host/runners`, teach the modules under `host/replay` its settings and metrics, register the target
-in `host/CMakeLists.txt`, and add at least one fixture covering a historical or boundary case.
+Keep algorithms host-buildable and deterministic: keep Zephyr device, workqueue, HID, and
+event-manager integration in the platform layer. Add a small stdin/stdout runner under
+`host/runners` driving the real core stages, teach the modules under `host/replay` its settings
+and metrics, register the runner in `host/CMakeLists.txt`, and add at least one fixture covering a
+historical or boundary case.

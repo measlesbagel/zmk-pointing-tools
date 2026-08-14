@@ -63,5 +63,5 @@ disabled. Review the generated overlay and either incorporate its values into
 the original nodes or commit the overlay in the consuming ZMK configuration.
 The generated text is a handoff aid, not an automatic repository edit.
 
-Set `tuning-id` to a unique, durable value on every tunable processor. Changing
+Set `tuning-id` to a unique, durable value on every tunable target. Changing
 that ID intentionally prevents older profiles from matching the target.

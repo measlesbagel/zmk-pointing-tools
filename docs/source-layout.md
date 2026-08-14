@@ -10,8 +10,7 @@ placeholder directories.
 | `core/` | Typed signal execution, pipeline lifecycle, and shared runtime machinery |
 | `source/` | Source-independent frame reconstruction, metadata handling, and optional transport codecs |
 | `stage/` | Ordered reusable transforms, gates, filters, estimators, constraints, mappers, quantizers, and batchers |
-| `sink/` | Thin terminal output adapters for already-decided values |
-| `platform/zmk/` | ZMK and Zephyr integration around reusable source, pipeline, stage, and sink code |
+| `platform/zmk/` | ZMK and Zephyr integration around reusable source, pipeline, stage, and sink code, including the terminal sink adapters and their devicetree providers |
 | `observer/` | Non-mutating trace and semantic-state observation contracts |
 | `service/` | Cross-cutting runtime services such as discovery, tuning, and telemetry transport |
 
