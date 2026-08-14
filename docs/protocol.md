@@ -13,8 +13,8 @@ feature gates for older firmware.
 0x5a 0x50  type:u8  payload-length:u16  payload
 ```
 
-The host initiates requests. Trace and processor-state samples are unsolicited
-only while the host has explicitly enabled their respective streams.
+The host initiates requests. Stage-state samples are unsolicited only while
+the host has explicitly enabled the corresponding per-target level.
 
 Hosts send at most one tuning request at a time and wait for its matching
 response before advancing discovery. This provides transport-level flow
@@ -26,7 +26,7 @@ requests must not be emitted as an unbounded burst.
 | Type | Direction | Name | Payload |
 | --- | --- | --- | --- |
 | `0x01` | host → device | Describe request | empty |
-| `0x02` | host → device | Telemetry control | `enabled:u8` |
+| `0x02` | host → device | Telemetry control | `enabled:u8` (retained for compatibility) |
 | `0x03` | host → device | Heartbeat | empty |
 | `0x04` | host → device | List tuning targets | empty |
 | `0x05` | host → device | Describe tuning target | `target-id:u8` |
@@ -38,7 +38,7 @@ requests must not be emitted as an unbounded burst.
 | `0x0b` | host → device | Preview parameter batch | described below |
 | `0x0c` | host → device | Processor-state control/status | empty to query, or `target-id:u8, level:u8` |
 | `0x81` | device → host | Describe response | described below |
-| `0x82` | device → host | Acknowledgement | `enabled:u8, trace-dropped:u32, state-dropped:u32` |
+| `0x82` | device → host | Acknowledgement | `enabled:u8, trace-dropped:u32 (always 0), state-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
@@ -46,44 +46,30 @@ requests must not be emitted as an unbounded burst.
 | `0x87` | device → host | Target metadata | described below |
 | `0x88` | device → host | Parameter metadata | described below |
 | `0x89` | device → host | Processor-state status | described below |
-| `0x90` | device → host | Trace sample | described below |
-| `0x91` | device → host | Processor-state sample | described below |
+| `0x90` | device → host | Trace sample | retired; never emitted |
+| `0x91` | device → host | Stage-state sample | described below |
 
 ### Describe response
 
 ```text
 protocol-version:u8
 stream-count:u8
-repeat stream-count times:
-  pointing-device-id:u8
-  stage:u8
-  label-length:u8
-  label:utf8[label-length]
 ```
 
-Device IDs are keyboard-defined and need not mean left/right. Stage `0` is
-conventionally raw input and stage `1` is processed output.
+Trace streams were superseded by stage-state telemetry; firmware always
+reports `stream-count: 0`. The trace sample message is retired and never
+emitted.
 
-While telemetry is active, the host sends a heartbeat at least every five
-seconds. Firmware disables streaming automatically when the host disappears.
-
-### Trace sample
-
-```text
-pointing-device-id:u8
-stage:u8
-timestamp-ms:u32
-sequence:u32
-x:i32
-y:i32
-wheel:i32
-horizontal-wheel:i32
-```
+While the host keeps streaming alive, it sends a heartbeat at least every
+five seconds. Firmware disables all state levels automatically when the host
+disappears.
 
 ## Runtime tuning
 
-Targets are runtime processor instances rather than hard-coded left/right
-devices.
+Targets are runtime instances rather than hard-coded left/right devices.
+After the monolithic processors were removed, the registry reports zero
+tunable targets; the protocol remains in place for stage-parameter
+registration (tracked by #15).
 
 ### Tuning targets
 
@@ -96,9 +82,9 @@ repeat target-count times:
   label:utf8[label-length]
 ```
 
-Target kind `1` is a synchronized scroll processor, kind `2` is a
-gesture-locked text-navigation processor, and kind `3` is a vector-aware noise
-filter.
+Target kinds are `1` scroll, `2` text navigation, `3` noise filter, and `4`
+pipeline stage. Kind `4` currently appears only on stage-state samples; no
+stage parameters are tunable yet.
 
 ### Tuning target description
 
@@ -202,11 +188,12 @@ duplicate, and processor-level relationship before replacing current settings;
 if any value fails, none of that target's values change. A request contains at
 most 20 values.
 
-## Semantic processor-state telemetry
+## Stage-state telemetry
 
-Optional diagnostics are associated with the same runtime target IDs used for
-tuning. State telemetry is observational, starts off, does not persist, and is
-independent of raw/output trace control.
+Optional diagnostics are keyed by target id in the shared tuning/telemetry
+target table. Tuning-registered targets take the first ids; pipeline stage
+observers (`measlesbagel,zpt-pipeline-telemetry`) allocate the remaining ids at
+init, and the status response enumerates every allocated target.
 
 Control levels are off (`0`), decisions (`1`), and every frame (`2`). Target ID
 `0xff` applies a level to every target. An empty request queries status without
@@ -222,13 +209,6 @@ repeat target-count times:
   level:u8
 ```
 
-“Decisions” emits intent/lifecycle transitions, suppression transitions,
-discard decisions, and semantic output. “Every frame” additionally emits each
-complete processor input frame and no-output flush. The latter can approach
-the sensor report rate and should only be enabled briefly. Trace and state
-records share the advertised bounded queue; independent trace/state drop
-counters make saturation visible in status and heartbeat acknowledgements.
-
 State samples use schema version 1:
 
 ```text
@@ -242,34 +222,29 @@ sequence:u32
 values:i32[10]
 ```
 
-The sequence counter is shared with trace samples, allowing hosts to order
-state decisions alongside raw and output records even when timestamps match.
-Intent values are undecided (`0`), free (`1`), horizontal (`2`), and vertical
-(`3`). Event values are frame (`1`) and flush (`2`). Flag bits are:
+The sequence counter orders samples within the bounded shared queue; the state
+drop counter in status and heartbeat acknowledgements makes saturation visible.
+
+Pipeline stage observers emit one sample per stage decision: suppression,
+unclassified discard, gate qualification, axis-intent changes, report flushes,
+and text actions. `event` is frame (`1`) for decisions and flush (`2`) for
+report flushes. `values[0]` carries the stage event kind and `values[1]` the
+event quantity (the new intent, the emitted step magnitude, or the action id);
+the remaining values are reserved zeros. `intent` is the new intent for
+intent-change events and zero otherwise. Stage samples use these flag bits:
 
 | Bit | Meaning |
 | --- | --- |
-| 0 | gesture reset after first frame, idle timeout, or policy change |
 | 1 | axis intent changed |
 | 2 | frame suppressed by the physical-keypress guard |
-| 3 | keypress-guard suppression entered or exited |
 | 4 | unclassified motion discarded |
 | 5 | semantic output emitted |
-| 6 | horizontal output clipped to the HID range |
-| 7 | vertical output clipped to the HID range |
 | 8 | pending movement qualified as intentional |
-| 9 | pending movement discarded |
 
-The ten values are defined by target kind and event:
-
-| Target/event | Values 0–9 |
-| --- | --- |
-| scroll frame | input X/Y, horizontal/vertical energy, undecided X/Y, pending X/Y, remainder X/Y |
-| scroll flush | output H/V, horizontal/vertical energy, pre-flush undecided X/Y, post-flush pending X/Y, remainder X/Y |
-| text frame | input X/Y, accumulated X/Y, direction, then five reserved zeros |
-| noise-filter frame | input X/Y, output X/Y, pending X/Y, pending frame count, squared energy, phase, enabled |
-
-Text direction is none (`-1`), left (`0`), right (`1`), up (`2`), or down
-(`3`). Reserved values and unknown flags must be ignored for forward
-compatibility. Firmware disables all state levels after the ordinary host
-heartbeat timeout or an explicit all-targets-off request.
+The remaining historical flag bits (gesture reset, suppression transitions,
+per-axis HID clipping, pending discard) are reserved and unused by stage
+samples. The decisions level emits stage decisions only; the every-frame level
+is reserved for future per-frame stage producers and currently adds nothing.
+Reserved values and unknown flags must be ignored for forward compatibility.
+Firmware disables all state levels after the ordinary host heartbeat timeout
+or an explicit all-targets-off request.
