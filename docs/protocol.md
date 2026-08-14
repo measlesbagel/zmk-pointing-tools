@@ -26,7 +26,7 @@ requests must not be emitted as an unbounded burst.
 | Type | Direction | Name | Payload |
 | --- | --- | --- | --- |
 | `0x01` | host → device | Describe request | empty |
-| `0x02` | host → device | Telemetry control | `enabled:u8` (retained for compatibility) |
+
 | `0x03` | host → device | Heartbeat | empty |
 | `0x04` | host → device | List tuning targets | empty |
 | `0x05` | host → device | Describe tuning target | `target-id:u8` |
@@ -38,7 +38,7 @@ requests must not be emitted as an unbounded burst.
 | `0x0b` | host → device | Preview parameter batch | described below |
 | `0x0c` | host → device | Processor-state control/status | empty to query, or `target-id:u8, level:u8` |
 | `0x81` | device → host | Describe response | described below |
-| `0x82` | device → host | Acknowledgement | `enabled:u8, trace-dropped:u32 (always 0), state-dropped:u32` |
+| `0x82` | device → host | Acknowledgement | `state-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
@@ -46,23 +46,18 @@ requests must not be emitted as an unbounded burst.
 | `0x87` | device → host | Target metadata | described below |
 | `0x88` | device → host | Parameter metadata | described below |
 | `0x89` | device → host | Processor-state status | described below |
-| `0x90` | device → host | Trace sample | retired; never emitted |
 | `0x91` | device → host | Stage-state sample | described below |
 
 ### Describe response
 
 ```text
 protocol-version:u8
-stream-count:u8
 ```
 
-Trace streams were superseded by stage-state telemetry; firmware always
-reports `stream-count: 0`. The trace sample message is retired and never
-emitted.
-
-While the host keeps streaming alive, it sends a heartbeat at least every
-five seconds. Firmware disables all state levels automatically when the host
-disappears.
+The describe response is the protocol version handshake; the tuner rejects
+every other version. While the host keeps streaming alive, it sends a
+heartbeat at least every five seconds. Firmware disables all state levels
+automatically when the host disappears.
 
 ## Runtime tuning
 
@@ -223,7 +218,8 @@ values:i32[10]
 ```
 
 The sequence counter orders samples within the bounded shared queue; the state
-drop counter in status and heartbeat acknowledgements makes saturation visible.
+drop counter in status and heartbeat acknowledgements makes saturation
+visible.
 
 Pipeline stage observers emit one sample per stage decision: suppression,
 unclassified discard, gate qualification, axis-intent changes, report flushes,

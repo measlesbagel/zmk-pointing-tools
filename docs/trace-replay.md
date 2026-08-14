@@ -66,34 +66,3 @@ Supported pipeline kinds are currently:
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as
 applicable. The models deliberately use integer arithmetic matching firmware behavior.
-
-## Import a tuner export
-
-Start by copying a similar fixture so its processor settings and metadata are explicit. Then
-replace its event list from an exported tuner trace:
-
-```sh
-node host/replay/import.js \
-  --input ~/Downloads/zmk-pointing-trace.json \
-  --stream 0:0 \
-  --template host/tests/fixtures/left-split-transport-composed.json \
-  --output /tmp/new-left-fixture.json \
-  --start 100 \
-  --count 500
-```
-
-Edit the new fixture's ID, description, provenance, CPI, mode, and processor settings. Remove
-irrelevant leading/trailing frames if necessary. Generate and inspect expectations with
-`--update`, then commit only a representative anonymized segment. Prefer the smallest segment
-that reproduces the behavior; large raw exports should remain outside the repository.
-
-The tuner export does not currently contain physical key events. Add keypress events manually
-when reproducing keypress-guard behavior.
-
-## Adding another pipeline kind
-
-Keep algorithms host-buildable and deterministic: keep Zephyr device, workqueue, HID, and
-event-manager integration in the platform layer. Add a small stdin/stdout runner under
-`host/runners` driving the real core stages, teach the modules under `host/replay` its settings
-and metrics, register the runner in `host/CMakeLists.txt`, and add at least one fixture covering a
-historical or boundary case.

@@ -11,7 +11,7 @@ placeholder directories.
 | `source/` | Source-independent frame reconstruction, metadata handling, and optional transport codecs |
 | `stage/` | Ordered reusable transforms, gates, filters, estimators, constraints, mappers, quantizers, and batchers |
 | `platform/zmk/` | ZMK and Zephyr integration around reusable source, pipeline, stage, and sink code, including the terminal sink adapters and their devicetree providers |
-| `observer/` | Non-mutating trace and semantic-state observation contracts |
+| `observer/` | Non-mutating semantic-state observation contracts |
 | `service/` | Cross-cutting runtime services such as discovery, tuning, and telemetry transport |
 
 Public headers under `include/zmk/pointing_tools/` mirror these roles. Platform

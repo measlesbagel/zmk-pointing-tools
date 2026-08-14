@@ -157,7 +157,7 @@ fractional motion, or choose output cadence.
 ### Observer
 
 A cross-cutting consumer of pipeline events that does not modify the signal.
-Tracing, semantic telemetry, and a future automatic-layer controller are
+Semantic telemetry and a future automatic-layer controller are
 observers.
 
 ## Ownership boundaries

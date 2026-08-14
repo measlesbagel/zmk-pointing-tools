@@ -20,7 +20,7 @@ work with arbitrary ZMK pointing devices.
 - Layer- and behavior-driven pipeline routing with leave-before-enter lifecycle
 - Shared physical-keypress suppression across every pipeline stage
 - Per-stage decision telemetry with stable identity and discovery
-- An offline, repository-owned Web Serial viewer
+- An offline, repository-owned Web Serial tuner
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic byte-exact regression replay through the composed stages
 - Guided scroll, text, cursor, click, and drag playground activities
