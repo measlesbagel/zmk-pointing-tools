@@ -37,8 +37,6 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
     src/stage/motion_gate/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/motion_gate/coherent_displacement_stage.c)
-  # Core sink adapters (ZMK-bound output; excluded from host builds).
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/sink/cursor.c)
   # Devicetree providers for stages, sinks, pipelines, and the router.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage_provider.c)
