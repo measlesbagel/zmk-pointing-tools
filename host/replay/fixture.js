@@ -123,36 +123,3 @@ export function encodeRunnerInput(fixture) {
   }
   return `${lines.join("\n")}\n`;
 }
-
-export function importCapture(capture, template, options) {
-  const stream = capture.streams?.find(({ key }) => key === options.stream);
-  if (!stream || !Array.isArray(capture.samples)) {
-    throw new Error(`Stream ${options.stream} is absent from the export`);
-  }
-  const selected = capture.samples
-    .filter(({ key, deviceId, stage }) =>
-      key === options.stream || `${deviceId}:${stage}` === options.stream)
-    .slice(options.start, options.count === undefined ? undefined : options.start + options.count);
-  if (selected.length === 0) throw new Error("Selected frame range is empty");
-
-  let previous;
-  const fixture = structuredClone(template);
-  fixture.events = selected.map((sample) => {
-    const delta = previous === undefined ? 0 : (sample.timestamp - previous) >>> 0;
-    previous = sample.timestamp;
-    return ["motion", delta, sample.x, sample.y];
-  });
-  fixture.metadata = {
-    ...fixture.metadata,
-    capture: {
-      source: options.source,
-      exportedAt: capture.exportedAt,
-      streamKey: options.stream,
-      streamLabel: stream.label,
-      startFrame: options.start,
-      frameCount: selected.length,
-    },
-  };
-  delete fixture.expect;
-  return fixture;
-}
