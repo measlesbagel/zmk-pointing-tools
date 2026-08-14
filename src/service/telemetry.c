@@ -108,6 +108,7 @@ static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 static atomic_t zpt_state_dropped;
+static atomic_t zpt_state_stage_targets;
 static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 #endif
 
@@ -128,6 +129,7 @@ int zpt_state_telemetry_register_target(uint8_t *target_id) {
         if (atomic_get(&zpt_state_levels[index]) == ZPT_STATE_LEVEL_OFF &&
             index >= zpt_tuning_target_count()) {
             *target_id = (uint8_t)index;
+            atomic_inc(&zpt_state_stage_targets);
             return 0;
         }
     }
@@ -205,7 +207,9 @@ static void zpt_send_state(const struct zpt_state_sample *sample) {
 
 static void zpt_send_state_status(void) {
     uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS * 2];
-    const size_t target_count = MIN(zpt_tuning_target_count(), ARRAY_SIZE(zpt_state_levels));
+    const size_t target_count =
+        MIN(zpt_tuning_target_count() + (size_t)atomic_get(&zpt_state_stage_targets),
+            ARRAY_SIZE(zpt_state_levels));
     payload[0] = ZPT_STATE_SCHEMA_VERSION;
     sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[1]);
     sys_put_le16(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, &payload[5]);
