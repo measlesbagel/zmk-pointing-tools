@@ -3,14 +3,39 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-    zpt_test_orientation: zpt_test_orientation {
-        compatible = "measlesbagel,zpt-stage-orientation";
-        stable-id = "orientation";
+    zpt_test_keypress_guard: zpt_test_keypress_guard {
+        compatible = "measlesbagel,zpt-keypress-suppression";
+        suppress-after-keypress-ms = <40>;
     };
 
-    zpt_test_pointer_identity: zpt_test_pointer_identity {
-        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
-        stable-id = "raw-pointer-identity";
+    /* Normalized cursor pipeline: counts to Q16 millimetres, motion gate,
+     * base gain, and sub-pixel quantizer. */
+    zpt_test_resolution_normalize: zpt_test_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "resolution-normalize";
+    };
+
+    zpt_test_motion_gate: zpt_test_motion_gate {
+        compatible = "measlesbagel,zpt-stage-coherent-displacement";
+        stable-id = "motion-gate";
+        enabled;
+        activation-distance-micrometers = <220>;
+        coherence-percent = <60>;
+        qualification-timeout-ms = <160>;
+        idle-timeout-ms = <120>;
+    };
+
+    zpt_test_cursor_transfer: zpt_test_cursor_transfer {
+        compatible = "measlesbagel,zpt-stage-cursor-transfer";
+        stable-id = "cursor-transfer";
+        scale-multiplier = <1>;
+        scale-divisor = <1>;
+    };
+
+    zpt_test_cursor_quantizer: zpt_test_cursor_quantizer {
+        compatible = "measlesbagel,zpt-stage-cursor-quantizer";
+        stable-id = "cursor-quantizer";
+        units-per-meter = <27559>;
     };
 
     zpt_test_cursor_sink: zpt_test_cursor_sink {
@@ -21,13 +46,16 @@
     zpt_test_cursor_pipeline: zpt_test_cursor_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-cursor";
-        stages = <&zpt_test_orientation &zpt_test_pointer_identity>;
+        stages = <&zpt_test_resolution_normalize &zpt_test_motion_gate
+                  &zpt_test_cursor_transfer &zpt_test_cursor_quantizer>;
         sink = <&zpt_test_cursor_sink>;
     };
 
-    zpt_test_keypress_guard: zpt_test_keypress_guard {
-        compatible = "measlesbagel,zpt-keypress-suppression";
-        suppress-after-keypress-ms = <40>;
+    /* Scroll pipeline: the same estimator and constraint over normalized
+     * motion with a steps-per-metre transfer and a wheel sink. */
+    zpt_test_scroll_resolution_normalize: zpt_test_scroll_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "scroll-resolution-normalize";
     };
 
     zpt_test_scroll_axis_intent: zpt_test_scroll_axis_intent {
@@ -36,7 +64,7 @@
         policy = <1>;
         engage-ratio-percent = <300>;
         release-ratio-percent = <180>;
-        activation-distance-counts = <16>;
+        activation-distance-micrometers = <581>;
         window-ms = <64>;
         idle-timeout-ms = <120>;
         suppression = <&zpt_test_keypress_guard>;
@@ -54,8 +82,7 @@
     zpt_test_scroll_batcher: zpt_test_scroll_batcher {
         compatible = "measlesbagel,zpt-stage-scroll-batcher";
         stable-id = "scroll-batcher";
-        scale-multiplier = <1>;
-        scale-divisor = <8>;
+        steps-per-meter = <3445>;
         report-interval-ms = <16>;
         suppression = <&zpt_test_keypress_guard>;
     };
@@ -68,17 +95,25 @@
     zpt_test_scroll_pipeline: zpt_test_scroll_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-scroll";
-        stages = <&zpt_test_scroll_axis_intent &zpt_test_scroll_constraint &zpt_test_scroll_batcher>;
+        stages = <&zpt_test_scroll_resolution_normalize &zpt_test_scroll_axis_intent
+                  &zpt_test_scroll_constraint &zpt_test_scroll_batcher>;
         sink = <&zpt_test_scroll_sink>;
+    };
+
+    /* Text pipeline: gesture thresholds over normalized motion emitting
+     * action taps. */
+    zpt_test_text_resolution_normalize: zpt_test_text_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "text-resolution-normalize";
     };
 
     zpt_test_composed_text_nav: zpt_test_composed_text_nav {
         compatible = "measlesbagel,zpt-stage-text-nav";
         stable-id = "text-nav";
-        horizontal-threshold = <75>;
-        vertical-threshold = <75>;
+        horizontal-threshold-micrometers = <2721>;
+        vertical-threshold-micrometers = <2721>;
         idle-timeout-ms = <40>;
-        activation-distance = <35>;
+        activation-distance-micrometers = <1270>;
         engage-ratio-percent = <150>;
     };
 
@@ -92,41 +127,14 @@
     zpt_test_text_pipeline: zpt_test_text_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-text";
-        stages = <&zpt_test_composed_text_nav>;
+        stages = <&zpt_test_text_resolution_normalize &zpt_test_composed_text_nav>;
         sink = <&zpt_test_action_sink>;
-    };
-
-    zpt_test_cursor_transfer: zpt_test_cursor_transfer {
-        compatible = "measlesbagel,zpt-stage-cursor-transfer";
-        stable-id = "cursor-transfer";
-        scale-multiplier = <1>;
-        scale-divisor = <1>;
-    };
-
-    zpt_test_cursor_quantizer: zpt_test_cursor_quantizer {
-        compatible = "measlesbagel,zpt-stage-cursor-quantizer";
-        stable-id = "cursor-quantizer";
-        units-per-meter = <27559>;
-    };
-
-    zpt_test_normalized_cursor_sink: zpt_test_normalized_cursor_sink {
-        compatible = "measlesbagel,zpt-sink-cursor";
-        stable-id = "normalized-cursor";
-    };
-
-    zpt_test_normalized_cursor_pipeline: zpt_test_normalized_cursor_pipeline {
-        compatible = "measlesbagel,zpt-pipeline";
-        stable-id = "test-normalized-cursor";
-        stages = <&zpt_test_resolution_normalize &zpt_test_motion_gate
-                  &zpt_test_cursor_transfer &zpt_test_cursor_quantizer>;
-        sink = <&zpt_test_normalized_cursor_sink>;
     };
 
     zpt_test_cursor_router: zpt_test_cursor_router {
         compatible = "measlesbagel,zpt-router";
         stable-id = "test-cursor-router";
-        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline
-                     &zpt_test_normalized_cursor_pipeline>;
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
         default-pipeline = <&zpt_test_cursor_pipeline>;
 
         test-layer-route {
@@ -158,46 +166,47 @@
         pipeline = <&zpt_test_text_pipeline>;
     };
 
-    zpt_test_normalized_cursor_route: zpt_test_normalized_cursor_route {
-        compatible = "measlesbagel,zpt-behavior-route";
-        #binding-cells = <0>;
-        router = <&zpt_test_cursor_router>;
-        pipeline = <&zpt_test_normalized_cursor_pipeline>;
-    };
-
-
     zpt_test_cursor_output: zpt_test_cursor_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_cursor_router>;
     };
 
-    /* Compile both ends of the optional split codec without routing the test
-     * noise device through this otherwise inactive smoke path. */
+    /* Compile both ends of the optional split codec and a compact-side
+     * normalized cursor path without routing live motion through it. */
     zpt_test_compact_encoder: zpt_test_compact_encoder {
         compatible = "measlesbagel,zpt-input-processor-compact-split-encoder";
         #input-processor-cells = <0>;
         event-code = <INPUT_REL_Z>;
     };
 
-    zpt_test_compact_orientation: zpt_test_compact_orientation {
-        compatible = "measlesbagel,zpt-stage-orientation";
-        stable-id = "orientation";
+    zpt_test_compact_resolution_normalize: zpt_test_compact_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "compact-resolution-normalize";
     };
 
-    zpt_test_compact_pointer_identity: zpt_test_compact_pointer_identity {
-        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
-        stable-id = "raw-pointer-identity";
+    zpt_test_compact_transfer: zpt_test_compact_transfer {
+        compatible = "measlesbagel,zpt-stage-cursor-transfer";
+        stable-id = "compact-transfer";
+        scale-multiplier = <1>;
+        scale-divisor = <1>;
+    };
+
+    zpt_test_compact_quantizer: zpt_test_compact_quantizer {
+        compatible = "measlesbagel,zpt-stage-cursor-quantizer";
+        stable-id = "compact-quantizer";
+        units-per-meter = <27559>;
     };
 
     zpt_test_compact_sink: zpt_test_compact_sink {
         compatible = "measlesbagel,zpt-sink-cursor";
-        stable-id = "cursor";
+        stable-id = "compact-cursor";
     };
 
     zpt_test_compact_pipeline: zpt_test_compact_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-compact-cursor";
-        stages = <&zpt_test_compact_orientation &zpt_test_compact_pointer_identity>;
+        stages = <&zpt_test_compact_resolution_normalize &zpt_test_compact_transfer
+                  &zpt_test_compact_quantizer>;
         sink = <&zpt_test_compact_sink>;
     };
 
@@ -208,37 +217,9 @@
         default-pipeline = <&zpt_test_compact_pipeline>;
     };
 
-
     zpt_test_compact_output: zpt_test_compact_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_compact_router>;
-    };
-
-    /* Instantiate normalized, stateful stage providers even though the
-     * identity smoke path cannot yet terminate normalized motion. */
-    zpt_test_resolution_normalize: zpt_test_resolution_normalize {
-        compatible = "measlesbagel,zpt-stage-resolution-normalize";
-        stable-id = "resolution-normalize";
-    };
-
-    zpt_test_motion_gate: zpt_test_motion_gate {
-        compatible = "measlesbagel,zpt-stage-coherent-displacement";
-        stable-id = "motion-gate";
-        enabled;
-        activation-distance-micrometers = <220>;
-        coherence-percent = <60>;
-        qualification-timeout-ms = <160>;
-        idle-timeout-ms = <120>;
-    };
-
-    zpt_test_axis_intent: zpt_test_axis_intent {
-        compatible = "measlesbagel,zpt-stage-axis-intent";
-        stable-id = "axis-intent";
-        policy = <1>;
-        engage-ratio-percent = <300>;
-        release-ratio-percent = <180>;
-        activation-distance-micrometers = <580>;
-        window-ms = <64>;
     };
 
     zpt_telemetry {
@@ -247,8 +228,7 @@
 
     zpt_telemetry_pipeline {
         compatible = "measlesbagel,zpt-pipeline-telemetry";
-        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline
-                     &zpt_test_normalized_cursor_pipeline>;
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
     };
 
     chosen {
@@ -259,7 +239,7 @@
         compatible = "zmk,keymap";
         base {
             bindings = <
-                &zpt_test_cursor_route &zpt_test_scroll_route &zpt_test_text_route &zpt_test_normalized_cursor_route &none &none   &none &none &none &none &none &none
+                &zpt_test_cursor_route &zpt_test_scroll_route &zpt_test_text_route &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                                   &none &none &none   &none &none &none
