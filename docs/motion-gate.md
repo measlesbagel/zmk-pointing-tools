@@ -31,10 +31,9 @@ gesture. Pending motion that cannot qualify before its own deadline is
 discarded and starts fresh.
 
 The reusable strategy uses signed 64-bit values and is unit-independent. The
-normalized pipeline stage consumes `NORMALIZED_MOTION` with a signed Q16
-millimetre activation distance, giving the same physical policy to sources
-with different CPI, while the raw stage variant keeps a count-domain
-activation distance for count-domain pipelines and fixtures.
+pipeline stage consumes `NORMALIZED_MOTION` with a signed Q16 millimetre
+activation distance, giving the same physical policy to sources with
+different CPI.
 
 ## Evidence preservation
 
@@ -71,10 +70,9 @@ retuning, default restoration, and administrative reset all clear pending
 motion and active state. Pending movement never crosses a pipeline change or
 settings update.
 
-## Current migration status
+## Current status
 
-The pure strategy, raw and normalized pipeline stages, external suppression
-contract, deadline behavior, and host tests are implemented. The count-domain
-fixtures replay through the composed raw gate stage and must produce
-byte-identical output, proving the migration that removed the monolithic
-noise-filter processor.
+The pure strategy, pipeline stage, external suppression contract, deadline
+behavior, and host tests are implemented. The noise fixtures replay through
+the composed gate with resolution normalization and cover the scenarios that
+previously exercised the monolithic noise-filter processor.

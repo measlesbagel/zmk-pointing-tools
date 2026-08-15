@@ -56,10 +56,12 @@ previous event, making replay independent of uptime and timestamp wrap in the or
 
 Supported pipeline kinds are currently:
 
-- `composed-noise`, backed by the raw coherent-displacement gate stage;
-- `composed-scroll`, backed by the axis-intent, axis-constraint, and scroll
-  batcher stages;
-- `composed-text`, backed by the text-navigation stage;
+- `composed-noise`, backed by resolution normalization and the
+  coherent-displacement gate;
+- `composed-scroll`, backed by resolution normalization, the axis-intent
+  estimator, the axis-constraint, and the scroll batcher;
+- `composed-text`, backed by resolution normalization and the
+  text-navigation stage;
 - `cursor-pipeline`, backed by resolution normalization, the cursor transfer,
   and the sub-pixel cursor quantizer.
 
