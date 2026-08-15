@@ -12,12 +12,13 @@ const textFixture = {
   version: 1,
   id: "text-test",
   processor: {
-    kind: "text-navigation",
+    kind: "composed-text",
     settings: {
-      horizontalThreshold: 75,
-      verticalThreshold: 75,
+      cpi: 700,
+      horizontalThresholdMicrometers: 2721,
+      verticalThresholdMicrometers: 2721,
       idleTimeoutMs: 40,
-      activationDistance: 35,
+      activationDistanceMicrometers: 1270,
       engageRatioPercent: 150,
     },
   },
@@ -44,18 +45,14 @@ test("accepts composed fixture kinds with legacy settings shapes", () => {
   assert.equal(validateFixture(composedScrollFixture), composedScrollFixture);
   assert.equal(encodeRunnerInput(composedScrollFixture),
     "C 700 3445 16 120 0 0 300 180 581 64 1\nM 0 10 1\n");
-  assert.equal(encodeRunnerInput({ ...textFixture, processor: {
-    kind: "composed-text", settings: {
-      cpi: 700, horizontalThresholdMicrometers: 2721, verticalThresholdMicrometers: 2721,
-      idleTimeoutMs: 40, activationDistanceMicrometers: 1270, engageRatioPercent: 150 } } }),
-    "C 700 2721 2721 40 1270 150\nM 0 20 -2\nM 8 30 1\n");
   assert.throws(() => validateFixture({ ...composedScrollFixture, processor: {
     ...composedScrollFixture.processor, policy: "diagonal" } }), /unknown axis policy/);
 });
 
 test("validates fixtures and encodes deterministic runner input", () => {
   assert.equal(validateFixture(textFixture), textFixture);
-  assert.equal(encodeRunnerInput(textFixture), "C 75 75 40 35 150\nM 0 20 -2\nM 8 30 1\n");
+  assert.equal(encodeRunnerInput(textFixture),
+    "C 700 2721 2721 40 1270 150\nM 0 20 -2\nM 8 30 1\n");
   assert.throws(
     () => validateFixture({ ...textFixture, version: 2 }),
     /expected zmk-pointing-tools\/trace-fixture v1/,
