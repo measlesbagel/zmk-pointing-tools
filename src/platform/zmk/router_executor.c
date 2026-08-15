@@ -62,18 +62,6 @@ int zpt_zmk_router_executor_activate(struct zpt_zmk_router_executor *executor,
     return unlock_with_result(executor, operation_result, deadline_result);
 }
 
-int zpt_zmk_router_executor_deactivate(struct zpt_zmk_router_executor *executor, uint32_t now_ms,
-                                       enum zpt_reset_reason reason,
-                                       struct zpt_pipeline_result *result) {
-    int ret = lock_executor(executor);
-    if (ret < 0) {
-        return ret;
-    }
-    int operation_result = zpt_router_deactivate(executor->router, now_ms, reason, result);
-    int deadline_result = update_deadline_locked(executor, now_ms);
-    return unlock_with_result(executor, operation_result, deadline_result);
-}
-
 int zpt_zmk_router_executor_select(struct zpt_zmk_router_executor *executor, size_t pipeline_index,
                                    uint32_t now_ms, struct zpt_pipeline_result *result) {
     int ret = lock_executor(executor);
@@ -106,17 +94,6 @@ int zpt_zmk_router_executor_flush(struct zpt_zmk_router_executor *executor, uint
     int operation_result = zpt_router_flush(executor->router, now_ms, result);
     int deadline_result = update_deadline_locked(executor, now_ms);
     return unlock_with_result(executor, operation_result, deadline_result);
-}
-
-int zpt_zmk_router_executor_reset(struct zpt_zmk_router_executor *executor,
-                                  enum zpt_reset_reason reason) {
-    int ret = lock_executor(executor);
-    if (ret < 0) {
-        return ret;
-    }
-    zpt_router_reset(executor->router, reason);
-    int deadline_result = update_deadline_locked(executor, k_uptime_get_32());
-    return unlock_with_result(executor, 0, deadline_result);
 }
 
 static void deadline_work_handler(struct k_work *work) {
