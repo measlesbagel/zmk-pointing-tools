@@ -4,53 +4,8 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/stage/cursor_quantizer.h>
-
-/* INT64_MIN-safe magnitude of a signed value. */
-static uint64_t magnitude_i64(int64_t value) {
-    if (value >= 0) {
-        return (uint64_t)value;
-    }
-    return (uint64_t)(-(value + 1)) + 1U;
-}
-
-/* Q16 by Q16 multiply with saturation: (left * right) >> 16. */
-static int64_t fixed_multiply(int64_t left, int64_t right) {
-    if (left == 0 || right == 0) {
-        return 0;
-    }
-    if (left > 0 && right > 0) {
-        if (left > INT64_MAX / right) {
-            return INT64_MAX;
-        }
-        return (left * right) >> ZPT_FIXED_FRACTION_BITS;
-    }
-    if (left < 0 && right < 0) {
-        if (left < INT64_MAX / right) {
-            return INT64_MAX;
-        }
-        return (left * right) >> ZPT_FIXED_FRACTION_BITS;
-    }
-    if (left > 0) {
-        if (right < INT64_MIN / left) {
-            return INT64_MIN;
-        }
-    } else if ((uint64_t)right > (UINT64_C(1) << 63) / magnitude_i64(left)) {
-        /* Avoid negating INT64_MIN while checking the product bound. */
-        return INT64_MIN;
-    }
-    return (left * right) >> ZPT_FIXED_FRACTION_BITS;
-}
-
-static int64_t saturating_add_i64(int64_t left, int64_t right) {
-    if (right > 0 && left > INT64_MAX - right) {
-        return INT64_MAX;
-    }
-    if (right < 0 && left < INT64_MIN - right) {
-        return INT64_MIN;
-    }
-    return left + right;
-}
 
 static int cursor_quantizer_stage_activate(struct zpt_stage *stage, enum zpt_reset_reason reason) {
     (void)reason;
@@ -81,19 +36,21 @@ static int cursor_quantizer_stage_process(struct zpt_stage *stage, const struct 
     const struct zpt_cursor_quantizer_config *config = stage->config;
     struct zpt_cursor_quantizer_state *state = stage->state;
 
-    int64_t units_x = saturating_add_i64(
-        fixed_multiply(signal->data.fixed_vector.x, config->units_per_meter), state->remainder_x);
-    int64_t units_y = saturating_add_i64(
-        fixed_multiply(signal->data.fixed_vector.y, config->units_per_meter), state->remainder_y);
-    int64_t integer_x = units_x / ZPT_FIXED_ONE;
-    int64_t integer_y = units_y / ZPT_FIXED_ONE;
-    state->remainder_x = units_x - integer_x * ZPT_FIXED_ONE;
-    state->remainder_y = units_y - integer_y * ZPT_FIXED_ONE;
+    int64_t units_x = zpt_fixed_saturating_add(
+        zpt_fixed_multiply(signal->data.fixed_vector.x, config->units_per_meter),
+        state->remainder_x);
+    int64_t units_y = zpt_fixed_saturating_add(
+        zpt_fixed_multiply(signal->data.fixed_vector.y, config->units_per_meter),
+        state->remainder_y);
+    int32_t integer_x = zpt_fixed_to_int32(units_x);
+    int32_t integer_y = zpt_fixed_to_int32(units_y);
+    state->remainder_x = units_x - (int64_t)integer_x * ZPT_FIXED_ONE;
+    state->remainder_y = units_y - (int64_t)integer_y * ZPT_FIXED_ONE;
 
     struct zpt_signal output = *signal;
     output.kind = ZPT_SIGNAL_POINTER_DELTA;
-    output.data.fixed_vector.x = integer_x * ZPT_FIXED_ONE;
-    output.data.fixed_vector.y = integer_y * ZPT_FIXED_ONE;
+    output.data.delta.x = integer_x;
+    output.data.delta.y = integer_y;
     return zpt_stage_emit(context, &output);
 }
 

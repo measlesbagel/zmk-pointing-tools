@@ -34,8 +34,8 @@ static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) 
     if (signal->kind != ZPT_SIGNAL_SCROLL_STEPS) {
         return -EPROTOTYPE;
     }
-    printf("O\t%" PRIu32 "\t%d\t%d\n", signal->metadata.observed_at_ms, signal->data.steps.x,
-           signal->data.steps.y);
+    printf("O\t%" PRIu32 "\t%d\t%d\n", signal->metadata.observed_at_ms, signal->data.delta.x,
+           signal->data.delta.y);
     return 0;
 }
 

@@ -14,7 +14,6 @@ add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/source/motion_source.c"
   "${ZPT_ROOT}/src/source/transport/compact_split_codec.c"
   "${ZPT_ROOT}/src/stage/orientation.c"
-  "${ZPT_ROOT}/src/stage/pointer_identity.c"
   "${ZPT_ROOT}/src/stage/resolution_normalize.c"
   "${ZPT_ROOT}/src/stage/axis_intent/axis_intent.c"
   "${ZPT_ROOT}/src/stage/axis_intent/axis_intent_stage.c"

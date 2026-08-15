@@ -35,11 +35,11 @@ static int scroll_sink_emit(struct zpt_sink *sink, const struct zpt_signal *sign
     }
 
     int ret = input_report(config->output_device, INPUT_EV_REL, INPUT_REL_HWHEEL,
-                           signal->data.steps.x, false, K_NO_WAIT);
+                           signal->data.delta.x, false, K_NO_WAIT);
     if (ret < 0) {
         return ret;
     }
-    return input_report(config->output_device, INPUT_EV_REL, INPUT_REL_WHEEL, signal->data.steps.y,
+    return input_report(config->output_device, INPUT_EV_REL, INPUT_REL_WHEEL, signal->data.delta.y,
                         true, K_NO_WAIT);
 }
 

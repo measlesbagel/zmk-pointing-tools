@@ -16,7 +16,6 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
     src/source/transport/compact_split_codec.c)
   # Core stage implementations (host-replayable algorithms).
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/orientation.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/resolution_normalize.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -63,8 +62,6 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   # Devicetree stage providers mirroring the core stage implementations.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/orientation.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
-    src/platform/zmk/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/resolution_normalize.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE

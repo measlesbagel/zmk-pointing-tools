@@ -99,8 +99,8 @@ static void test_transfer_applies_gain_and_flags_clipping(void) {
                            -ZPT_FIXED_ONE) == 0);
     assert(fixture.capture.outputs == 1);
     /* 1.5 mm doubled is 3 mm; the quantizer with 1 unit/m truncates to 3. */
-    assert(fixture.capture.signal.data.fixed_vector.x == 3 * ZPT_FIXED_ONE);
-    assert(fixture.capture.signal.data.fixed_vector.y == -2 * ZPT_FIXED_ONE);
+    assert(fixture.capture.signal.data.delta.x == 3);
+    assert(fixture.capture.signal.data.delta.y == -2);
 }
 
 static void test_transfer_saturates_with_clipped_flag(void) {
@@ -144,16 +144,16 @@ static void test_quantizer_accumulates_sub_pixel_remainders(void) {
     struct zpt_pipeline_result result;
     /* Half a millimetre twice accumulates to one unit. */
     assert(push_normalized(&fixture.pipeline, &result, 0, ZPT_FIXED_ONE / 2, 0) == 0);
-    assert(fixture.capture.signal.data.fixed_vector.x == 0);
+    assert(fixture.capture.signal.data.delta.x == 0);
     assert(push_normalized(&fixture.pipeline, &result, 8, ZPT_FIXED_ONE / 2, 0) == 0);
-    assert(fixture.capture.signal.data.fixed_vector.x == ZPT_FIXED_ONE);
+    assert(fixture.capture.signal.data.delta.x == 1);
     assert(fixture.quantizer_state.remainder_x == 0);
 
     /* Negative sub-pixel motion carries the sign correctly. */
     assert(push_normalized(&fixture.pipeline, &result, 16, -ZPT_FIXED_ONE / 2, 0) == 0);
-    assert(fixture.capture.signal.data.fixed_vector.x == 0);
+    assert(fixture.capture.signal.data.delta.x == 0);
     assert(push_normalized(&fixture.pipeline, &result, 24, -ZPT_FIXED_ONE / 2, 0) == 0);
-    assert(fixture.capture.signal.data.fixed_vector.x == -ZPT_FIXED_ONE);
+    assert(fixture.capture.signal.data.delta.x == -1);
     assert(fixture.quantizer_state.remainder_x == 0);
 }
 
@@ -205,8 +205,8 @@ static void test_identity_round_trip_through_normalization(void) {
     }
     /* Fixed-point conversion is sub-count exact: two single-count frames
      * accumulate to one output unit, and the remainder carries forward. */
-    assert(capture.signal.data.fixed_vector.x == 1 * ZPT_FIXED_ONE);
-    assert(capture.signal.data.fixed_vector.y == 1 * ZPT_FIXED_ONE);
+    assert(capture.signal.data.delta.x == 1);
+    assert(capture.signal.data.delta.y == 1);
     assert(quantizer_state.remainder_x == 65533);
     assert(quantizer_state.remainder_y == 65533);
 }

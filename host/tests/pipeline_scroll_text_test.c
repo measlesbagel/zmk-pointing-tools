@@ -154,7 +154,7 @@ static void test_suppression_clears_buffers_and_keeps_remainder(void) {
     assert(zpt_pipeline_flush(&fixture.pipeline, 16, &result) == 0);
     assert(fixture.capture.outputs == 1);
     assert(fixture.capture.signal.kind == ZPT_SIGNAL_SCROLL_STEPS);
-    assert(fixture.capture.signal.data.steps.x == 2);
+    assert(fixture.capture.signal.data.delta.x == 2);
     assert(fixture.batcher_state.remainder_x == 4);
 
     fixture.suppression_state.active = true;

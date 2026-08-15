@@ -20,9 +20,8 @@ static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) 
     if (signal->kind != ZPT_SIGNAL_POINTER_DELTA) {
         return -EPROTOTYPE;
     }
-    printf("O\t%" PRIu32 "\t%" PRId64 "\t%" PRId64 "\n", signal->metadata.observed_at_ms,
-           signal->data.fixed_vector.x / ZPT_FIXED_ONE,
-           signal->data.fixed_vector.y / ZPT_FIXED_ONE);
+    printf("O\t%" PRIu32 "\t%d\t%d\n", signal->metadata.observed_at_ms, signal->data.delta.x,
+           signal->data.delta.y);
     return 0;
 }
 

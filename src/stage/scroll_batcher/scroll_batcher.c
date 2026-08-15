@@ -112,8 +112,8 @@ static int scroll_batcher_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
     struct zpt_signal output = {0};
     output.kind = ZPT_SIGNAL_SCROLL_STEPS;
     output.metadata.observed_at_ms = stage->deadline_ms;
-    output.data.steps.x = horizontal;
-    output.data.steps.y = vertical;
+    output.data.delta.x = horizontal;
+    output.data.delta.y = vertical;
     zpt_stage_notify(context, ZPT_STAGE_EVENT_FLUSHED,
                      (int64_t)(horizontal > 0 ? horizontal : -horizontal) +
                          (vertical > 0 ? vertical : -vertical));
