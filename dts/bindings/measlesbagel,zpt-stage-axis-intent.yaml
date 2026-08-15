@@ -24,11 +24,8 @@ properties:
 
   activation-distance-micrometers:
     type: int
-    description: Q16 millimetre activation distance for normalized-motion pipelines
-
-  activation-distance-counts:
-    type: int
-    description: Count-domain activation distance for raw-motion pipelines
+    required: true
+    description: Activation distance as signed Q16 millimetres converted from micrometres
 
   window-ms:
     type: int

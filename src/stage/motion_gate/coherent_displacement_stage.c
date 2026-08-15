@@ -76,8 +76,7 @@ static void coherent_stage_reset(struct zpt_stage *stage, enum zpt_reset_reason 
 static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                   struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
-        stage->state == NULL || (signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION &&
-                                 signal->kind != ZPT_SIGNAL_RAW_MOTION)) {
+        stage->state == NULL || signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION) {
         return -EINVAL;
     }
 
@@ -87,13 +86,9 @@ static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_sign
     bool suppress = config->suppression != NULL && config->suppression->is_suppressed != NULL &&
                     config->suppression->is_suppressed(config->suppression->context, signal,
                                                        zpt_stage_now_ms(context));
-    int64_t x = signal->kind == ZPT_SIGNAL_RAW_MOTION ? signal->data.raw_motion.x_counts
-                                                      : signal->data.fixed_vector.x;
-    int64_t y = signal->kind == ZPT_SIGNAL_RAW_MOTION ? signal->data.raw_motion.y_counts
-                                                      : signal->data.fixed_vector.y;
-    struct zpt_coherent_displacement_result result =
-        zpt_coherent_displacement_update(&state->strategy, &config->settings, x, y,
-                                         zpt_stage_now_ms(context), suppress);
+    struct zpt_coherent_displacement_result result = zpt_coherent_displacement_update(
+        &state->strategy, &config->settings, signal->data.fixed_vector.x,
+        signal->data.fixed_vector.y, zpt_stage_now_ms(context), suppress);
 
     if (result.suppressed || result.phase == ZPT_MOTION_GATE_BYPASS || result.reset_for_idle ||
         result.reset_for_timeout || !had_pending) {
@@ -156,17 +151,6 @@ const struct zpt_stage_api zpt_coherent_displacement_stage_api = {
     .strategy_id = "coherent-displacement",
     .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
     .output_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
-    .flags = ZPT_STAGE_STATEFUL,
-    .process = coherent_stage_process,
-    .flush = coherent_stage_flush,
-    .activate = coherent_stage_activate,
-    .reset = coherent_stage_reset,
-};
-
-const struct zpt_stage_api zpt_coherent_displacement_raw_stage_api = {
-    .strategy_id = "coherent-displacement",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
-    .output_kind = ZPT_SIGNAL_RAW_MOTION,
     .flags = ZPT_STAGE_STATEFUL,
     .process = coherent_stage_process,
     .flush = coherent_stage_flush,

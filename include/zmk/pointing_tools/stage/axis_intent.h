@@ -84,7 +84,4 @@ struct zpt_axis_intent_stage_state {
     uint8_t last_notified_intent;
 };
 
-/* Normalized-motion variant carrying Q16 millimetre activation distances. */
 extern const struct zpt_stage_api zpt_axis_intent_stage_api;
-/* Raw-count variant carrying count-domain activation distances. */
-extern const struct zpt_stage_api zpt_axis_intent_raw_stage_api;

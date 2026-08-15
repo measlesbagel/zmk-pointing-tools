@@ -8,7 +8,7 @@
 #include <zmk/pointing_tools/policy/suppression.h>
 
 /*
- * Axis-constraint stage over raw motion.
+ * Axis-constraint stage over normalized motion.
  *
  * Buffers undecided motion and applies the axis-intent annotation carried by
  * an upstream estimator: horizontal intent drops vertical motion, vertical

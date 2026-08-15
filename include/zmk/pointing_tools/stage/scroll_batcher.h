@@ -8,21 +8,21 @@
 #include <zmk/pointing_tools/policy/suppression.h>
 
 /*
- * Scroll batcher stage over raw motion.
+ * Scroll batcher stage over normalized motion.
  *
- * Accumulates constrained motion and emits wheel steps on a report-interval
- * deadline, combining the legacy scroll transfer function (scale multiplier
- * and divisor), quantizer (fractional remainder carried between reports), and
- * batcher (single armed report flush) semantics. The remainder survives
- * suppression, mirroring the legacy processor.
+ * Accumulates constrained Q16 millimetre motion and emits wheel steps on a
+ * report-interval deadline: the fixed-point steps-per-millimetre factor is
+ * the transfer function, the fractional remainder carries between reports,
+ * and a single armed flush provides the batching. The remainder survives
+ * suppression.
  */
 
 struct zpt_scroll_batcher_config {
-    uint16_t scale_multiplier;
-    uint16_t scale_divisor;
+    /* Q16 wheel steps per millimetre of constrained motion. */
+    zpt_fixed_t steps_per_millimeter;
     uint16_t report_interval_ms;
     /* Optional external condition clearing pending motion and dropping the
-     * frame, mirroring the legacy keypress guard. */
+     * frame, mirroring the physical-keypress guard. */
     const struct zpt_suppression_policy *suppression;
 };
 

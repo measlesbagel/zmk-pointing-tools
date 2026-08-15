@@ -17,8 +17,7 @@ static uint64_t saturating_add_u64(uint64_t left, uint64_t right) {
     return UINT64_MAX - left < right ? UINT64_MAX : left + right;
 }
 
-/* Manhattan magnitude of the frame per second, in the input units (Q16
- * millimetres for normalized motion, counts for raw motion). */
+/* Manhattan magnitude of the frame in Q16 millimetres per second. */
 static zpt_fixed_t axis_speed_per_second(int64_t x, int64_t y, uint32_t elapsed_ms) {
     if (elapsed_ms == 0U) {
         return 0;
@@ -91,19 +90,17 @@ static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_s
         return zpt_stage_emit(context, &output);
     }
 
-    int64_t x = signal->kind == ZPT_SIGNAL_RAW_MOTION ? signal->data.raw_motion.x_counts
-                                                      : signal->data.fixed_vector.x;
-    int64_t y = signal->kind == ZPT_SIGNAL_RAW_MOTION ? signal->data.raw_motion.y_counts
-                                                      : signal->data.fixed_vector.y;
-    enum zpt_axis_intent intent = zpt_axis_intent_estimate(&state->estimator, &config->settings,
-                                                           config->policy, x, y, elapsed);
+    enum zpt_axis_intent intent =
+        zpt_axis_intent_estimate(&state->estimator, &config->settings, config->policy,
+                                 signal->data.fixed_vector.x, signal->data.fixed_vector.y, elapsed);
 
     struct zpt_signal output = *signal;
     output.annotations.axis_intent = (uint8_t)intent;
     output.annotations.axis_confidence_percent = config->policy == ZPT_AXIS_POLICY_ADAPTIVE
                                                      ? zpt_axis_intent_confidence(&state->estimator)
                                                      : 100U;
-    output.annotations.speed_per_second = axis_speed_per_second(x, y, elapsed);
+    output.annotations.speed_per_second =
+        axis_speed_per_second(signal->data.fixed_vector.x, signal->data.fixed_vector.y, elapsed);
     if (state->last_notified_intent != (uint8_t)intent) {
         zpt_stage_notify(context, ZPT_STAGE_EVENT_INTENT_CHANGED, (int64_t)intent);
         state->last_notified_intent = (uint8_t)intent;
@@ -115,16 +112,6 @@ const struct zpt_stage_api zpt_axis_intent_stage_api = {
     .strategy_id = "axis-intent",
     .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
     .output_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
-    .flags = ZPT_STAGE_STATEFUL,
-    .process = axis_intent_stage_process,
-    .activate = axis_intent_stage_activate,
-    .reset = axis_intent_stage_reset,
-};
-
-const struct zpt_stage_api zpt_axis_intent_raw_stage_api = {
-    .strategy_id = "axis-intent",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
-    .output_kind = ZPT_SIGNAL_RAW_MOTION,
     .flags = ZPT_STAGE_STATEFUL,
     .process = axis_intent_stage_process,
     .activate = axis_intent_stage_activate,

@@ -66,5 +66,3 @@ struct zpt_coherent_displacement_stage_state {
 };
 
 extern const struct zpt_stage_api zpt_coherent_displacement_stage_api;
-/* Raw-count variant carrying count-domain activation distances. */
-extern const struct zpt_stage_api zpt_coherent_displacement_raw_stage_api;
