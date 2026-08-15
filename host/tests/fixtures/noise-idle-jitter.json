@@ -14,11 +14,12 @@
     "kind": "composed-noise",
     "settings": {
       "enabled": true,
-      "activationDistance": 6,
       "coherencePercent": 60,
       "qualificationTimeoutMs": 80,
       "idleTimeoutMs": 120,
-      "suppressAfterKeypressMs": 0
+      "suppressAfterKeypressMs": 0,
+      "cpi": 700,
+      "activationDistanceMicrometers": 218
     }
   },
   "events": [

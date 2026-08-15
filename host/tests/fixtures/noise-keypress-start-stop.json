@@ -14,11 +14,12 @@
     "kind": "composed-noise",
     "settings": {
       "enabled": true,
-      "activationDistance": 6,
       "coherencePercent": 60,
       "qualificationTimeoutMs": 160,
       "idleTimeoutMs": 120,
-      "suppressAfterKeypressMs": 40
+      "suppressAfterKeypressMs": 40,
+      "cpi": 700,
+      "activationDistanceMicrometers": 217
     }
   },
   "events": [
@@ -109,7 +110,7 @@
     },
     "horizontal": {
       "signedDistance": 0,
-      "absoluteDistance": 12,
+      "absoluteDistance": 28536,
       "nonzeroFrames": 2,
       "directionChanges": 1,
       "clippedFrames": 0

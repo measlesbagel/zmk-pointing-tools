@@ -72,20 +72,6 @@ static bool suppression_active(void *context, const struct zpt_signal *signal, u
     return ((struct suppression_state *)context)->active;
 }
 
-static struct zpt_signal raw_signal(uint32_t timestamp, int32_t x, int32_t y) {
-    return (struct zpt_signal){
-        .kind = ZPT_SIGNAL_RAW_MOTION,
-        .metadata = {.observed_at_ms = timestamp},
-        .data.raw_motion = {.x_counts = x, .y_counts = y},
-    };
-}
-
-static int push_raw(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
-                    uint32_t timestamp, int32_t x, int32_t y) {
-    struct zpt_signal signal = raw_signal(timestamp, x, y);
-    return zpt_pipeline_push(pipeline, &signal, result);
-}
-
 static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
                            uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y) {
     struct zpt_signal signal = {
@@ -158,7 +144,8 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
             {
                 .engage_ratio_percent = 300,
                 .release_ratio_percent = 180,
-                .activation_distance = 16,
+                /* 16 counts at 700 CPI in Q16 millimetres. */
+                .activation_distance = (zpt_fixed_t)16 * ZPT_FIXED_ONE * 254 / 7000,
                 .window_ms = 64,
             },
         .policy = ZPT_AXIS_POLICY_ADAPTIVE,
@@ -172,8 +159,8 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
     };
     struct zpt_axis_constraint_state constraint_state = {0};
     struct zpt_scroll_batcher_config batcher_config = {
-        .scale_multiplier = 1,
-        .scale_divisor = 8,
+        /* One wheel step per eight counts at 700 CPI in Q16 steps/mm. */
+        .steps_per_millimeter = (zpt_fixed_t)3445 * ZPT_FIXED_ONE / 1000,
         .report_interval_ms = 16,
         .suppression = &suppression,
     };
@@ -182,7 +169,7 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
     struct observer_state batcher_observer = {0};
     struct zpt_stage intent_stage = {
         .stable_id = "axis-intent",
-        .api = &zpt_axis_intent_raw_stage_api,
+        .api = &zpt_axis_intent_stage_api,
         .config = &intent_config,
         .state = &intent_state,
         .observer = {.callback = record_observer, .user_data = &intent_observer},
@@ -205,7 +192,7 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
     struct zpt_sink sink = {.stable_id = "capture", .api = &capture_api, .state = &capture};
     struct zpt_pipeline pipeline = {
         .stable_id = "scroll-observer",
-        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
         .stages = stages,
         .stage_count = 3,
         .sink = &sink,
@@ -215,8 +202,9 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&pipeline, &result, 0, 10, 1) == 0);
-    assert(push_raw(&pipeline, &result, 8, 10, 1) == 0);
+    /* 10,1 counts at 700 CPI as Q16 millimetres. */
+    assert(push_normalized(&pipeline, &result, 0, 23780, 2378) == 0);
+    assert(push_normalized(&pipeline, &result, 8, 23780, 2378) == 0);
     /* Undecided then horizontal intent changes. */
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_UNDECIDED));
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_HORIZONTAL));
@@ -227,17 +215,18 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
 
     /* Suppression clears and notifies every stage. */
     suppression_context.active = true;
-    assert(push_raw(&pipeline, &result, 20, 10, 0) == 0);
+    assert(push_normalized(&pipeline, &result, 20, 23780, 0) == 0);
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_SUPPRESSED, 0));
     assert(has_event(&batcher_observer, ZPT_STAGE_EVENT_SUPPRESSED, 0));
 }
 
 static void test_text_observer_sees_actions(void) {
     struct zpt_text_nav_config config = {
-        .horizontal_threshold = 75,
-        .vertical_threshold = 75,
+        /* Count-equivalent thresholds at 700 CPI, rounded to nearest. */
+        .horizontal_threshold = (75 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
+        .vertical_threshold = (75 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
         .idle_timeout_ms = 40,
-        .activation_distance = 35,
+        .activation_distance = (35 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
         .engage_ratio_percent = 150,
     };
     struct zpt_text_nav_state state = {0};
@@ -254,7 +243,7 @@ static void test_text_observer_sees_actions(void) {
     struct zpt_sink sink = {.stable_id = "capture", .api = &capture_api, .state = &capture};
     struct zpt_pipeline pipeline = {
         .stable_id = "text-observer",
-        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
         .stages = stages,
         .stage_count = 1,
         .sink = &sink,
@@ -264,9 +253,15 @@ static void test_text_observer_sees_actions(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&pipeline, &result, 0, 20, 3) == 0);
-    assert(push_raw(&pipeline, &result, 8, 25, -2) == 0);
-    assert(push_raw(&pipeline, &result, 16, 30, 4) == 0);
+    zpt_fixed_t x20 = (20 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t x3 = (3 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t x25 = (25 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t xm2 = (-2 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t x30 = (30 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t x4 = (4 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    assert(push_normalized(&pipeline, &result, 0, x20, x3) == 0);
+    assert(push_normalized(&pipeline, &result, 8, x25, xm2) == 0);
+    assert(push_normalized(&pipeline, &result, 16, x30, x4) == 0);
     assert(has_event(&observer, ZPT_STAGE_EVENT_ACTION, ZPT_TEXT_NAV_RIGHT));
 }
 

@@ -9,6 +9,7 @@
 #include <zmk/pointing_tools/core/pipeline.h>
 #include <zmk/pointing_tools/policy/suppression.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
 
 struct replay_suppression {
     bool active;
@@ -28,17 +29,17 @@ struct capture_state {
 
 static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     struct capture_state *capture = sink->state;
-    if (signal->kind == ZPT_SIGNAL_RAW_MOTION) {
-        capture->output_x = signal->data.raw_motion.x_counts;
-        capture->output_y = signal->data.raw_motion.y_counts;
+    if (signal->kind == ZPT_SIGNAL_NORMALIZED_MOTION) {
+        capture->output_x = signal->data.fixed_vector.x;
+        capture->output_y = signal->data.fixed_vector.y;
         capture->have_output = true;
     }
     return 0;
 }
 
 static const struct zpt_sink_api capture_api = {
-    .type_id = "raw-capture",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
+    .type_id = "normalized-capture",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
     .emit = capture_emit,
 };
 
@@ -72,11 +73,13 @@ static void record_observer(const struct zpt_stage *stage, enum zpt_stage_event 
 struct noise_pipeline_fixture {
     struct replay_suppression suppression;
     uint16_t suppression_after_ms;
+    uint16_t resolution_cpi;
     struct zpt_suppression_policy suppression_policy;
     struct zpt_coherent_displacement_stage_config config;
     struct zpt_coherent_displacement_stage_state state;
+    struct zpt_stage normalize_stage;
     struct zpt_stage stage;
-    struct zpt_stage *stages[1];
+    struct zpt_stage *stages[2];
     struct capture_state capture;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
@@ -88,19 +91,22 @@ int main(void) {
     unsigned int enabled_value;
     char line[256];
 
+    int32_t activation_micrometers;
     if (fgets(line, sizeof(line), stdin) == NULL ||
-        sscanf(line, "C %u %" SCNd64 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16,
-               &enabled_value, &fixture.config.settings.activation_distance,
+        sscanf(line, "C %u %" SCNu16 " %" SCNd32 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16,
+               &enabled_value, &fixture.resolution_cpi, &activation_micrometers,
                &fixture.config.settings.coherence_percent,
                &fixture.config.settings.qualification_timeout_ms,
-               &fixture.config.settings.idle_timeout_ms, &fixture.suppression_after_ms) != 6 ||
-        fixture.config.settings.activation_distance <= 0 ||
+               &fixture.config.settings.idle_timeout_ms, &fixture.suppression_after_ms) != 7 ||
+        fixture.resolution_cpi == 0 || activation_micrometers <= 0 ||
         fixture.config.settings.qualification_timeout_ms == 0 ||
         fixture.config.settings.idle_timeout_ms == 0) {
         fputs("invalid replay configuration\n", stderr);
         return 2;
     }
     fixture.config.settings.enabled = enabled_value != 0;
+    fixture.config.settings.activation_distance =
+        ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(activation_micrometers);
 
     fixture.suppression_policy = (struct zpt_suppression_policy){
         .is_suppressed = replay_suppressed,
@@ -108,14 +114,19 @@ int main(void) {
     };
     fixture.config.suppression = &fixture.suppression_policy;
 
+    fixture.normalize_stage = (struct zpt_stage){
+        .stable_id = "resolution-normalize",
+        .api = &zpt_resolution_normalize_stage_api,
+    };
     fixture.stage = (struct zpt_stage){
         .stable_id = "motion-gate",
-        .api = &zpt_coherent_displacement_raw_stage_api,
+        .api = &zpt_coherent_displacement_stage_api,
         .config = &fixture.config,
         .state = &fixture.state,
         .observer = {.callback = record_observer, .user_data = &fixture.events},
     };
-    fixture.stages[0] = &fixture.stage;
+    fixture.stages[0] = &fixture.normalize_stage;
+    fixture.stages[1] = &fixture.stage;
     fixture.sink = (struct zpt_sink){
         .stable_id = "capture",
         .api = &capture_api,
@@ -125,7 +136,7 @@ int main(void) {
         .stable_id = "noise-replay",
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
         .stages = fixture.stages,
-        .stage_count = 1,
+        .stage_count = 2,
         .sink = &fixture.sink,
         .dispatch_budget = 4,
     };
@@ -173,12 +184,13 @@ int main(void) {
 
         struct zpt_signal signal = {
             .kind = ZPT_SIGNAL_RAW_MOTION,
-            .metadata = {.observed_at_ms = timestamp},
+            .metadata = {.observed_at_ms = timestamp, .resolution_cpi = fixture.resolution_cpi},
             .data.raw_motion = {.x_counts = x, .y_counts = y},
         };
         struct zpt_pipeline_result result;
-        if (zpt_pipeline_push(&fixture.pipeline, &signal, &result) < 0) {
-            fputs("pipeline push failed\n", stderr);
+        int ret = zpt_pipeline_push(&fixture.pipeline, &signal, &result);
+        if (ret < 0) {
+            fprintf(stderr, "pipeline push failed: %d\n", ret);
             return 2;
         }
 

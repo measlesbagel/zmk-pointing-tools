@@ -14,16 +14,16 @@
     "kind": "composed-scroll",
     "policy": "adaptive",
     "settings": {
-      "scaleMultiplier": 1,
-      "scaleDivisor": 4,
       "reportIntervalMs": 8,
       "idleTimeoutMs": 120,
       "suppressAfterKeypressMs": 0,
       "discardUnclassified": false,
       "engageRatioPercent": 300,
       "releaseRatioPercent": 180,
-      "activationDistance": 16,
-      "intentWindowMs": 64
+      "intentWindowMs": 64,
+      "cpi": 700,
+      "stepsPerMeter": 6890,
+      "activationDistanceMicrometers": 581
     }
   },
   "events": [
@@ -93,12 +93,12 @@
       "clippedFrames": 0
     },
     "intentFrames": {
-      "undecided": 0,
-      "free": 7,
+      "undecided": 1,
+      "free": 6,
       "horizontal": 0,
       "vertical": 0
     },
-    "intentTransitions": 0,
+    "intentTransitions": 1,
     "idleResets": 1,
     "suppressedFrames": 0
   }

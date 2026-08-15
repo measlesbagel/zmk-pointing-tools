@@ -14,11 +14,12 @@
     "kind": "composed-noise",
     "settings": {
       "enabled": true,
-      "activationDistance": 6,
       "coherencePercent": 80,
       "qualificationTimeoutMs": 160,
       "idleTimeoutMs": 120,
-      "suppressAfterKeypressMs": 0
+      "suppressAfterKeypressMs": 0,
+      "cpi": 700,
+      "activationDistanceMicrometers": 218
     }
   },
   "events": [
@@ -68,15 +69,15 @@
       "maximumIntervalMs": 8
     },
     "horizontal": {
-      "signedDistance": 7,
-      "absoluteDistance": 7,
+      "signedDistance": 16646,
+      "absoluteDistance": 16646,
       "nonzeroFrames": 2,
       "directionChanges": 0,
       "clippedFrames": 0
     },
     "vertical": {
-      "signedDistance": 7,
-      "absoluteDistance": 7,
+      "signedDistance": 16646,
+      "absoluteDistance": 16646,
       "nonzeroFrames": 2,
       "directionChanges": 0,
       "clippedFrames": 0

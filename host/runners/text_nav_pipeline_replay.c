@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include <zmk/pointing_tools/core/pipeline.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
 #include <zmk/pointing_tools/stage/text_nav.h>
 
 struct capture_state {
@@ -27,10 +28,12 @@ static const struct zpt_sink_api capture_api = {
 };
 
 struct text_pipeline_fixture {
+    uint16_t resolution_cpi;
     struct zpt_text_nav_config config;
     struct zpt_text_nav_state state;
+    struct zpt_stage normalize_stage;
     struct zpt_stage stage;
-    struct zpt_stage *stages[1];
+    struct zpt_stage *stages[2];
     struct capture_state capture;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
@@ -40,24 +43,37 @@ int main(void) {
     struct text_pipeline_fixture fixture = {0};
     char line[256];
 
+    int32_t horizontal_micrometers;
+    int32_t vertical_micrometers;
+    int32_t activation_micrometers;
     if (fgets(line, sizeof(line), stdin) == NULL ||
-        sscanf(line, "C %" SCNd64 " %" SCNd64 " %" SCNu16 " %" SCNd64 " %" SCNu16,
-               &fixture.config.horizontal_threshold, &fixture.config.vertical_threshold,
-               &fixture.config.idle_timeout_ms, &fixture.config.activation_distance,
-               &fixture.config.engage_ratio_percent) != 5 ||
-        fixture.config.horizontal_threshold == 0 || fixture.config.vertical_threshold == 0 ||
-        fixture.config.idle_timeout_ms == 0 || fixture.config.activation_distance == 0) {
+        sscanf(line, "C %" SCNu16 " %" SCNd32 " %" SCNd32 " %" SCNu16 " %" SCNd32 " %" SCNu16,
+               &fixture.resolution_cpi, &horizontal_micrometers, &vertical_micrometers,
+               &fixture.config.idle_timeout_ms, &activation_micrometers,
+               &fixture.config.engage_ratio_percent) != 6 ||
+        fixture.resolution_cpi == 0 || horizontal_micrometers <= 0 || vertical_micrometers <= 0 ||
+        fixture.config.idle_timeout_ms == 0 || activation_micrometers <= 0) {
         fputs("invalid replay configuration\n", stderr);
         return 2;
     }
+    fixture.config.horizontal_threshold =
+        ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(horizontal_micrometers);
+    fixture.config.vertical_threshold = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(vertical_micrometers);
+    fixture.config.activation_distance =
+        ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(activation_micrometers);
 
+    fixture.normalize_stage = (struct zpt_stage){
+        .stable_id = "resolution-normalize",
+        .api = &zpt_resolution_normalize_stage_api,
+    };
     fixture.stage = (struct zpt_stage){
         .stable_id = "text-nav",
         .api = &zpt_text_nav_stage_api,
         .config = &fixture.config,
         .state = &fixture.state,
     };
-    fixture.stages[0] = &fixture.stage;
+    fixture.stages[0] = &fixture.normalize_stage;
+    fixture.stages[1] = &fixture.stage;
     fixture.sink = (struct zpt_sink){
         .stable_id = "capture",
         .api = &capture_api,
@@ -67,7 +83,7 @@ int main(void) {
         .stable_id = "text-replay",
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
         .stages = fixture.stages,
-        .stage_count = 1,
+        .stage_count = 2,
         .sink = &fixture.sink,
         .dispatch_budget = 4,
     };
@@ -90,7 +106,7 @@ int main(void) {
 
         struct zpt_signal signal = {
             .kind = ZPT_SIGNAL_RAW_MOTION,
-            .metadata = {.observed_at_ms = timestamp},
+            .metadata = {.observed_at_ms = timestamp, .resolution_cpi = fixture.resolution_cpi},
             .data.raw_motion = {.x_counts = x, .y_counts = y},
         };
         struct zpt_pipeline_result result;
