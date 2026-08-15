@@ -71,7 +71,7 @@ if ZMK_POINTING_TOOLS_RUNTIME_TUNING
 
 config ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS
     int "Maximum runtime tuning targets"
-    default 8
+    default 16
     range 1 32
 
 config ZMK_POINTING_TOOLS_STATE_TELEMETRY
