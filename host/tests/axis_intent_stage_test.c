@@ -6,6 +6,7 @@
 
 #include <zmk/pointing_tools/core/pipeline.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
 
 static const struct zpt_axis_intent_settings settings = {
     .engage_ratio_percent = 220,
