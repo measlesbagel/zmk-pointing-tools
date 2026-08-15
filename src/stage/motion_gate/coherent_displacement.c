@@ -4,9 +4,10 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 
-static int64_t saturating_add_i64(int64_t left, int64_t right, bool *clipped) {
+static int64_t saturating_add_clipped(int64_t left, int64_t right, bool *clipped) {
     if (right > 0 && left > INT64_MAX - right) {
         *clipped = true;
         return INT64_MAX;
@@ -18,25 +19,17 @@ static int64_t saturating_add_i64(int64_t left, int64_t right, bool *clipped) {
     return left + right;
 }
 
-static uint64_t saturating_add_u64(uint64_t left, uint64_t right) {
-    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
-}
-
 static uint64_t saturating_multiply_u64(uint64_t left, uint64_t right) {
     return left != 0U && right > UINT64_MAX / left ? UINT64_MAX : left * right;
 }
 
-static uint64_t absolute_i64(int64_t value) {
-    return value >= 0 ? (uint64_t)value : (uint64_t)(-(value + 1)) + 1U;
-}
-
 static uint64_t square_saturated(int64_t value) {
-    uint64_t magnitude = absolute_i64(value);
+    uint64_t magnitude = zpt_fixed_magnitude(value);
     return magnitude > UINT32_MAX ? UINT64_MAX : magnitude * magnitude;
 }
 
 static uint64_t magnitude_squared(int64_t x, int64_t y) {
-    return saturating_add_u64(square_saturated(x), square_saturated(y));
+    return zpt_fixed_saturating_add_u64(square_saturated(x), square_saturated(y));
 }
 
 static bool coherence_meets(uint64_t net_squared, uint64_t squared_energy, uint32_t sample_count,
@@ -53,7 +46,8 @@ static bool coherence_meets(uint64_t net_squared, uint64_t squared_energy, uint3
     uint64_t percent_squared = (uint64_t)percent * percent;
     uint64_t required = (denominator / 10000U) * percent_squared;
     uint64_t remainder = denominator % 10000U;
-    required = saturating_add_u64(required, (remainder * percent_squared + 9999U) / 10000U);
+    required =
+        zpt_fixed_saturating_add_u64(required, (remainder * percent_squared + 9999U) / 10000U);
     return net_squared >= required;
 }
 
@@ -168,10 +162,11 @@ zpt_coherent_displacement_update(struct zpt_coherent_displacement_state *state,
         state->pending_started_ms = now_ms;
     }
     bool clipped = false;
-    state->pending_x = saturating_add_i64(state->pending_x, x, &clipped);
-    state->pending_y = saturating_add_i64(state->pending_y, y, &clipped);
+    state->pending_x = saturating_add_clipped(state->pending_x, x, &clipped);
+    state->pending_y = saturating_add_clipped(state->pending_y, y, &clipped);
     state->pending_clipped |= clipped;
-    state->squared_energy = saturating_add_u64(state->squared_energy, magnitude_squared(x, y));
+    state->squared_energy =
+        zpt_fixed_saturating_add_u64(state->squared_energy, magnitude_squared(x, y));
     if (state->sample_count != UINT32_MAX) {
         state->sample_count++;
     }

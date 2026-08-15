@@ -4,18 +4,9 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
-
-static int64_t saturating_add_i64(int64_t left, int64_t right) {
-    if (right > 0 && left > INT64_MAX - right) {
-        return INT64_MAX;
-    }
-    if (right < 0 && left < INT64_MIN - right) {
-        return INT64_MIN;
-    }
-    return left + right;
-}
 
 static bool suppression_active(const struct zpt_axis_constraint_config *config,
                                const struct zpt_signal *signal, uint32_t now) {
@@ -97,8 +88,8 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     uint8_t intent = signal->annotations.axis_intent;
 
     if (intent == ZPT_AXIS_INTENT_UNDECIDED) {
-        state->undecided_x = saturating_add_i64(state->undecided_x, x);
-        state->undecided_y = saturating_add_i64(state->undecided_y, y);
+        state->undecided_x = zpt_fixed_saturating_add(state->undecided_x, x);
+        state->undecided_y = zpt_fixed_saturating_add(state->undecided_y, y);
         state->have_undecided = true;
         schedule_undecided_expiry(state, config, context, now);
         /* Emit a zeroed frame so downstream stages observe the frame and arm
@@ -114,19 +105,19 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     if (state->previous_intent == ZPT_AXIS_INTENT_UNDECIDED && state->have_undecided) {
         /* Fold buffered unclassified motion, filtered by the new intent. */
         if (intent != ZPT_AXIS_INTENT_VERTICAL) {
-            output_x = saturating_add_i64(output_x, state->undecided_x);
+            output_x = zpt_fixed_saturating_add(output_x, state->undecided_x);
         }
         if (intent != ZPT_AXIS_INTENT_HORIZONTAL) {
-            output_y = saturating_add_i64(output_y, state->undecided_y);
+            output_y = zpt_fixed_saturating_add(output_y, state->undecided_y);
         }
         clear_undecided(state);
         schedule_undecided_expiry(state, config, context, now);
     }
     if (intent != ZPT_AXIS_INTENT_VERTICAL) {
-        output_x = saturating_add_i64(output_x, x);
+        output_x = zpt_fixed_saturating_add(output_x, x);
     }
     if (intent != ZPT_AXIS_INTENT_HORIZONTAL) {
-        output_y = saturating_add_i64(output_y, y);
+        output_y = zpt_fixed_saturating_add(output_y, y);
     }
     state->previous_intent = intent;
 

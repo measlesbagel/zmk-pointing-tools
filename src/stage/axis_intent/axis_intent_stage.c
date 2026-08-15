@@ -4,25 +4,16 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
-
-static uint64_t magnitude(int64_t value) {
-    if (value >= 0) {
-        return (uint64_t)value;
-    }
-    return (uint64_t)(-(value + 1)) + 1U;
-}
-
-static uint64_t saturating_add_u64(uint64_t left, uint64_t right) {
-    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
-}
 
 /* Manhattan magnitude of the frame in Q16 millimetres per second. */
 static zpt_fixed_t axis_speed_per_second(int64_t x, int64_t y, uint32_t elapsed_ms) {
     if (elapsed_ms == 0U) {
         return 0;
     }
-    uint64_t magnitude_total = saturating_add_u64(magnitude(x), magnitude(y));
+    uint64_t magnitude_total =
+        zpt_fixed_saturating_add_u64(zpt_fixed_magnitude(x), zpt_fixed_magnitude(y));
     if (magnitude_total > (uint64_t)INT64_MAX / 1000U) {
         return INT64_MAX;
     }
