@@ -231,15 +231,13 @@ intent-change events and zero otherwise. Stage samples use these flag bits:
 
 | Bit | Meaning |
 | --- | --- |
-| 1 | axis intent changed |
-| 2 | frame suppressed by the physical-keypress guard |
-| 4 | unclassified motion discarded |
-| 5 | semantic output emitted |
-| 8 | pending movement qualified as intentional |
+| 0 | axis intent changed |
+| 1 | frame suppressed by the physical-keypress guard |
+| 2 | unclassified motion discarded |
+| 3 | semantic output emitted |
+| 4 | pending movement qualified as intentional |
 
-The remaining historical flag bits (gesture reset, suppression transitions,
-per-axis HID clipping, pending discard) are reserved and unused by stage
-samples. The decisions level emits stage decisions only; the every-frame level
+The decisions level emits stage decisions only; the every-frame level
 is reserved for future per-frame stage producers and currently adds nothing.
 Reserved values and unknown flags must be ignored for forward compatibility.
 Firmware disables all state levels after the ordinary host heartbeat timeout
