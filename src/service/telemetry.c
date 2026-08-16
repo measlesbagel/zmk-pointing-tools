@@ -226,8 +226,7 @@ static void zpt_handle_state_control(const uint8_t *payload, uint16_t length) {
             for (size_t i = 0; i < ARRAY_SIZE(zpt_state_levels); i++) {
                 atomic_set(&zpt_state_levels[i], level);
             }
-        } else if (level <= ZPT_STATE_LEVEL_VERBOSE && target_id < zpt_tuning_target_count() &&
-                   target_id < ARRAY_SIZE(zpt_state_levels)) {
+        } else if (level <= ZPT_STATE_LEVEL_VERBOSE && target_id < ARRAY_SIZE(zpt_state_levels)) {
             atomic_set(&zpt_state_levels[target_id], level);
         }
     }
