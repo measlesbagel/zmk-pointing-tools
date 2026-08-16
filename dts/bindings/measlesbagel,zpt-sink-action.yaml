@@ -19,3 +19,23 @@ properties:
     type: int
     default: 0
     description: Delay before the queued press is released
+
+  input-device-index:
+    type: int
+    default: 0
+    description: ZMK input device index encoded in the virtual key position
+
+  behavior-index:
+    type: int
+    default: 0
+    description: Sink index encoded in the virtual key position
+
+  input-device-index:
+    type: int
+    default: 0
+    description: ZMK input device index encoded in the virtual key position
+
+  behavior-index:
+    type: int
+    default: 0
+    description: Sink index encoded in the virtual key position

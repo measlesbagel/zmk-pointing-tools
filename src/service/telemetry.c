@@ -35,7 +35,6 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_FRAME_MAGIC_1 0x50
 
 #define ZPT_REQ_DESCRIBE 0x01
-#define ZPT_REQ_TELEMETRY 0x02
 #define ZPT_REQ_PING 0x03
 #define ZPT_REQ_TUNING_TARGETS 0x04
 #define ZPT_REQ_TUNING_DESCRIBE 0x05
@@ -55,7 +54,6 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_RESP_TUNING_TARGET_METADATA 0x87
 #define ZPT_RESP_TUNING_PARAMETER_METADATA 0x88
 #define ZPT_RESP_STATE_STATUS 0x89
-#define ZPT_EVENT_SAMPLE 0x90
 #define ZPT_EVENT_STATE 0x91
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
@@ -103,11 +101,11 @@ K_MSGQ_DEFINE(zpt_record_queue, sizeof(struct zpt_telemetry_record),
               CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, 4);
 K_SEM_DEFINE(zpt_wake, 0, 1);
 
-static atomic_t zpt_enabled;
 static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 static atomic_t zpt_state_dropped;
+static atomic_t zpt_state_stage_targets;
 static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 #endif
 
@@ -128,6 +126,7 @@ int zpt_state_telemetry_register_target(uint8_t *target_id) {
         if (atomic_get(&zpt_state_levels[index]) == ZPT_STATE_LEVEL_OFF &&
             index >= zpt_tuning_target_count()) {
             *target_id = (uint8_t)index;
+            atomic_inc(&zpt_state_stage_targets);
             return 0;
         }
     }
@@ -171,19 +170,18 @@ static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length
 }
 
 static void zpt_send_describe(void) {
-    /* Trace streams were superseded by state telemetry; report none. */
-    uint8_t payload[2] = {ZPT_PROTOCOL_VERSION, 0};
+    uint8_t payload[1] = {ZPT_PROTOCOL_VERSION};
     zpt_send_frame(ZPT_RESP_DESCRIBE, payload, sizeof(payload));
 }
 
 static void zpt_send_ack(void) {
-    uint8_t payload[IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY) ? 9 : 5];
-    payload[0] = atomic_get(&zpt_enabled) ? 1 : 0;
-    sys_put_le32(0U, &payload[1]);
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
-    sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[5]);
-#endif
+    uint8_t payload[4];
+    sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[0]);
     zpt_send_frame(ZPT_RESP_ACK, payload, sizeof(payload));
+#else
+    zpt_send_frame(ZPT_RESP_ACK, NULL, 0);
+#endif
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -205,7 +203,9 @@ static void zpt_send_state(const struct zpt_state_sample *sample) {
 
 static void zpt_send_state_status(void) {
     uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS * 2];
-    const size_t target_count = MIN(zpt_tuning_target_count(), ARRAY_SIZE(zpt_state_levels));
+    const size_t target_count =
+        MIN(zpt_tuning_target_count() + (size_t)atomic_get(&zpt_state_stage_targets),
+            ARRAY_SIZE(zpt_state_levels));
     payload[0] = ZPT_STATE_SCHEMA_VERSION;
     sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[1]);
     sys_put_le16(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, &payload[5]);
@@ -484,13 +484,6 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         zpt_send_describe();
         break;
-    case ZPT_REQ_TELEMETRY:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        if (length == 1) {
-            atomic_set(&zpt_enabled, payload[0] != 0);
-        }
-        zpt_send_ack();
-        break;
     case ZPT_REQ_PING:
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         zpt_send_ack();
@@ -636,7 +629,6 @@ static void zpt_thread(void) {
         while (k_msgq_get(&zpt_record_queue, &record, K_NO_WAIT) == 0) {
             const uint32_t elapsed = k_uptime_get_32() - (uint32_t)atomic_get(&zpt_last_contact);
             if (elapsed > CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS) {
-                atomic_clear(&zpt_enabled);
                 k_msgq_purge(&zpt_record_queue);
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
                 zpt_state_disable_all();

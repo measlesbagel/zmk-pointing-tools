@@ -55,6 +55,8 @@ static void scroll_batcher_stage_reset(struct zpt_stage *stage, enum zpt_reset_r
         return;
     }
     struct zpt_scroll_batcher_state *state = stage->state;
+    /* Lifecycle resets also clear the fractional remainder; unlike the
+     * legacy suppression path, a route change starts the batcher fresh. */
     *state = (struct zpt_scroll_batcher_state){0};
 }
 

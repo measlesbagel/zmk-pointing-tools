@@ -16,9 +16,10 @@ Generate a machine-readable report for review or comparison:
 
 ```sh
 node host/replay/cli.js \
-  --noise-runner build/host/zpt_noise_filter_replay \
-  --scroll-runner build/host/zpt_scroll_replay \
-  --text-runner build/host/zpt_text_nav_replay \
+  --noise-pipeline-runner build/host/zpt_noise_pipeline_replay \
+  --scroll-pipeline-runner build/host/zpt_scroll_pipeline_replay \
+  --text-pipeline-runner build/host/zpt_text_nav_pipeline_replay \
+  --cursor-pipeline-runner build/host/zpt_cursor_pipeline_replay \
   --json /tmp/replay.json \
   host/tests/fixtures/*.json
 ```
@@ -45,7 +46,7 @@ Fixtures use `zmk-pointing-tools/trace-fixture` version 1. Each fixture records:
 
 - an ID and human description;
 - device, CPI, nominal cadence, mode, and provenance metadata;
-- the processor kind, exact settings, and optional axis policy;
+- the pipeline kind, exact settings, and optional axis policy;
 - ordered events encoded as `[type, deltaMs, ...values]`;
 - expected metrics, which may be a subset of the generated report.
 
@@ -65,33 +66,3 @@ Supported pipeline kinds are currently:
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as
 applicable. The models deliberately use integer arithmetic matching firmware behavior.
-
-## Import a tuner export
-
-Start by copying a similar fixture so its processor settings and metadata are explicit. Then
-replace its event list from an exported tuner trace:
-
-```sh
-node host/replay/import.js \
-  --input ~/Downloads/zmk-pointing-trace.json \
-  --stream 0:0 \
-  --template host/tests/fixtures/left-split-transport.json \
-  --output /tmp/new-left-fixture.json \
-  --start 100 \
-  --count 500
-```
-
-Edit the new fixture's ID, description, provenance, CPI, mode, and processor settings. Remove
-irrelevant leading/trailing frames if necessary. Generate and inspect expectations with
-`--update`, then commit only a representative anonymized segment. Prefer the smallest segment
-that reproduces the behavior; large raw exports should remain outside the repository.
-
-The tuner export does not currently contain physical key events. Add keypress events manually
-when reproducing keypress-guard behavior.
-
-## Adding another processor
-
-Keep algorithms host-buildable and deterministic: isolate Zephyr device, workqueue, HID, and
-event-manager integration in the firmware wrapper. Add a small stdin/stdout runner under
-`host/runners`, teach the modules under `host/replay` its settings and metrics, register the target
-in `host/CMakeLists.txt`, and add at least one fixture covering a historical or boundary case.

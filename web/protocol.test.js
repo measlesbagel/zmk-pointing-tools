@@ -10,7 +10,6 @@ import {
   encodeFrame,
   parseAck,
   parseDescribe,
-  parseSample,
   parseStateSample,
   parseStateStatus,
   parseTuningDescription,
@@ -23,7 +22,7 @@ import {
 
 test("decodes fragmented and adjacent frames", () => {
   const first = encodeFrame(MESSAGE.DESCRIBE_REQUEST);
-  const second = encodeFrame(MESSAGE.TELEMETRY_CONTROL, Uint8Array.of(1));
+  const second = encodeFrame(MESSAGE.PING);
   const bytes = new Uint8Array(first.length + second.length + 1);
   bytes[0] = 0xff;
   bytes.set(first, 1);
@@ -35,51 +34,25 @@ test("decodes fragmented and adjacent frames", () => {
     decoder.push(bytes.slice(4)).map(({ type, payload }) => [type, [...payload]]),
     [
       [MESSAGE.DESCRIBE_REQUEST, []],
-      [MESSAGE.TELEMETRY_CONTROL, [1]],
+      [MESSAGE.PING, []],
     ],
   );
 });
 
-test("parses stream descriptions", () => {
-  const label = new TextEncoder().encode("Right raw");
-  const payload = Uint8Array.of(6, 1, 7, 0, label.length, ...label);
-  assert.deepEqual(parseDescribe(payload), {
-    version: 6,
-    streams: [{ deviceId: 7, stage: 0, label: "Right raw", key: "7:0" }],
-  });
+test("parses the version-only description", () => {
+  assert.deepEqual(parseDescribe(Uint8Array.of(6)), { version: 6 });
   assert.throws(
-    () => parseDescribe(Uint8Array.of(5, 0)),
+    () => parseDescribe(Uint8Array.of(5)),
     /does not match tuner protocol/,
   );
 });
 
-test("parses acknowledgements and signed samples", () => {
-  const ack = new Uint8Array(9);
-  new DataView(ack.buffer).setUint32(1, 42, true);
-  ack[0] = 1;
-  assert.deepEqual(parseAck(ack), { enabled: true, dropped: 42, stateDropped: 0 });
+test("parses acknowledgements", () => {
+  const ack = new Uint8Array(4);
+  new DataView(ack.buffer).setUint32(0, 42, true);
+  assert.deepEqual(parseAck(ack), { stateDropped: 42 });
   assert.throws(() => parseAck(new Uint8Array(5)), /Invalid acknowledgement length/);
 
-  const sample = new Uint8Array(26);
-  const view = new DataView(sample.buffer);
-  sample.set([3, 1]);
-  view.setUint32(2, 1000, true);
-  view.setUint32(6, 9, true);
-  view.setInt32(10, -12, true);
-  view.setInt32(14, 34, true);
-  view.setInt32(18, -2, true);
-  view.setInt32(22, 5, true);
-  assert.deepEqual(parseSample(sample), {
-    deviceId: 3,
-    stage: 1,
-    key: "3:1",
-    timestamp: 1000,
-    sequence: 9,
-    x: -12,
-    y: 34,
-    wheel: -2,
-    hWheel: 5,
-  });
 });
 
 test("parses and controls semantic processor state", () => {

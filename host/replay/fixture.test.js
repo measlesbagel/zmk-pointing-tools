@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   FIXTURE_SCHEMA,
   encodeRunnerInput,
-  importCapture,
   validateFixture,
 } from "./fixture.js";
 
@@ -59,25 +58,4 @@ test("validates fixtures and encodes deterministic runner input", () => {
     () => validateFixture({ ...textFixture, version: 2 }),
     /expected zmk-pointing-tools\/trace-fixture v1/,
   );
-});
-
-test("imports one stream and normalizes uptime to frame deltas", () => {
-  const capture = {
-    exportedAt: "2026-01-01T00:00:00.000Z",
-    streams: [{ key: "0:0", label: "Left raw" }],
-    samples: [
-      { key: "1:0", timestamp: 90, x: 9, y: 9 },
-      { key: "0:0", timestamp: 100, x: 1, y: -2 },
-      { deviceId: 0, stage: 0, timestamp: 108, x: 3, y: -4 },
-    ],
-  };
-  const imported = importCapture(capture, { ...textFixture, expect: {} }, {
-    stream: "0:0",
-    start: 0,
-    count: undefined,
-    source: "capture.json",
-  });
-  assert.deepEqual(imported.events, [["motion", 0, 1, -2], ["motion", 8, 3, -4]]);
-  assert.equal(imported.metadata.capture.frameCount, 2);
-  assert.equal("expect" in imported, false);
 });

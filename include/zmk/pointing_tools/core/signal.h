@@ -54,6 +54,8 @@ struct zpt_signal_metadata {
 };
 
 struct zpt_signal_annotations {
+    /* Magnitude per second in the motion domain's units: Q16 millimetres
+     * per second for normalized motion, counts per second for raw motion. */
     zpt_fixed_t speed_per_second;
     uint16_t axis_confidence_percent;
     uint8_t axis_intent;

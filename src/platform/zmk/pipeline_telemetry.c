@@ -1,7 +1,7 @@
-#if defined(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
-
 /* SPDX-License-Identifier: MIT */
 #define DT_DRV_COMPAT measlesbagel_zpt_pipeline_telemetry
+
+#if defined(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 
 #include <errno.h>
 #include <string.h>
@@ -9,11 +9,14 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 
 #include <zmk/pointing_tools/observer/state.h>
 #include <zmk/pointing_tools/platform/zmk/pipeline_provider.h>
 #include <zmk/pointing_tools/platform/zmk/pipeline_telemetry.h>
 #include <zmk/pointing_tools/service/tuning.h>
+
+LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct zpt_pipeline_telemetry_config {
     const struct device *const *pipeline_devices;
@@ -110,6 +113,8 @@ static int pipeline_telemetry_init(const struct device *dev) {
         int ret =
             zpt_zmk_pipeline_provider_get(config->pipeline_devices[pipeline_index], &pipeline);
         if (ret < 0) {
+            LOG_ERR("Failed to resolve telemetry pipeline %u: %d", (unsigned int)pipeline_index,
+                    ret);
             return ret;
         }
         for (size_t stage_index = 0; stage_index < pipeline->stage_count; stage_index++) {
@@ -117,6 +122,8 @@ static int pipeline_telemetry_init(const struct device *dev) {
             uint8_t target_id;
             ret = zpt_state_telemetry_register_target(&target_id);
             if (ret < 0) {
+                LOG_ERR("Telemetry target table exhausted while observing stage %s of pipeline %u",
+                        stage->stable_id, (unsigned int)pipeline_index);
                 return ret;
             }
             data->entries[data->entry_count] = (struct zpt_pipeline_telemetry_entry){

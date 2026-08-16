@@ -9,21 +9,21 @@ work with arbitrary ZMK pointing devices.
 
 ## Capabilities
 
-- Frame-aware movement coalescing
+- Composable motion pipelines: sources, gates, estimators, constraints,
+  transfer stages, quantizers, batchers, and thin sinks
 - Canonical source identity, transport, CPI metadata, and Q16 millimetre normalization
 - Synchronized two-axis scrolling with fractional accumulation
 - Adaptive, vertical-only, horizontal-only, and free scroll policies
 - Rotation-invariant buffered dead-zone and noise qualification
 - Gesture-locked movement-to-behavior processing for text navigation
-- Pass-through staged motion telemetry and trace recording
-- Optional semantic telemetry for intent, suppression, accumulation, and clipping decisions
-- An offline, repository-owned Web Serial trace viewer
-- Discoverable, validated scroll and text-navigation previews that never write flash
-- Firmware-provided hover/focus explanations for tuning parameters
+- Cursor base gain and sub-pixel quantizer stages
+- Layer- and behavior-driven pipeline routing with leave-before-enter lifecycle
+- Shared physical-keypress suppression across every pipeline stage
+- Per-stage decision telemetry with stable identity and discovery
+- An offline, repository-owned Web Serial tuner
 - Versioned profile export/import and generated devicetree handoff
-- Deterministic regression replay of exported hardware traces
+- Deterministic byte-exact regression replay through the composed stages
 - Guided scroll, text, cursor, click, and drag playground activities
-- A shared typed motion-pipeline runtime with a minimal identity cursor boundary
 
 Planned capabilities include:
 
@@ -48,22 +48,23 @@ units.
 
 ## Status
 
-The current milestone provides pass-through telemetry, synchronized adaptive
-scrolling, gesture-locked text navigation, and a local static tuning surface.
-Scroll and text-navigation values can be previewed temporarily, exported as a
-profile, and reset to compiled defaults. Explicit optional persistence remains
-under development.
+The composable pipeline architecture is fully migrated: cursor, scroll, and
+text behavior run through shared stages with a ZMK router, explicit lifecycle,
+keypress suppression, and per-stage telemetry. The superseded monolithic
+processors are removed, and every regression fixture replays byte-exactly
+through the composed stages. Acceleration curves, cursor report coalescing,
+and runtime tuning of stage parameters remain under development.
 
-See [`docs/processors.md`](docs/processors.md) for devicetree usage.
-See [`docs/noise-filter.md`](docs/noise-filter.md) for dead-zone design and
+See [`docs/architecture.md`](docs/architecture.md) for the pipeline model.
+See [`docs/zmk-pipeline-boundary.md`](docs/zmk-pipeline-boundary.md) for the
+composable runtime integration with ZMK.
+See [`docs/motion-gate.md`](docs/motion-gate.md) for dead-zone design and
 tuning guidance.
 See [`docs/profiles.md`](docs/profiles.md) for profile and configuration-handoff
 semantics.
-See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic processor
-regression testing.
+See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic regression
+replay.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
-See [`docs/zmk-pipeline-boundary.md`](docs/zmk-pipeline-boundary.md) for the
-initial composable runtime integration with ZMK.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 

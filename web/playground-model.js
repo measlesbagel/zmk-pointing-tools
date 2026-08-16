@@ -78,7 +78,6 @@ export function finishRun(run, completed = true, now = Date.now()) {
 }
 
 export function exportRun(run, context = {}) {
-  const samples = (context.samples ?? []).filter(({ sequence }) => sequence >= run.startSequence);
   const stateEvents = (context.stateEvents ?? [])
     .filter(({ sequence }) => sequence >= run.startSequence);
   const { startedMs, startSequence, ...result } = run;
@@ -86,11 +85,8 @@ export function exportRun(run, context = {}) {
     ...result,
     tuningProfileAtExport: context.tuningProfile,
     telemetry: {
-      streams: context.streams ?? [],
-      samples,
       stateSchemaVersion: context.stateSchemaVersion ?? 0,
       stateEvents,
-      traceDropped: context.traceDropped ?? 0,
       stateDropped: context.stateDropped ?? 0,
       queueCapacity: context.queueCapacity ?? 0,
     },

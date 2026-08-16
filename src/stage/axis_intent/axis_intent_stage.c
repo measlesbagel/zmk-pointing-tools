@@ -81,10 +81,14 @@ static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_s
     state->last_frame_ms = now;
     state->have_last_frame = true;
     if (suppressed) {
-        /* Pass the frame through unchanged so downstream stages observe the
-         * same suppression and clear their own buffered state. */
+        /* Emit a zero-valued frame so downstream stages observe the same
+         * suppression and clear their buffered state without ever seeing
+         * suppressed motion values. */
         zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
-        return zpt_stage_emit(context, signal);
+        struct zpt_signal output = *signal;
+        output.data.fixed_vector.x = 0;
+        output.data.fixed_vector.y = 0;
+        return zpt_stage_emit(context, &output);
     }
 
     int64_t x = signal->kind == ZPT_SIGNAL_RAW_MOTION ? signal->data.raw_motion.x_counts
