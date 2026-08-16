@@ -8,6 +8,7 @@ set(ZPT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/core/pipeline.c"
+  "${ZPT_ROOT}/src/core/router.c"
   "${ZPT_ROOT}/src/source/frame_assembler.c"
   "${ZPT_ROOT}/src/source/motion_source.c"
   "${ZPT_ROOT}/src/source/transport/compact_split_codec.c"
@@ -42,6 +43,7 @@ zpt_host_executable(frame_assembler_test tests/frame_assembler_test.c)
 zpt_host_executable(motion_gate_test tests/motion_gate_test.c)
 zpt_host_executable(noise_filter_test tests/noise_filter_test.c)
 zpt_host_executable(pipeline_test tests/pipeline_test.c)
+zpt_host_executable(router_test tests/router_test.c)
 zpt_host_executable(source_normalization_test tests/source_normalization_test.c)
 zpt_host_executable(text_nav_test tests/text_nav_test.c)
 zpt_host_executable(zpt_noise_filter_replay runners/noise_filter_replay.c)
@@ -54,6 +56,7 @@ add_test(NAME frame_assembler COMMAND frame_assembler_test)
 add_test(NAME motion_gate COMMAND motion_gate_test)
 add_test(NAME noise_filter COMMAND noise_filter_test)
 add_test(NAME motion_pipeline COMMAND pipeline_test)
+add_test(NAME pipeline_router COMMAND router_test)
 add_test(NAME source_normalization COMMAND source_normalization_test)
 add_test(NAME text_navigation COMMAND text_nav_test)
 
