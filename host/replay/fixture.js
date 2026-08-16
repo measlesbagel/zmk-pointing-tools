@@ -22,10 +22,21 @@ export function validateFixture(fixture, path = "fixture") {
   }
 
   const settings = fixture.processor.settings;
-  if (fixture.processor.kind === "adaptive-scroll" || fixture.processor.kind === "composed-scroll") {
+  if (fixture.processor.kind === "adaptive-scroll") {
     for (const key of ["scaleMultiplier", "scaleDivisor", "reportIntervalMs", "idleTimeoutMs",
       "suppressAfterKeypressMs", "engageRatioPercent", "releaseRatioPercent",
       "activationDistance", "intentWindowMs"]) {
+      requireInteger(settings?.[key], `${path}: settings.${key}`,
+        key === "suppressAfterKeypressMs" ? 0 : 1);
+    }
+    if (typeof settings.discardUnclassified !== "boolean") {
+      throw new Error(`${path}: discardUnclassified must be boolean`);
+    }
+    if (!(fixture.processor.policy in POLICIES)) throw new Error(`${path}: unknown axis policy`);
+  } else if (fixture.processor.kind === "composed-scroll") {
+    for (const key of ["cpi", "stepsPerMeter", "reportIntervalMs", "idleTimeoutMs",
+      "suppressAfterKeypressMs", "engageRatioPercent", "releaseRatioPercent",
+      "activationDistanceMicrometers", "intentWindowMs"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`,
         key === "suppressAfterKeypressMs" ? 0 : 1);
     }
@@ -37,16 +48,22 @@ export function validateFixture(fixture, path = "fixture") {
     for (const key of ["cpi", "scaleMultiplier", "scaleDivisor", "unitsPerMeter"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
-  } else if (fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text") {
+  } else if (fixture.processor.kind === "text-navigation") {
     for (const key of ["horizontalThreshold", "verticalThreshold", "idleTimeoutMs",
       "activationDistance", "engageRatioPercent"]) {
+      requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+  } else if (fixture.processor.kind === "composed-text") {
+    for (const key of ["cpi", "horizontalThresholdMicrometers", "verticalThresholdMicrometers",
+      "idleTimeoutMs", "activationDistanceMicrometers", "engageRatioPercent"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
   } else if (fixture.processor.kind === "composed-noise") {
     if (typeof settings?.enabled !== "boolean") {
       throw new Error(`${path}: settings.enabled must be boolean`);
     }
-    for (const key of ["activationDistance", "qualificationTimeoutMs", "idleTimeoutMs"]) {
+    for (const key of ["cpi", "activationDistanceMicrometers", "qualificationTimeoutMs",
+      "idleTimeoutMs"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
     requireInteger(settings?.coherencePercent, `${path}: settings.coherencePercent`, 0);
@@ -59,7 +76,8 @@ export function validateFixture(fixture, path = "fixture") {
     if (typeof settings?.enabled !== "boolean") {
       throw new Error(`${path}: settings.enabled must be boolean`);
     }
-    for (const key of ["activationDistance", "qualificationTimeoutMs", "idleTimeoutMs"]) {
+    for (const key of ["cpi", "activationDistanceMicrometers", "qualificationTimeoutMs",
+      "idleTimeoutMs"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
     requireInteger(settings?.coherencePercent, `${path}: settings.coherencePercent`, 0);
@@ -96,22 +114,31 @@ export function validateFixture(fixture, path = "fixture") {
 
 export function encodeRunnerInput(fixture) {
   const settings = fixture.processor.settings;
-  const configuration = fixture.processor.kind === "adaptive-scroll" ||
-    fixture.processor.kind === "composed-scroll"
+  const configuration = fixture.processor.kind === "adaptive-scroll"
     ? ["C", settings.scaleMultiplier, settings.scaleDivisor, settings.reportIntervalMs,
       settings.idleTimeoutMs, settings.suppressAfterKeypressMs,
       Number(settings.discardUnclassified), settings.engageRatioPercent,
       settings.releaseRatioPercent, settings.activationDistance, settings.intentWindowMs,
       POLICIES[fixture.processor.policy]]
-    : fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text"
+    : fixture.processor.kind === "composed-scroll"
+      ? ["C", settings.cpi, settings.stepsPerMeter, settings.reportIntervalMs,
+        settings.idleTimeoutMs, settings.suppressAfterKeypressMs,
+        Number(settings.discardUnclassified), settings.engageRatioPercent,
+        settings.releaseRatioPercent, settings.activationDistanceMicrometers,
+        settings.intentWindowMs, POLICIES[fixture.processor.policy]]
+    : fixture.processor.kind === "text-navigation"
       ? ["C", settings.horizontalThreshold, settings.verticalThreshold, settings.idleTimeoutMs,
         settings.activationDistance, settings.engageRatioPercent]
-      : fixture.processor.kind === "cursor-pipeline"
-        ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor,
-          settings.unitsPerMeter]
-        : ["C", Number(settings.enabled), settings.activationDistance, settings.coherencePercent,
-          settings.qualificationTimeoutMs, settings.idleTimeoutMs,
-          settings.suppressAfterKeypressMs];
+      : fixture.processor.kind === "composed-text"
+        ? ["C", settings.cpi, settings.horizontalThresholdMicrometers,
+          settings.verticalThresholdMicrometers, settings.idleTimeoutMs,
+          settings.activationDistanceMicrometers, settings.engageRatioPercent]
+        : fixture.processor.kind === "cursor-pipeline"
+          ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor,
+            settings.unitsPerMeter]
+          : ["C", Number(settings.enabled), settings.cpi, settings.activationDistanceMicrometers,
+            settings.coherencePercent, settings.qualificationTimeoutMs, settings.idleTimeoutMs,
+            settings.suppressAfterKeypressMs];
 
   const lines = [configuration.join(" ")];
   let timestamp = 0;

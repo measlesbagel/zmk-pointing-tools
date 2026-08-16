@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdio.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/core/pipeline.h>
 #include <zmk/pointing_tools/policy/suppression.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
@@ -69,7 +70,8 @@ static void scroll_fixture_init(struct scroll_fixture *fixture) {
             {
                 .engage_ratio_percent = 300,
                 .release_ratio_percent = 180,
-                .activation_distance = 16,
+                /* 16 counts at 700 CPI in Q16 millimetres. */
+                .activation_distance = (zpt_fixed_t)16 * ZPT_FIXED_ONE * 254 / 7000,
                 .window_ms = 64,
             },
         .policy = ZPT_AXIS_POLICY_ADAPTIVE,
@@ -82,14 +84,14 @@ static void scroll_fixture_init(struct scroll_fixture *fixture) {
         .suppression = &fixture->suppression,
     };
     fixture->batcher_config = (struct zpt_scroll_batcher_config){
-        .scale_multiplier = 1,
-        .scale_divisor = 8,
+        /* One wheel step per eight counts at 700 CPI in Q16 steps/mm. */
+        .steps_per_millimeter = (zpt_fixed_t)3445 * ZPT_FIXED_ONE / 1000,
         .report_interval_ms = 16,
         .suppression = &fixture->suppression,
     };
     fixture->intent_stage = (struct zpt_stage){
         .stable_id = "axis-intent",
-        .api = &zpt_axis_intent_raw_stage_api,
+        .api = &zpt_axis_intent_stage_api,
         .config = &fixture->intent_config,
         .state = &fixture->intent_state,
     };
@@ -115,7 +117,7 @@ static void scroll_fixture_init(struct scroll_fixture *fixture) {
     };
     fixture->pipeline = (struct zpt_pipeline){
         .stable_id = "scroll-test",
-        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
         .stages = fixture->stages,
         .stage_count = 3,
         .sink = &fixture->sink,
@@ -125,17 +127,18 @@ static void scroll_fixture_init(struct scroll_fixture *fixture) {
     assert(zpt_pipeline_activate(&fixture->pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 }
 
-static struct zpt_signal raw_signal(uint32_t timestamp, int32_t x, int32_t y) {
-    return (struct zpt_signal){
-        .kind = ZPT_SIGNAL_RAW_MOTION,
-        .metadata = {.observed_at_ms = timestamp},
-        .data.raw_motion = {.x_counts = x, .y_counts = y},
-    };
+/* 700 CPI sensor: counts to Q16 millimetres. */
+static zpt_fixed_t counts_to_q16_mm(int32_t counts) {
+    return ((zpt_fixed_t)counts * ZPT_FIXED_ONE * 254 + 3500) / 7000;
 }
 
-static int push_raw(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
-                    uint32_t timestamp, int32_t x, int32_t y) {
-    struct zpt_signal signal = raw_signal(timestamp, x, y);
+static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
+                           uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y) {
+    struct zpt_signal signal = {
+        .kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .metadata = {.observed_at_ms = timestamp},
+        .data.fixed_vector = {.x = x, .y = y},
+    };
     return zpt_pipeline_push(pipeline, &signal, result);
 }
 
@@ -144,23 +147,29 @@ static void test_suppression_clears_buffers_and_keeps_remainder(void) {
     scroll_fixture_init(&fixture);
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&fixture.pipeline, &result, 0, 10, 1) == 0);
-    assert(push_raw(&fixture.pipeline, &result, 8, 10, 1) == 0);
-    assert(fixture.batcher_state.pending_x == 20);
+    assert(push_normalized(&fixture.pipeline, &result, 0, counts_to_q16_mm(10),
+                           counts_to_q16_mm(1)) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 8, counts_to_q16_mm(10),
+                           counts_to_q16_mm(1)) == 0);
+    assert(fixture.batcher_state.pending_x == counts_to_q16_mm(20));
     assert(fixture.constraint_state.have_undecided == false);
 
-    /* A flush produces one step and a remainder, then suppression clears the
-     * pending motion while the remainder survives. */
+    /* A flush produces two steps and a remainder, then suppression clears
+     * the pending motion while the remainder survives. */
     assert(zpt_pipeline_flush(&fixture.pipeline, 16, &result) == 0);
     assert(fixture.capture.outputs == 1);
     assert(fixture.capture.signal.kind == ZPT_SIGNAL_SCROLL_STEPS);
-    assert(fixture.capture.signal.data.steps.x == 2);
-    assert(fixture.batcher_state.remainder_x == 4);
+    assert(fixture.capture.signal.data.delta.x == 2);
+    assert(fixture.batcher_state.remainder_x ==
+           zpt_fixed_multiply(counts_to_q16_mm(20), fixture.batcher_config.steps_per_millimeter) -
+               2 * ZPT_FIXED_ONE);
 
     fixture.suppression_state.active = true;
-    assert(push_raw(&fixture.pipeline, &result, 20, 10, 0) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 20, counts_to_q16_mm(10), 0) == 0);
     assert(fixture.batcher_state.pending_x == 0);
-    assert(fixture.batcher_state.remainder_x == 4);
+    assert(fixture.batcher_state.remainder_x ==
+           zpt_fixed_multiply(counts_to_q16_mm(20), fixture.batcher_config.steps_per_millimeter) -
+               2 * ZPT_FIXED_ONE);
     assert(fixture.intent_state.estimator.horizontal_energy == 0);
 }
 
@@ -170,10 +179,12 @@ static void test_discard_unclassified_clears_undecided_on_expiry(void) {
     fixture.constraint_config.discard_unclassified = true;
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&fixture.pipeline, &result, 0, 3, 3) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 0, counts_to_q16_mm(3),
+                           counts_to_q16_mm(3)) == 0);
     assert(fixture.constraint_state.have_undecided);
-    assert(push_raw(&fixture.pipeline, &result, 8, 3, 3) == 0);
-    assert(fixture.constraint_state.undecided_x == 6);
+    assert(push_normalized(&fixture.pipeline, &result, 8, counts_to_q16_mm(3),
+                           counts_to_q16_mm(3)) == 0);
+    assert(fixture.constraint_state.undecided_x == counts_to_q16_mm(6));
 
     /* Idle expiry folds or discards the undecided motion. */
     uint32_t deadline;
@@ -190,8 +201,10 @@ static void test_discard_off_folds_undecided_on_expiry(void) {
     scroll_fixture_init(&fixture);
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&fixture.pipeline, &result, 0, 3, 3) == 0);
-    assert(push_raw(&fixture.pipeline, &result, 8, 3, 3) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 0, counts_to_q16_mm(3),
+                           counts_to_q16_mm(3)) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 8, counts_to_q16_mm(3),
+                           counts_to_q16_mm(3)) == 0);
 
     uint32_t deadline;
     assert(zpt_pipeline_next_deadline(&fixture.pipeline, 128, &deadline));
@@ -199,17 +212,19 @@ static void test_discard_off_folds_undecided_on_expiry(void) {
     /* Folded as free motion into the batcher; the batcher's own due flush
      * scaled it to zero steps and kept the fractional remainder. */
     assert(fixture.batcher_state.pending_x == 0);
-    assert(fixture.batcher_state.remainder_x == 6);
+    assert(fixture.batcher_state.remainder_x ==
+           zpt_fixed_multiply(counts_to_q16_mm(6), fixture.batcher_config.steps_per_millimeter));
     assert(fixture.batcher_state.pending_y == 0);
-    assert(fixture.batcher_state.remainder_y == 6);
+    assert(fixture.batcher_state.remainder_y ==
+           zpt_fixed_multiply(counts_to_q16_mm(6), fixture.batcher_config.steps_per_millimeter));
 }
 
 static void test_text_nav_emits_actions_and_resets_on_idle(void) {
     struct zpt_text_nav_config config = {
-        .horizontal_threshold = 75,
-        .vertical_threshold = 75,
+        .horizontal_threshold = counts_to_q16_mm(75),
+        .vertical_threshold = counts_to_q16_mm(75),
         .idle_timeout_ms = 40,
-        .activation_distance = 35,
+        .activation_distance = counts_to_q16_mm(35),
         .engage_ratio_percent = 150,
     };
     struct zpt_text_nav_state state = {0};
@@ -228,7 +243,7 @@ static void test_text_nav_emits_actions_and_resets_on_idle(void) {
     };
     struct zpt_pipeline pipeline = {
         .stable_id = "text-test",
-        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
         .stages = stages,
         .stage_count = 1,
         .sink = &sink,
@@ -238,16 +253,18 @@ static void test_text_nav_emits_actions_and_resets_on_idle(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    assert(push_raw(&pipeline, &result, 0, 20, 3) == 0);
-    assert(push_raw(&pipeline, &result, 8, 25, -2) == 0);
-    assert(push_raw(&pipeline, &result, 16, 30, 4) == 0);
+    assert(push_normalized(&pipeline, &result, 0, counts_to_q16_mm(20), counts_to_q16_mm(3)) == 0);
+    assert(push_normalized(&pipeline, &result, 8, counts_to_q16_mm(25), counts_to_q16_mm(-2)) == 0);
+    assert(push_normalized(&pipeline, &result, 16, counts_to_q16_mm(30), counts_to_q16_mm(4)) == 0);
     assert(capture.outputs == 1);
     assert(capture.signal.kind == ZPT_SIGNAL_ACTION);
     assert(capture.signal.data.action.id == ZPT_TEXT_NAV_RIGHT);
 
     /* Idle gap resets the gesture accumulator. */
-    assert(push_raw(&pipeline, &result, 80, 3, -40) == 0);
-    assert(push_raw(&pipeline, &result, 88, -2, -35) == 0);
+    assert(push_normalized(&pipeline, &result, 80, counts_to_q16_mm(3), counts_to_q16_mm(-41)) ==
+           0);
+    assert(push_normalized(&pipeline, &result, 88, counts_to_q16_mm(-2), counts_to_q16_mm(-35)) ==
+           0);
     assert(capture.outputs == 2);
     assert(capture.signal.data.action.id == ZPT_TEXT_NAV_UP);
 }

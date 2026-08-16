@@ -41,12 +41,7 @@ static int scroll_batcher_provider_init(const struct device *dev) {
 }
 
 #define ZPT_SCROLL_BATCHER_PROVIDER_DEFINE(inst)                                                   \
-    BUILD_ASSERT(DT_INST_PROP(inst, scale_multiplier) > 0 &&                                       \
-                     DT_INST_PROP(inst, scale_multiplier) <= UINT16_MAX,                           \
-                 "scale-multiplier must fit in 16 bits and be positive");                          \
-    BUILD_ASSERT(DT_INST_PROP(inst, scale_divisor) > 0 &&                                          \
-                     DT_INST_PROP(inst, scale_divisor) <= UINT16_MAX,                              \
-                 "scale-divisor must fit in 16 bits and be positive");                             \
+    BUILD_ASSERT(DT_INST_PROP(inst, steps_per_meter) > 0, "steps-per-meter must be positive");     \
     BUILD_ASSERT(DT_INST_PROP(inst, report_interval_ms) > 0 &&                                     \
                      DT_INST_PROP(inst, report_interval_ms) <= UINT16_MAX,                         \
                  "report-interval-ms must fit in 16 bits and be positive");                        \
@@ -56,8 +51,9 @@ static int scroll_batcher_provider_init(const struct device *dev) {
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
             .stage =                                                                               \
                 {                                                                                  \
-                    .scale_multiplier = DT_INST_PROP(inst, scale_multiplier),                      \
-                    .scale_divisor = DT_INST_PROP(inst, scale_divisor),                            \
+                    /* Integer wheel steps per metre to Q16 steps per millimetre. */               \
+                    .steps_per_millimeter =                                                        \
+                        (zpt_fixed_t)DT_INST_PROP(inst, steps_per_meter) * ZPT_FIXED_ONE / 1000,   \
                     .report_interval_ms = DT_INST_PROP(inst, report_interval_ms),                  \
                 },                                                                                 \
             .suppression_device =                                                                  \

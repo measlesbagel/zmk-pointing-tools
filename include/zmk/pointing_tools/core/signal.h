@@ -15,7 +15,6 @@ enum zpt_signal_kind {
     ZPT_SIGNAL_RAW_MOTION,
     ZPT_SIGNAL_NORMALIZED_MOTION,
     ZPT_SIGNAL_POINTER_DELTA,
-    ZPT_SIGNAL_SCROLL_DELTA,
     ZPT_SIGNAL_SCROLL_STEPS,
     ZPT_SIGNAL_ACTION,
     ZPT_SIGNAL_KIND_COUNT,
@@ -54,8 +53,7 @@ struct zpt_signal_metadata {
 };
 
 struct zpt_signal_annotations {
-    /* Magnitude per second in the motion domain's units: Q16 millimetres
-     * per second for normalized motion, counts per second for raw motion. */
+    /* Magnitude in Q16 millimetres per second over the motion path. */
     zpt_fixed_t speed_per_second;
     uint16_t axis_confidence_percent;
     uint8_t axis_intent;
@@ -72,7 +70,7 @@ struct zpt_fixed_vector {
     zpt_fixed_t y;
 };
 
-struct zpt_step_vector {
+struct zpt_delta {
     int32_t x;
     int32_t y;
 };
@@ -90,7 +88,7 @@ struct zpt_signal {
     union {
         struct zpt_raw_motion raw_motion;
         struct zpt_fixed_vector fixed_vector;
-        struct zpt_step_vector steps;
+        struct zpt_delta delta;
         struct zpt_action action;
     } data;
 };
@@ -101,15 +99,9 @@ static inline int zpt_signal_kind_valid(enum zpt_signal_kind kind) {
     return kind > ZPT_SIGNAL_INVALID && kind < ZPT_SIGNAL_KIND_COUNT;
 }
 
-static inline zpt_fixed_t zpt_fixed_from_int(int32_t value) {
-    return (zpt_fixed_t)value * ZPT_FIXED_ONE;
-}
-
 /* Convert an integer micrometre distance to Q16 millimetres, rounded to
  * nearest. Devicetree stage properties use micrometres so physical distances
  * stay readable while stages run on CPI-independent normalized motion. The
  * macro form keeps static provider configs constant-initializable. */
 #define ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(value)                                                \
     ((((int64_t)(value) * ZPT_FIXED_ONE) + 500) / 1000)
-
-static inline int64_t zpt_fixed_trunc_to_int(zpt_fixed_t value) { return value / ZPT_FIXED_ONE; }

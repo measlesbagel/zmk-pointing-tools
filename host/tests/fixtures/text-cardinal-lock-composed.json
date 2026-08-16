@@ -13,11 +13,12 @@
   "processor": {
     "kind": "composed-text",
     "settings": {
-      "horizontalThreshold": 75,
-      "verticalThreshold": 75,
       "idleTimeoutMs": 40,
-      "activationDistance": 35,
-      "engageRatioPercent": 150
+      "engageRatioPercent": 150,
+      "cpi": 700,
+      "horizontalThresholdMicrometers": 2721,
+      "verticalThresholdMicrometers": 2721,
+      "activationDistanceMicrometers": 1270
     }
   },
   "events": [

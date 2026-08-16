@@ -219,18 +219,18 @@ selection is intentionally left for a separate behavior policy.
   transfer-stage work.
 - The Bridges configuration is not migrated by this slice.
 
-The smoke firmware instantiates the composed cursor, scroll, text, and
-normalized-cursor pipelines and their providers; the smoke router owns them
-selected by
-route behaviors. The normalized cursor path composes resolution normalization,
-the motion gate, the cursor transfer gain, and the sub-pixel cursor quantizer,
+The smoke firmware instantiates the composed cursor, scroll, and text
+pipelines and their providers; the smoke router owns them selected by route
+behaviors. The cursor path composes resolution normalization, the motion
+gate, the cursor transfer gain, and the sub-pixel cursor quantizer,
 terminating at the thin cursor sink; the cursor-identity-roundtrip fixture
 proves the composed path reproduces the count domain within one sub-count
-unit at 700 CPI. The
-scroll pipeline composes the count-domain axis-intent, axis-constraint, and
-scroll-batcher stages with a thin wheel sink and a shared
+unit at 700 CPI. The scroll pipeline composes normalization, the
+axis-intent estimator, the axis-constraint, and the steps-per-metre scroll
+batcher with a thin wheel sink and a shared
 `measlesbagel,zpt-keypress-suppression` guard, and the text pipeline composes
-the text-navigation stage with an action sink invoking bound keymap behaviors.
+normalization and the text-navigation stage with an action sink invoking
+bound keymap behaviors.
 
 A `measlesbagel,zpt-pipeline-telemetry` device observes every stage of its
 configured pipelines: each stage receives a state-telemetry target id and

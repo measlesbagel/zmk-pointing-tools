@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: MIT
-
-description: Raw-count to whole pointer-delta identity stage
-
-compatible: "measlesbagel,zpt-stage-raw-pointer-identity"
-
-include: measlesbagel,zpt-stage-base.yaml

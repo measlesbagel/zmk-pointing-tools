@@ -16,7 +16,7 @@ static const struct zpt_axis_intent_settings settings = {
 
 /* 700 CPI sensor: counts to Q16 millimetres. */
 static zpt_fixed_t counts_to_q16_mm(int32_t counts) {
-    return (zpt_fixed_t)counts * ZPT_FIXED_ONE * 254 / 7000;
+    return ((zpt_fixed_t)counts * ZPT_FIXED_ONE * 254 + 3500) / 7000;
 }
 
 /* 16 counts at 700 CPI, matching the count-domain legacy activation. */

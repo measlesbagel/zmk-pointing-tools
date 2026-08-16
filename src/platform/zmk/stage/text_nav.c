@@ -28,15 +28,15 @@ static int text_nav_provider_init(const struct device *dev) {
 }
 
 #define ZPT_TEXT_NAV_PROVIDER_DEFINE(inst)                                                         \
-    BUILD_ASSERT(DT_INST_PROP(inst, horizontal_threshold) > 0,                                     \
-                 "horizontal-threshold must be positive");                                         \
-    BUILD_ASSERT(DT_INST_PROP(inst, vertical_threshold) > 0,                                       \
-                 "vertical-threshold must be positive");                                           \
+    BUILD_ASSERT(DT_INST_PROP(inst, horizontal_threshold_micrometers) > 0,                         \
+                 "horizontal-threshold-micrometers must be positive");                             \
+    BUILD_ASSERT(DT_INST_PROP(inst, vertical_threshold_micrometers) > 0,                           \
+                 "vertical-threshold-micrometers must be positive");                               \
     BUILD_ASSERT(DT_INST_PROP(inst, idle_timeout_ms) > 0 &&                                        \
                      DT_INST_PROP(inst, idle_timeout_ms) <= UINT16_MAX,                            \
                  "idle-timeout-ms must fit in 16 bits and be positive");                           \
-    BUILD_ASSERT(DT_INST_PROP(inst, activation_distance) > 0,                                      \
-                 "activation-distance must be positive");                                          \
+    BUILD_ASSERT(DT_INST_PROP(inst, activation_distance_micrometers) > 0,                          \
+                 "activation-distance-micrometers must be positive");                              \
     BUILD_ASSERT(DT_INST_PROP(inst, engage_ratio_percent) > 0 &&                                   \
                      DT_INST_PROP(inst, engage_ratio_percent) <= UINT16_MAX,                       \
                  "engage-ratio-percent must fit in 16 bits and be positive");                      \
@@ -45,10 +45,13 @@ static int text_nav_provider_init(const struct device *dev) {
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
         .stage =                                                                                   \
             {                                                                                      \
-                .horizontal_threshold = DT_INST_PROP(inst, horizontal_threshold),                  \
-                .vertical_threshold = DT_INST_PROP(inst, vertical_threshold),                      \
+                .horizontal_threshold = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                      \
+                    DT_INST_PROP(inst, horizontal_threshold_micrometers)),                         \
+                .vertical_threshold = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                        \
+                    DT_INST_PROP(inst, vertical_threshold_micrometers)),                           \
                 .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                            \
-                .activation_distance = DT_INST_PROP(inst, activation_distance),                    \
+                .activation_distance = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                       \
+                    DT_INST_PROP(inst, activation_distance_micrometers)),                          \
                 .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),                  \
             },                                                                                     \
     };                                                                                             \

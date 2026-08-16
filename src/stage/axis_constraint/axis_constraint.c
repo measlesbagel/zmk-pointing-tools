@@ -63,7 +63,7 @@ static void schedule_undecided_expiry(struct zpt_axis_constraint_state *state,
 static int axis_constraint_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                          struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
-        stage->state == NULL || signal->kind != ZPT_SIGNAL_RAW_MOTION) {
+        stage->state == NULL || signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION) {
         return -EINVAL;
     }
 
@@ -80,8 +80,8 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
          * suppression and clear their buffered state without ever seeing
          * suppressed motion values. */
         struct zpt_signal output = *signal;
-        output.data.raw_motion.x_counts = 0;
-        output.data.raw_motion.y_counts = 0;
+        output.data.fixed_vector.x = 0;
+        output.data.fixed_vector.y = 0;
         return zpt_stage_emit(context, &output);
     }
     if (!state->have_last_frame ||
@@ -92,8 +92,8 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     state->last_frame_ms = now;
     state->have_last_frame = true;
 
-    int64_t x = signal->data.raw_motion.x_counts;
-    int64_t y = signal->data.raw_motion.y_counts;
+    int64_t x = signal->data.fixed_vector.x;
+    int64_t y = signal->data.fixed_vector.y;
     uint8_t intent = signal->annotations.axis_intent;
 
     if (intent == ZPT_AXIS_INTENT_UNDECIDED) {
@@ -102,10 +102,10 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
         state->have_undecided = true;
         schedule_undecided_expiry(state, config, context, now);
         /* Emit a zeroed frame so downstream stages observe the frame and arm
-         * report deadlines exactly like the legacy scroll processor. */
+         * their report deadlines. */
         struct zpt_signal output = *signal;
-        output.data.raw_motion.x_counts = 0;
-        output.data.raw_motion.y_counts = 0;
+        output.data.fixed_vector.x = 0;
+        output.data.fixed_vector.y = 0;
         return zpt_stage_emit(context, &output);
     }
 
@@ -131,8 +131,8 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     state->previous_intent = intent;
 
     struct zpt_signal output = *signal;
-    output.data.raw_motion.x_counts = output_x;
-    output.data.raw_motion.y_counts = output_y;
+    output.data.fixed_vector.x = output_x;
+    output.data.fixed_vector.y = output_y;
     return zpt_stage_emit(context, &output);
 }
 
@@ -149,10 +149,10 @@ static int axis_constraint_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
     }
     if (!config->discard_unclassified) {
         struct zpt_signal output = {0};
-        output.kind = ZPT_SIGNAL_RAW_MOTION;
+        output.kind = ZPT_SIGNAL_NORMALIZED_MOTION;
         output.metadata.observed_at_ms = stage->deadline_ms;
-        output.data.raw_motion.x_counts = state->undecided_x;
-        output.data.raw_motion.y_counts = state->undecided_y;
+        output.data.fixed_vector.x = state->undecided_x;
+        output.data.fixed_vector.y = state->undecided_y;
         clear_undecided(state);
         return zpt_stage_emit(context, &output);
     }
@@ -163,8 +163,8 @@ static int axis_constraint_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
 
 const struct zpt_stage_api zpt_axis_constraint_stage_api = {
     .strategy_id = "axis-constraint",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
-    .output_kind = ZPT_SIGNAL_RAW_MOTION,
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
+    .output_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
     .flags = ZPT_STAGE_STATEFUL,
     .process = axis_constraint_stage_process,
     .flush = axis_constraint_stage_flush,

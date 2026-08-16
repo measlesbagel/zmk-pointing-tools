@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/core/pipeline.h>
-#include <zmk/pointing_tools/stage/pointer_identity.h>
 
 #define ARRAY_SIZE(values) (sizeof(values) / sizeof((values)[0]))
 #define TEST_OUTPUT_CAPACITY 16U
@@ -97,6 +97,8 @@ static int pointer_map_process(struct zpt_stage *stage, const struct zpt_signal 
     (void)stage;
     struct zpt_signal output = *signal;
     output.kind = ZPT_SIGNAL_POINTER_DELTA;
+    output.data.delta.x = zpt_fixed_to_int32(signal->data.fixed_vector.x);
+    output.data.delta.y = zpt_fixed_to_int32(signal->data.fixed_vector.y);
     return zpt_stage_emit(context, &output);
 }
 
@@ -240,8 +242,8 @@ static struct zpt_signal normalized_signal(uint32_t timestamp_ms, int32_t x, int
                 .source_id = 3,
             },
     };
-    signal.data.fixed_vector.x = zpt_fixed_from_int(x);
-    signal.data.fixed_vector.y = zpt_fixed_from_int(y);
+    signal.data.fixed_vector.x = (zpt_fixed_t)x * ZPT_FIXED_ONE;
+    signal.data.fixed_vector.y = (zpt_fixed_t)y * ZPT_FIXED_ONE;
     return signal;
 }
 
@@ -280,50 +282,13 @@ static void test_typed_pipeline_and_metadata(void) {
     assert(sink_state.output_count == 1);
     const struct zpt_signal *output = &sink_state.outputs[0];
     assert(output->kind == ZPT_SIGNAL_POINTER_DELTA);
-    assert(output->data.fixed_vector.x == zpt_fixed_from_int(6));
-    assert(output->data.fixed_vector.y == zpt_fixed_from_int(-8));
+    assert(output->data.delta.x == 6);
+    assert(output->data.delta.y == -8);
     assert(output->metadata.observed_at_ms == 100);
     assert(output->metadata.sample_span_us == 8000);
     assert(output->metadata.flags == ZPT_SIGNAL_FLAG_LOCAL);
     assert(output->metadata.source_id == 7 && output->metadata.sequence == 42);
     assert(output->metadata.resolution_cpi == 700);
-}
-
-static void test_raw_pointer_identity_stage(void) {
-    struct zpt_stage stage_storage[] = {
-        {.stable_id = "identity", .api = &zpt_raw_pointer_identity_stage_api},
-    };
-    struct zpt_stage *stages[] = {&stage_storage[0]};
-    struct capture_sink_state sink_state = {0};
-    struct zpt_sink sink = {
-        .stable_id = "cursor",
-        .api = &pointer_sink_api,
-        .state = &sink_state,
-    };
-    struct zpt_pipeline pipeline = {
-        .stable_id = "identity-cursor",
-        .input_kind = ZPT_SIGNAL_RAW_MOTION,
-        .stages = stages,
-        .stage_count = ARRAY_SIZE(stages),
-        .sink = &sink,
-        .dispatch_budget = 4,
-    };
-    assert(zpt_pipeline_validate(&pipeline) == 0);
-    assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
-
-    struct zpt_pipeline_result result;
-    struct zpt_signal input = raw_signal(25, -12, 9);
-    assert(zpt_pipeline_push(&pipeline, &input, &result) == 0);
-    assert(result.dispatches == 2 && result.outputs == 1);
-    assert(sink_state.output_count == 1);
-    assert(sink_state.outputs[0].kind == ZPT_SIGNAL_POINTER_DELTA);
-    assert(sink_state.outputs[0].data.fixed_vector.x == zpt_fixed_from_int(-12));
-    assert(sink_state.outputs[0].data.fixed_vector.y == zpt_fixed_from_int(9));
-    assert(sink_state.outputs[0].metadata.source_id == input.metadata.source_id);
-
-    input.data.raw_motion.x_counts = INT64_MAX;
-    assert(zpt_pipeline_push(&pipeline, &input, &result) == -ERANGE);
-    assert(result.outputs == 0 && sink_state.output_count == 1);
 }
 
 static void test_validation_rejects_incompatible_and_shared_state(void) {
@@ -560,7 +525,6 @@ static void test_runtime_rejects_wrong_stage_output(void) {
 
 int main(void) {
     test_typed_pipeline_and_metadata();
-    test_raw_pointer_identity_stage();
     test_validation_rejects_incompatible_and_shared_state();
     test_zero_many_and_dispatch_budget();
     test_deadline_flush_and_wrap();

@@ -7,15 +7,10 @@ compatible: "measlesbagel,zpt-stage-scroll-batcher"
 include: measlesbagel,zpt-stage-base.yaml
 
 properties:
-  scale-multiplier:
+  steps-per-meter:
     type: int
     required: true
-    description: Wheel step scale multiplier applied at each report flush
-
-  scale-divisor:
-    type: int
-    required: true
-    description: Wheel step scale divisor applied at each report flush
+    description: Wheel steps emitted per metre of constrained motion at each report flush
 
   report-interval-ms:
     type: int

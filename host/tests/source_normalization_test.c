@@ -204,8 +204,8 @@ static void test_orient_then_normalize_pipeline(void) {
     assert(zpt_pipeline_push(&pipeline, &input, &result) == 0);
     assert(result.outputs == 1 && capture.outputs == 1);
     assert(capture.signal.kind == ZPT_SIGNAL_NORMALIZED_MOTION);
-    assert(capture.signal.data.fixed_vector.x == zpt_fixed_from_int(25) + 26214);
-    assert(capture.signal.data.fixed_vector.y == zpt_fixed_from_int(12) + 45875);
+    assert(capture.signal.data.fixed_vector.x == (zpt_fixed_t)25 * ZPT_FIXED_ONE + 26214);
+    assert(capture.signal.data.fixed_vector.y == (zpt_fixed_t)12 * ZPT_FIXED_ONE + 45875);
     assert(capture.signal.metadata.observed_at_ms == 55);
     assert(capture.signal.metadata.source_id == 4 && capture.signal.metadata.sequence == 9);
     assert(capture.signal.metadata.resolution_cpi == 700);

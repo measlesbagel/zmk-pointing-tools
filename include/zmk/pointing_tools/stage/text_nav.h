@@ -7,12 +7,11 @@
 #include <zmk/pointing_tools/core/pipeline.h>
 
 /*
- * Text-navigation stage over raw motion.
+ * Text-navigation stage over normalized motion.
  *
  * Accumulates a gesture and emits ACTION signals when the engaged axis
  * crosses its threshold, subtracting the threshold from the accumulator so
- * sustained motion repeats. Mirrors the legacy text-navigation processor in
- * the count domain.
+ * sustained motion repeats. Thresholds are signed Q16 millimetres.
  */
 
 enum zpt_text_nav_direction {
@@ -24,6 +23,7 @@ enum zpt_text_nav_direction {
 };
 
 struct zpt_text_nav_config {
+    /* Q16 millimetre gesture thresholds. */
     int64_t horizontal_threshold;
     int64_t vertical_threshold;
     uint16_t idle_timeout_ms;

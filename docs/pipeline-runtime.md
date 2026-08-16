@@ -114,16 +114,8 @@ saturating at the fixed-point limits with a clipped flag, and the cursor
 quantizer converts normalized motion to integer-valued pointer deltas while
 carrying the fractional remainder between frames so sub-pixel movement
 accumulates exactly. With a units-per-meter factor derived from the sensor
-CPI and identity gain, the composed path reproduces the legacy count-domain
-cursor behavior within one sub-count unit.
-
-The cursor transfer stage applies a base gain to Q16 millimetre motion,
-saturating at the fixed-point limits with a clipped flag, and the cursor
-quantizer converts normalized motion to integer-valued pointer deltas while
-carrying the fractional remainder between frames so sub-pixel movement
-accumulates exactly. With a units-per-meter factor derived from the sensor
-CPI and identity gain, the composed path reproduces the legacy count-domain
-cursor behavior within one sub-count unit.
+CPI and identity gain, the composed path reproduces the count-domain cursor
+behavior within one sub-count unit.
 
 Stages carry an optional observer slot that receives generic decision
 events (suppression, discard, qualification, intent changes, flushes, and
@@ -146,20 +138,18 @@ shipping premature production algorithms. They prove:
 - deactivation emission followed by reset;
 - rejection of a stage emitting a kind outside its contract.
 
-Production stateless stages now provide exact orthogonal orientation,
-counts-per-inch normalization to Q16 millimetres, and raw-count pointer identity
-for boundary testing. The first production stateful stage provides coherent
-displacement motion gating over normalized motion, including buffered evidence,
-external suppression policy, and idle/qualification deadlines. The axis-intent
-stage reuses the legacy windowed-energy estimator semantics as a unit-
-independent strategy and carries intent, confidence, and speed annotations on
-raw or normalized frames for scroll, text, and optional cursor-constraint
-consumers. The axis-constraint stage buffers undecided motion and applies the
-intent annotation over raw motion, the scroll batcher reproduces the legacy
-transfer, quantizer, and report-interval batching semantics, and the text-
-navigation stage emits actions from threshold crossings. All three accept a
-shared suppression policy so a single ZMK keypress guard participates in the
-pass, buffer, and drop decisions of the whole scroll pipeline.
+Production stages provide counts-per-inch normalization to Q16 millimetres,
+coherent-displacement motion gating with buffered evidence and idle or
+qualification deadlines, the windowed-energy axis-intent estimator carrying
+intent, confidence, and speed annotations, the axis-constraint stage
+buffering undecided motion and applying the intent annotation, the scroll
+batcher transferring steps per millimetre with a fractional remainder on a
+report deadline, the text-navigation stage emitting actions from threshold
+crossings, and the cursor transfer and sub-pixel quantizer stages. Every
+motion stage after the ingress consumes normalized Q16 millimetre motion.
+The scroll stages accept a shared suppression policy so a single ZMK
+keypress guard participates in the pass, buffer, and drop decisions of the
+whole pipeline.
 The ZMK adapter uses the standard input listener as its source-specific
 processor host and feeds reconstructed frames to a separate router device.
 Pipelines, their ordered stages, and cursor sinks are independently allocated

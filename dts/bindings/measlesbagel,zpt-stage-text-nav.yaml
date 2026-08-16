@@ -7,25 +7,25 @@ compatible: "measlesbagel,zpt-stage-text-nav"
 include: measlesbagel,zpt-stage-base.yaml
 
 properties:
-  horizontal-threshold:
+  horizontal-threshold-micrometers:
     type: int
     required: true
-    description: Counts required to emit a horizontal text action
+    description: Distance required to emit a horizontal text action
 
-  vertical-threshold:
+  vertical-threshold-micrometers:
     type: int
     required: true
-    description: Counts required to emit a vertical text action
+    description: Distance required to emit a vertical text action
 
   idle-timeout-ms:
     type: int
     required: true
     description: Gap after which the gesture accumulator resets
 
-  activation-distance:
+  activation-distance-micrometers:
     type: int
     required: true
-    description: Total accumulated magnitude required to engage an axis
+    description: Total accumulated distance required to engage an axis
 
   engage-ratio-percent:
     type: int

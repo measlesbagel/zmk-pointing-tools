@@ -14,16 +14,16 @@
     "kind": "composed-scroll",
     "policy": "adaptive",
     "settings": {
-      "scaleMultiplier": 1,
-      "scaleDivisor": 8,
       "reportIntervalMs": 16,
       "idleTimeoutMs": 120,
       "suppressAfterKeypressMs": 0,
       "discardUnclassified": false,
       "engageRatioPercent": 300,
       "releaseRatioPercent": 180,
-      "activationDistance": 16,
-      "intentWindowMs": 64
+      "intentWindowMs": 64,
+      "cpi": 700,
+      "stepsPerMeter": 3445,
+      "activationDistanceMicrometers": 581
     }
   },
   "events": [

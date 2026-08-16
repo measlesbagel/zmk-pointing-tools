@@ -58,7 +58,7 @@ static void text_nav_stage_reset(struct zpt_stage *stage, enum zpt_reset_reason 
 static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                   struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
-        stage->state == NULL || signal->kind != ZPT_SIGNAL_RAW_MOTION) {
+        stage->state == NULL || signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION) {
         return -EINVAL;
     }
 
@@ -76,8 +76,8 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     state->last_frame_ms = now;
     state->have_last_frame = true;
 
-    int64_t x = signal->data.raw_motion.x_counts;
-    int64_t y = signal->data.raw_motion.y_counts;
+    int64_t x = signal->data.fixed_vector.x;
+    int64_t y = signal->data.fixed_vector.y;
 
     if (state->intent == ZPT_AXIS_INTENT_UNDECIDED) {
         state->accumulated_x = saturating_add_i64(state->accumulated_x, x);
@@ -142,7 +142,7 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
 
 const struct zpt_stage_api zpt_text_nav_stage_api = {
     .strategy_id = "text-nav",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
     .output_kind = ZPT_SIGNAL_ACTION,
     .flags = ZPT_STAGE_STATEFUL,
     .process = text_nav_stage_process,
