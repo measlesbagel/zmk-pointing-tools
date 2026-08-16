@@ -42,15 +42,15 @@ static int cursor_quantizer_stage_process(struct zpt_stage *stage, const struct 
     int64_t units_y = zpt_fixed_saturating_add(
         zpt_fixed_multiply(signal->data.fixed_vector.y, config->units_per_millimeter),
         state->remainder_y);
-    /* The sink contract limits one frame to the signed 16-bit HID movement
-     * range. Clamp here so the excess stays in the fractional remainder and
-     * is emitted on later frames instead of dropping the whole report. */
+    /* Defer only the fractional part of the truncated value; whole units
+     * beyond the signed 16-bit HID movement range are dropped by the clamp,
+     * so a clamped frame cannot poison the next frame's remainder. */
     int32_t integer_x = zpt_fixed_to_int32(units_x);
     int32_t integer_y = zpt_fixed_to_int32(units_y);
-    integer_x = integer_x > INT16_MAX ? INT16_MAX : (integer_x < INT16_MIN ? INT16_MIN : integer_x);
-    integer_y = integer_y > INT16_MAX ? INT16_MAX : (integer_y < INT16_MIN ? INT16_MIN : integer_y);
     state->remainder_x = units_x - (int64_t)integer_x * ZPT_FIXED_ONE;
     state->remainder_y = units_y - (int64_t)integer_y * ZPT_FIXED_ONE;
+    integer_x = integer_x > INT16_MAX ? INT16_MAX : (integer_x < INT16_MIN ? INT16_MIN : integer_x);
+    integer_y = integer_y > INT16_MAX ? INT16_MAX : (integer_y < INT16_MIN ? INT16_MIN : integer_y);
 
     struct zpt_signal output = *signal;
     output.kind = ZPT_SIGNAL_POINTER_DELTA;
