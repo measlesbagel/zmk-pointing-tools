@@ -48,7 +48,7 @@ let simulator;
 let heartbeat;
 let tuningTargets = new Map();
 let stateEvents = [];
-let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
 let stateDirty = true;
 let decoder = new FrameDecoder();
 const tuningRequests = new ResponseRequestQueue(
@@ -169,18 +169,24 @@ function renderDiagnostics() {
   elements["state-dropped"].textContent = supported
     ? `${stateStatus.dropped.toLocaleString()} dropped · queue capacity ${stateStatus.queueCapacity || "?"}`
     : "Requires protocol v5";
-  if (!supported || tuningTargets.size === 0) {
+  if (!supported) {
     elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect processor decisions.</p>';
     return;
   }
 
-  const controls = [...tuningTargets.values()].map((target) => {
-    const level = stateStatus.levels.get(target.id) ?? STATE.OFF;
-    const latest = [...stateEvents].reverse().find((event) => event.targetId === target.id);
+  const targets = [...stateStatus.levels.entries()];
+  if (targets.length === 0) {
+    elements.diagnostics.innerHTML = '<p class="muted">No stage targets registered.</p>';
+    return;
+  }
+
+  const controls = targets.map(([targetId, level]) => {
+    const label = stateStatus.labels.get(targetId) || `Stage ${targetId}`;
+    const latest = [...stateEvents].reverse().find((event) => event.targetId === targetId);
     return `<article class="diagnostic-target">
-      <div><h3>${escapeHtml(target.label)}</h3><span>${latest ? escapeHtml(describeStateEvent(latest)) : "No state received"}</span></div>
+      <div><h3>${escapeHtml(label)}</h3><span>${latest ? escapeHtml(describeStateEvent(latest)) : "No state received"}</span></div>
       <label>Detail
-        <select data-state-target="${target.id}">
+        <select data-state-target="${targetId}">
           <option value="0" ${level === STATE.OFF ? "selected" : ""}>Off</option>
           <option value="1" ${level === STATE.DECISIONS ? "selected" : ""}>Decisions</option>
           <option value="2" ${level === STATE.VERBOSE ? "selected" : ""}>Every frame</option>
@@ -189,8 +195,8 @@ function renderDiagnostics() {
     </article>`;
   }).join("");
   const timeline = stateEvents.slice(-30).reverse().map((event) => {
-    const target = tuningTargets.get(event.targetId);
-    return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(target?.label ?? `Target ${event.targetId}`)}</strong><span>${escapeHtml(describeStateEvent(event))}</span></li>`;
+    const label = stateStatus.labels.get(event.targetId) || `Target ${event.targetId}`;
+    return `<li><code>${event.timestamp} · #${event.sequence}</code><strong>${escapeHtml(label)}</strong><span>${escapeHtml(describeStateEvent(event))}</span></li>`;
   }).join("");
   elements.diagnostics.innerHTML = `${controls}<ol class="state-timeline">${timeline || '<li class="muted">Enable a target and move a trackball.</li>'}</ol>`;
 }
@@ -392,7 +398,7 @@ async function disconnect() {
   elements.simulate.disabled = false;
   tuningTargets = new Map();
   stateEvents = [];
-  stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+  stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
   stateDirty = true;
   renderTuning();
   setStatus("Disconnected");
@@ -415,7 +421,7 @@ async function connect() {
     elements.simulate.disabled = true;
     tuningTargets = new Map();
     stateEvents = [];
-    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
     stateDirty = true;
     tuningRequests.clear();
     decoder = new FrameDecoder();
@@ -441,7 +447,7 @@ function startSimulator() {
     tuningTargets = new Map();
     protocolReady = false;
     stateEvents = [];
-    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map() };
+    stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
     stateDirty = true;
     renderTuning();
     return;
@@ -458,7 +464,13 @@ function startSimulator() {
     { id: 4, key: "engage-ratio-percent", devicetreeProperty: "engage-ratio-percent", type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
     { id: 5, key: "idle-timeout-ms", devicetreeProperty: "idle-timeout-ms", type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
   ] }], false);
-  setStateStatus({ schemaVersion: 1, dropped: 0, queueCapacity: 64, levels: new Map([[0, STATE.OFF], [1, STATE.OFF]]) });
+  setStateStatus({
+    schemaVersion: 2,
+    dropped: 0,
+    queueCapacity: 64,
+    levels: new Map([[0, STATE.OFF], [1, STATE.OFF]]),
+    labels: new Map([[0, "Simulated adaptive scroll"], [1, "Simulated text navigation"]]),
+  });
   let tick = 0;
   simulator = setInterval(() => {
     const raw = { x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1) };

@@ -42,5 +42,6 @@ enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id);
 void zpt_state_telemetry_submit(const struct zpt_state_sample *sample);
 
 /* Allocate the next free state-telemetry target id for non-tunable
- * observers (pipeline stages); returns -ENOSPC when exhausted. */
-int zpt_state_telemetry_register_target(uint8_t *target_id);
+ * observers (pipeline stages) and record its stable label; returns
+ * -ENOSPC when exhausted. */
+int zpt_state_telemetry_register_target(uint8_t *target_id, const char *stable_id);

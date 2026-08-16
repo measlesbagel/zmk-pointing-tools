@@ -56,17 +56,30 @@ test("parses acknowledgements", () => {
 });
 
 test("parses and controls semantic processor state", () => {
-  const status = new Uint8Array(12);
+  const firstLabel = new TextEncoder().encode("left-scroll");
+  const secondLabel = new TextEncoder().encode("coherent-displacement");
+  const status = new Uint8Array(8 + 3 + firstLabel.length + 3 + secondLabel.length);
   const statusView = new DataView(status.buffer);
-  status[0] = 1;
+  status[0] = 2;
   statusView.setUint32(1, 7, true);
   statusView.setUint16(5, 64, true);
-  status.set([2, 0, 1, 1, 2], 7);
+  status[7] = 2;
+  let offset = 8;
+  status[offset++] = 0;
+  status[offset++] = 1;
+  status[offset++] = firstLabel.length;
+  status.set(firstLabel, offset);
+  offset += firstLabel.length;
+  status[offset++] = 1;
+  status[offset++] = 2;
+  status[offset++] = secondLabel.length;
+  status.set(secondLabel, offset);
   const parsedStatus = parseStateStatus(status);
-  assert.equal(parsedStatus.schemaVersion, 1);
+  assert.equal(parsedStatus.schemaVersion, 2);
   assert.equal(parsedStatus.dropped, 7);
   assert.equal(parsedStatus.queueCapacity, 64);
   assert.deepEqual([...parsedStatus.levels], [[0, 1], [1, 2]]);
+  assert.deepEqual([...parsedStatus.labels], [[0, "left-scroll"], [1, "coherent-displacement"]]);
 
   const payload = new Uint8Array(54);
   const view = new DataView(payload.buffer);

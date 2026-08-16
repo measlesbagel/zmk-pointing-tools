@@ -143,6 +143,9 @@ static int coherent_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
         zpt_coherent_displacement_expire(&state->strategy, &config->settings, now_ms);
     if (result.reset_for_idle || result.reset_for_timeout) {
         clear_pending_evidence(state);
+        if (result.discarded) {
+            zpt_stage_notify(context, ZPT_STAGE_EVENT_DISCARDED, 0);
+        }
     }
     return schedule_next_deadline(context, &config->settings, &state->strategy);
 }
