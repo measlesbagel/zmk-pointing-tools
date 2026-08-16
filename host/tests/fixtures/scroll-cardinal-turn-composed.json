@@ -88,15 +88,13 @@
       "signedDistance": 6,
       "absoluteDistance": 6,
       "nonzeroFrames": 2,
-      "directionChanges": 0,
-      "clippedFrames": 0
+      "directionChanges": 0
     },
     "vertical": {
       "signedDistance": -6,
       "absoluteDistance": 6,
       "nonzeroFrames": 2,
-      "directionChanges": 0,
-      "clippedFrames": 0
+      "directionChanges": 0
     },
     "intentFrames": {
       "undecided": 2,
