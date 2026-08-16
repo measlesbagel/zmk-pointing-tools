@@ -209,7 +209,7 @@ repeat target-count times:
 Status schema version 2 added the per-target label so hosts can render
 per-stage controls without tuning discovery. Tuning-registered targets report
 their tuning label and pipeline stage targets report their stable id; labels
-are capped at 24 bytes.
+are capped at 27 bytes, the length of the longest current stable id.
 
 State samples use schema version 1:
 
