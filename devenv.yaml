@@ -3,3 +3,20 @@ require_version: "2.2.0"
 inputs:
   nixpkgs:
     url: github:NixOS/nixpkgs/nixos-unstable
+
+  # Pinned to the revision the pinned ZMK imports through its west manifest.
+  # After `west update` pulls a newer resolution of the v4.1.0+zmk-fixes tag,
+  # keep this commit in sync with `git -C zephyr rev-parse HEAD`.
+  zephyr:
+    url: github:zmkfirmware/zephyr/10ba6d0cb38bc3d258775d27982f707599320085
+    flake: false
+
+  # zephyr-nix uses the Zephyr source above to construct the Python
+  # environment and SDK matching the pinned ZMK checkout.
+  zephyr-nix:
+    url: github:nix-community/zephyr-nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+      zephyr:
+        follows: zephyr
