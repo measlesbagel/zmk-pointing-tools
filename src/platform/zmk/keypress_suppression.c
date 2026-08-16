@@ -90,8 +90,10 @@ static int position_state_changed_listener(const zmk_event_t *event) {
         const struct device *dev = DEVICE_DT_INST_GET(inst);                                       \
         if (device_is_ready(dev)) {                                                                \
             struct zpt_keypress_suppression_data *data = dev->data;                                \
-            data->last_keypress_ms = (uint32_t)position->timestamp;                                \
-            data->have_keypress = true;                                                            \
+            /* Publish the timestamp first; both accesses are seq-cst, so                          \
+             * observing the flag implies the timestamp is visible.            */                  \
+            atomic_set(&data->last_keypress_ms, (atomic_val_t)position->timestamp);                \
+            atomic_set(&data->have_keypress, 1);                                                   \
         }                                                                                          \
     } while (false);
 
