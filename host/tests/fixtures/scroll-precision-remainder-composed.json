@@ -2,7 +2,7 @@
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
   "id": "scroll-precision-remainder-composed",
-  "description": "Sub-wheel precision movement accumulates instead of disappearing at integer scaling boundaries. (Composed pipeline twin: same trace and expectations as the legacy fixture.)",
+  "description": "Sub-wheel precision movement accumulates instead of disappearing at integer scaling boundaries. Expectations are a behavioral baseline for the composed normalized pipeline.",
   "metadata": {
     "device": "right-trackball",
     "cpi": 700,

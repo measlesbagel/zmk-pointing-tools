@@ -2,7 +2,7 @@
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
   "id": "scroll-cardinal-turn-composed",
-  "description": "A horizontal gesture, idle release, and vertical gesture with minor cross-axis noise. (Composed pipeline twin: same trace and expectations as the legacy fixture.)",
+  "description": "A horizontal gesture, idle release, and vertical gesture with minor cross-axis noise. Expectations are a behavioral baseline for the composed normalized pipeline.",
   "metadata": {
     "device": "right-trackball",
     "cpi": 700,
