@@ -15,11 +15,15 @@ const textFixture = {
     kind: "composed-text",
     settings: {
       cpi: 700,
+      engageRatioPercent: 150,
+      releaseRatioPercent: 90,
+      activationDistanceMicrometers: 1270,
+      intentWindowMs: 32,
+      idleTimeoutMs: 40,
+      discardUnclassified: true,
       horizontalThresholdMicrometers: 2721,
       verticalThresholdMicrometers: 2721,
-      idleTimeoutMs: 40,
-      activationDistanceMicrometers: 1270,
-      engageRatioPercent: 150,
+      mapperIdleTimeoutMs: 40,
     },
   },
   events: [["motion", 0, 20, -2], ["motion", 8, 30, 1]],
@@ -52,7 +56,7 @@ test("accepts composed fixture kinds with legacy settings shapes", () => {
 test("validates fixtures and encodes deterministic runner input", () => {
   assert.equal(validateFixture(textFixture), textFixture);
   assert.equal(encodeRunnerInput(textFixture),
-    "C 700 2721 2721 40 1270 150\nM 0 20 -2\nM 8 30 1\n");
+    "C 700 150 90 1270 32 40 1 2721 2721 40\nM 0 20 -2\nM 8 30 1\n");
   assert.throws(
     () => validateFixture({ ...textFixture, version: 2 }),
     /expected zmk-pointing-tools\/trace-fixture v1/,
