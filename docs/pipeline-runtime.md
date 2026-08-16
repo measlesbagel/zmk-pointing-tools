@@ -37,14 +37,15 @@ stable IDs. Validation checks:
 - type compatibility at every boundary;
 - unique stage/sink identities;
 - state storage for stateful stages;
-- unique state ownership within the pipeline;
+- unique stage state and sink ownership;
 - compatibility between the last stage and the sink.
 
-Validation claims stage instances for one pipeline and initializes them. The
-same stage instance cannot be reused by another pipeline, and one pipeline
-cannot assign the same state allocation to multiple stages. Construction code
-must give distinct stage objects in different pipelines distinct state
-allocations. Algorithm APIs and immutable configuration may still be shared.
+Validation claims stage and sink instances for one pipeline and initializes
+them. The same stage or sink instance cannot be reused by another pipeline,
+and one pipeline cannot assign the same state allocation to multiple stages.
+Construction code must give distinct objects in different pipelines distinct
+state allocations. Algorithm APIs and immutable configuration may still be
+shared.
 
 ## Streaming execution
 

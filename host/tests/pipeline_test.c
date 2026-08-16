@@ -394,6 +394,23 @@ static void test_validation_rejects_incompatible_and_shared_state(void) {
     second_owner.stable_id = "second-owner";
     assert(zpt_pipeline_validate(&first_owner) == 0);
     assert(zpt_pipeline_validate(&second_owner) == -EBUSY);
+
+    struct capture_sink_state owned_sink_state = {0};
+    struct zpt_sink owned_sink = {
+        .stable_id = "owned-sink",
+        .api = &normalized_sink_api,
+        .state = &owned_sink_state,
+    };
+    struct zpt_pipeline first_sink_owner = {
+        .stable_id = "first-sink-owner",
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .sink = &owned_sink,
+        .dispatch_budget = 2,
+    };
+    struct zpt_pipeline second_sink_owner = first_sink_owner;
+    second_sink_owner.stable_id = "second-sink-owner";
+    assert(zpt_pipeline_validate(&first_sink_owner) == 0);
+    assert(zpt_pipeline_validate(&second_sink_owner) == -EBUSY);
 }
 
 static void test_zero_many_and_dispatch_budget(void) {
