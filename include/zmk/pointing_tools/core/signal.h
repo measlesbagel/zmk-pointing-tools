@@ -103,4 +103,11 @@ static inline zpt_fixed_t zpt_fixed_from_int(int32_t value) {
     return (zpt_fixed_t)value * ZPT_FIXED_ONE;
 }
 
+/* Convert an integer micrometre distance to Q16 millimetres, rounded to
+ * nearest. Devicetree stage properties use micrometres so physical distances
+ * stay readable while stages run on CPI-independent normalized motion. The
+ * macro form keeps static provider configs constant-initializable. */
+#define ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(value)                                                \
+    ((((int64_t)(value) * ZPT_FIXED_ONE) + 500) / 1000)
+
 static inline int64_t zpt_fixed_trunc_to_int(zpt_fixed_t value) { return value / ZPT_FIXED_ONE; }

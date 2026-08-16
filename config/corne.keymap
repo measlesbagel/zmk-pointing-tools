@@ -146,6 +146,16 @@
         idle-timeout-ms = <120>;
     };
 
+    zpt_test_axis_intent: zpt_test_axis_intent {
+        compatible = "measlesbagel,zpt-stage-axis-intent";
+        stable-id = "axis-intent";
+        policy = <1>;
+        engage-ratio-percent = <300>;
+        release-ratio-percent = <180>;
+        activation-distance-micrometers = <580>;
+        window-ms = <64>;
+    };
+
     zpt_test_scroll: zpt_test_scroll {
         compatible = "measlesbagel,zpt-input-processor-scroll";
         #input-processor-cells = <1>;

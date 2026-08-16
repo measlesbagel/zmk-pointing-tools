@@ -27,11 +27,11 @@ int main(void) {
     char line[256];
 
     if (fgets(line, sizeof(line), stdin) == NULL ||
-        sscanf(line, "C %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16
-                     " %u %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %u",
-               &settings.scale_multiplier, &settings.scale_divisor,
-               &settings.report_interval_ms, &settings.idle_timeout_ms,
-               &settings.suppress_after_keypress_ms, &discard,
+        sscanf(line,
+               "C %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNu16 " %u %" SCNu16
+               " %" SCNu16 " %" SCNu16 " %" SCNu16 " %u",
+               &settings.scale_multiplier, &settings.scale_divisor, &settings.report_interval_ms,
+               &settings.idle_timeout_ms, &settings.suppress_after_keypress_ms, &discard,
                &settings.intent.engage_ratio_percent, &settings.intent.release_ratio_percent,
                &settings.intent.activation_distance, &settings.intent.window_ms,
                &policy_value) != 11 ||
@@ -56,8 +56,8 @@ int main(void) {
         uint32_t timestamp;
         int32_t x;
         int32_t y;
-        int fields = sscanf(line, " %c %" SCNu32 " %" SCNd32 " %" SCNd32, &type, &timestamp,
-                            &x, &y);
+        int fields =
+            sscanf(line, " %c %" SCNu32 " %" SCNd32 " %" SCNd32, &type, &timestamp, &x, &y);
         if (fields < 2) {
             fputs("invalid replay event\n", stderr);
             return 2;
@@ -82,13 +82,12 @@ int main(void) {
                         timestamp - last_keypress < settings.suppress_after_keypress_ms;
         struct zpt_scroll_decision decision =
             zpt_scroll_process(&state, &settings, x, y, policy, timestamp, suppress);
-        printf("D\t%" PRIu32 "\t%d\t%" PRIu32 "\t%" PRIu32
-               "\t%" PRId32 "\t%" PRId32 "\t%" PRId32 "\t%" PRId32
-               "\t%" PRId32 "\t%" PRId32 "\t%d\t%d\n",
+        printf("D\t%" PRIu32 "\t%d\t%" PRIu64 "\t%" PRIu64 "\t%" PRId32 "\t%" PRId32 "\t%" PRId32
+               "\t%" PRId32 "\t%" PRId32 "\t%" PRId32 "\t%d\t%d\n",
                timestamp, decision.intent, state.intent.horizontal_energy,
-               state.intent.vertical_energy, state.undecided_x, state.undecided_y,
-               state.pending_x, state.pending_y, state.remainder_x, state.remainder_y,
-               decision.reset_for_idle, decision.suppressed);
+               state.intent.vertical_energy, state.undecided_x, state.undecided_y, state.pending_x,
+               state.pending_y, state.remainder_x, state.remainder_y, decision.reset_for_idle,
+               decision.suppressed);
 
         if (!decision.suppressed && !flush_armed) {
             flush_at = timestamp + settings.report_interval_ms;

@@ -24,6 +24,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/resolution_normalize.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/axis_intent/axis_intent.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/axis_intent/axis_intent_stage.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_MOTION_GATE_CORE
     src/stage/motion_gate/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -52,6 +56,8 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/platform/zmk/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/resolution_normalize.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/platform/zmk/stage/axis_intent.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE

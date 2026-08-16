@@ -16,6 +16,8 @@ add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/stage/orientation.c"
   "${ZPT_ROOT}/src/stage/pointer_identity.c"
   "${ZPT_ROOT}/src/stage/resolution_normalize.c"
+  "${ZPT_ROOT}/src/stage/axis_intent/axis_intent.c"
+  "${ZPT_ROOT}/src/stage/axis_intent/axis_intent_stage.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement_stage.c"
   "${ZPT_ROOT}/src/legacy_processor/axis_intent.c"
@@ -39,6 +41,7 @@ function(zpt_host_executable target source)
 endfunction()
 
 zpt_host_executable(axis_intent_test tests/axis_intent_test.c)
+zpt_host_executable(axis_intent_stage_test tests/axis_intent_stage_test.c)
 zpt_host_executable(compact_split_codec_test tests/compact_split_codec_test.c)
 zpt_host_executable(frame_assembler_test tests/frame_assembler_test.c)
 zpt_host_executable(motion_gate_test tests/motion_gate_test.c)
@@ -53,6 +56,7 @@ zpt_host_executable(zpt_scroll_replay runners/scroll_replay.c)
 zpt_host_executable(zpt_text_nav_replay runners/text_nav_replay.c)
 
 add_test(NAME axis_intent COMMAND axis_intent_test)
+add_test(NAME axis_intent_stage COMMAND axis_intent_stage_test)
 add_test(NAME compact_split_codec COMMAND compact_split_codec_test)
 add_test(NAME frame_assembler COMMAND frame_assembler_test)
 add_test(NAME motion_gate COMMAND motion_gate_test)

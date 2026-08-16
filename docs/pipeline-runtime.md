@@ -126,10 +126,13 @@ Production stateless stages now provide exact orthogonal orientation,
 counts-per-inch normalization to Q16 millimetres, and raw-count pointer identity
 for boundary testing. The first production stateful stage provides coherent
 displacement motion gating over normalized motion, including buffered evidence,
-external suppression policy, and idle/qualification deadlines. The ZMK adapter
-uses the standard input listener as its source-specific processor host and
-feeds reconstructed frames to a separate router device. Pipelines, their
-ordered stages, and cursor sinks are independently allocated devicetree
-providers. A Zephyr router executor serializes source pushes, route changes,
-and delayable-work flushes while rescheduling the active pipeline's nearest
-requested stage deadline after every operation.
+external suppression policy, and idle/qualification deadlines. The axis-intent
+stage reuses the legacy windowed-energy estimator semantics as a unit-
+independent strategy and carries intent, confidence, and speed annotations on
+normalized frames for scroll, text, and optional cursor-constraint consumers.
+The ZMK adapter uses the standard input listener as its source-specific
+processor host and feeds reconstructed frames to a separate router device.
+Pipelines, their ordered stages, and cursor sinks are independently allocated
+devicetree providers. A Zephyr router executor serializes source pushes, route
+changes, and delayable-work flushes while rescheduling the active pipeline's
+nearest requested stage deadline after every operation.

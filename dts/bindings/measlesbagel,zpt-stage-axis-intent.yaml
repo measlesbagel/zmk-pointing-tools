@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+
+description: Semantic-neutral axis-intent estimator stage over normalized motion
+
+compatible: "measlesbagel,zpt-stage-axis-intent"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  policy:
+    type: int
+    required: true
+    description: 0 free, 1 adaptive, 2 horizontal, or 3 vertical policy
+
+  engage-ratio-percent:
+    type: int
+    required: true
+    description: Major axis dominance required to engage an intent
+
+  release-ratio-percent:
+    type: int
+    required: true
+    description: Major axis dominance required to hold an engaged intent
+
+  activation-distance-micrometers:
+    type: int
+    required: true
+    description: Total windowed energy required before intent classification
+
+  window-ms:
+    type: int
+    required: true
+    description: Energy decay window used for intent classification

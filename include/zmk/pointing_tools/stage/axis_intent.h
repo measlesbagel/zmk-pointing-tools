@@ -1,0 +1,69 @@
+/* SPDX-License-Identifier: MIT */
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zmk/pointing_tools/core/pipeline.h>
+
+/*
+ * Reusable semantic-neutral axis-intent estimator.
+ *
+ * Distinguishes free, horizontal, and vertical intent from windowed energy
+ * accumulation with engage/release hysteresis. The strategy is unit-
+ * independent: inputs and the activation distance share the caller's units
+ * (sensor counts for legacy adapters, Q16 millimetres for normalized motion
+ * stages). The stage wrapper consumes NORMALIZED_MOTION and carries the
+ * result as signal annotations.
+ */
+
+enum zpt_axis_policy {
+    ZPT_AXIS_POLICY_FREE = 0,
+    ZPT_AXIS_POLICY_ADAPTIVE = 1,
+    ZPT_AXIS_POLICY_HORIZONTAL = 2,
+    ZPT_AXIS_POLICY_VERTICAL = 3,
+};
+
+enum zpt_axis_intent {
+    ZPT_AXIS_INTENT_UNDECIDED = 0,
+    ZPT_AXIS_INTENT_FREE,
+    ZPT_AXIS_INTENT_HORIZONTAL,
+    ZPT_AXIS_INTENT_VERTICAL,
+};
+
+struct zpt_axis_intent_settings {
+    uint16_t engage_ratio_percent;
+    uint16_t release_ratio_percent;
+    int64_t activation_distance;
+    uint16_t window_ms;
+};
+
+struct zpt_axis_intent_state {
+    uint64_t horizontal_energy;
+    uint64_t vertical_energy;
+    enum zpt_axis_intent intent;
+};
+
+int zpt_axis_intent_validate(const struct zpt_axis_intent_settings *settings);
+void zpt_axis_intent_reset(struct zpt_axis_intent_state *state);
+
+enum zpt_axis_intent zpt_axis_intent_estimate(struct zpt_axis_intent_state *state,
+                                              const struct zpt_axis_intent_settings *settings,
+                                              enum zpt_axis_policy policy, int64_t x, int64_t y,
+                                              uint32_t elapsed_ms);
+
+/* Dominance of the engaged axis from 0 through 100, or 0 while undecided. */
+uint16_t zpt_axis_intent_confidence(const struct zpt_axis_intent_state *state);
+
+struct zpt_axis_intent_stage_config {
+    struct zpt_axis_intent_settings settings;
+    enum zpt_axis_policy policy;
+};
+
+struct zpt_axis_intent_stage_state {
+    struct zpt_axis_intent_state estimator;
+    uint32_t last_frame_ms;
+    bool have_last_frame;
+};
+
+extern const struct zpt_stage_api zpt_axis_intent_stage_api;
