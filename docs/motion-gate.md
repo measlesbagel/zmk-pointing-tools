@@ -72,6 +72,7 @@ settings update.
 
 The pure strategy, normalized pipeline stage, external suppression contract,
 deadline behavior, and host tests are implemented. The existing
-`legacy_processor/noise_filter` and its virtual ZMK device remain active for the
-Bridges firmware. The next migration layer will make that adapter reuse this
-strategy while preserving all existing replay fixtures and tuning behavior.
+`legacy_processor/noise_filter` now delegates its count-domain decisions to the
+same strategy, preserving all existing replay fixtures and tuning behavior. Its
+virtual ZMK device remains active for the Bridges firmware until configurable
+pipeline routing can replace that plumbing.

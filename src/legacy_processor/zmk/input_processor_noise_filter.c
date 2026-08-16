@@ -106,10 +106,10 @@ static void process_frame(const struct device *dev, int32_t x, int32_t y) {
     }
     sample.values[2] = output_x;
     sample.values[3] = output_y;
-    sample.values[4] = data->filter.pending_x;
-    sample.values[5] = data->filter.pending_y;
-    sample.values[6] = MIN(data->filter.sample_count, INT32_MAX);
-    sample.values[7] = MIN(data->filter.squared_energy, INT32_MAX);
+    sample.values[4] = CLAMP(data->filter.strategy.pending_x, INT32_MIN, INT32_MAX);
+    sample.values[5] = CLAMP(data->filter.strategy.pending_y, INT32_MIN, INT32_MAX);
+    sample.values[6] = MIN(data->filter.strategy.sample_count, INT32_MAX);
+    sample.values[7] = MIN(data->filter.strategy.squared_energy, INT32_MAX);
     sample.values[8] = result.phase;
     sample.values[9] = data->settings.enabled;
 #endif

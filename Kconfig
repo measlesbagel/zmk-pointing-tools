@@ -45,6 +45,10 @@ config ZMK_POINTING_TOOLS_PIPELINE
       virtual input device. The initial implementation provides an identity
       cursor pipeline only.
 
+config ZMK_POINTING_TOOLS_MOTION_GATE_CORE
+    bool
+    default y if ZMK_POINTING_TOOLS_PIPELINE || ZMK_POINTING_TOOLS_NOISE_FILTER
+
 config ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     bool
     default y if ZMK_POINTING_TOOLS_PIPELINE || ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER

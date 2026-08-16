@@ -1,8 +1,14 @@
 # Dead-zone and noise filter
 
-The noise filter qualifies complete X/Y vectors independently from scroll axis
-intent, cursor gain, or text-navigation classification. It is disabled unless
-the devicetree node contains `enabled`.
+The legacy noise-filter adapter qualifies complete X/Y vectors independently
+from scroll axis intent, cursor gain, or text-navigation classification. It is
+disabled unless the devicetree node contains `enabled`.
+
+Its count-domain model now delegates to the same unit-independent
+coherent-displacement strategy used by the composable normalized-motion stage.
+The virtual input device, devicetree properties, tuning target, and telemetry
+shape remain transitional so the current Bridges firmware retains replay and
+hardware parity while pipeline routing is completed.
 
 ## Chosen policy
 
