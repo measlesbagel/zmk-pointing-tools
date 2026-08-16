@@ -29,9 +29,10 @@ After intentionally changing processor behavior, inspect the report before updat
 
 ```sh
 node host/replay/cli.js \
-  --noise-runner build/host/zpt_noise_filter_replay \
-  --scroll-runner build/host/zpt_scroll_replay \
-  --text-runner build/host/zpt_text_nav_replay \
+  --noise-pipeline-runner build/host/zpt_noise_pipeline_replay \
+  --scroll-pipeline-runner build/host/zpt_scroll_pipeline_replay \
+  --text-pipeline-runner build/host/zpt_text_nav_pipeline_replay \
+  --cursor-pipeline-runner build/host/zpt_cursor_pipeline_replay \
   --update \
   host/tests/fixtures/*.json
 git diff -- host/tests/fixtures

@@ -12,10 +12,9 @@
  *
  * Distinguishes free, horizontal, and vertical intent from windowed energy
  * accumulation with engage/release hysteresis. The strategy is unit-
- * independent: inputs and the activation distance share the caller's units
- * (sensor counts for legacy adapters, Q16 millimetres for normalized motion
- * stages). The stage wrapper consumes NORMALIZED_MOTION and carries the
- * result as signal annotations.
+ * independent: inputs and the activation distance share the caller's units.
+ * The stage wrapper consumes NORMALIZED_MOTION and carries the result as
+ * signal annotations.
  */
 
 enum zpt_axis_policy {

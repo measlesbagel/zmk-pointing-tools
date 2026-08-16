@@ -2,14 +2,15 @@
 
 The pipeline runtime is the shared C implementation of the architecture in
 [`architecture.md`](architecture.md). Host tests exercise the complete runtime
-without Zephyr. The first firmware adapter uses it for the identity cursor path
-documented in [`zmk-pipeline-boundary.md`](zmk-pipeline-boundary.md).
+without Zephyr, and the firmware adapter exercises it through the composed
+pipelines documented in
+[`zmk-pipeline-boundary.md`](zmk-pipeline-boundary.md).
 
 ## Signals
 
 `signal.h` defines tagged signal domains for raw motion, normalized motion,
-pointer deltas, continuous scroll deltas, discrete scroll steps, and actions.
-Each signal carries source and timing metadata plus reusable annotations.
+pointer deltas, discrete scroll steps, and actions. Each signal carries source
+and timing metadata plus reusable annotations.
 
 Raw motion preserves signed sensor counts. Continuous processed domains use a
 signed 64-bit fixed-point value with 16 fractional bits. One normalized-motion

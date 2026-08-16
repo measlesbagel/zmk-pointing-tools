@@ -2,7 +2,7 @@
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
   "id": "text-cardinal-lock-composed",
-  "description": "Text navigation emits horizontal steps without vertical leakage, then changes axis after idle. (Composed pipeline twin: same trace and expectations as the legacy fixture.)",
+  "description": "Text navigation emits horizontal steps without vertical leakage, then changes axis after idle. Expectations are a behavioral baseline for the composed normalized pipeline.",
   "metadata": {
     "device": "right-trackball",
     "cpi": 700,

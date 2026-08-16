@@ -52,7 +52,7 @@ struct zpt_signal_metadata {
 };
 
 struct zpt_signal_annotations {
-    /* Magnitude in Q16 millimetres per second over the motion path. */
+    /* Per-frame Manhattan speed (|x| + |y|) in Q16 millimetres per second. */
     zpt_fixed_t speed_per_second;
     uint16_t axis_confidence_percent;
     uint8_t axis_intent;

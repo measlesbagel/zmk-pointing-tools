@@ -168,7 +168,7 @@ function renderDiagnostics() {
   elements["state-count"].textContent = `${stateEvents.length.toLocaleString()} state events`;
   elements["state-dropped"].textContent = supported
     ? `${stateStatus.dropped.toLocaleString()} dropped · queue capacity ${stateStatus.queueCapacity || "?"}`
-    : "Requires protocol v5";
+    : "Requires protocol v6";
   if (!supported) {
     elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect processor decisions.</p>';
     return;
