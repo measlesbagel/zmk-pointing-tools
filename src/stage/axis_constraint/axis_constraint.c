@@ -144,7 +144,12 @@ static int axis_constraint_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
         output.metadata.observed_at_ms = stage->deadline_ms;
         output.data.fixed_vector.x = state->undecided_x;
         output.data.fixed_vector.y = state->undecided_y;
+        int64_t folded_x = state->undecided_x;
+        int64_t folded_y = state->undecided_y;
         clear_undecided(state);
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_FLUSHED,
+                         (folded_x > 0 ? folded_x : -folded_x) +
+                             (folded_y > 0 ? folded_y : -folded_y));
         return zpt_stage_emit(context, &output);
     }
     clear_undecided(state);
