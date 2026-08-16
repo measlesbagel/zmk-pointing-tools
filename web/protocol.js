@@ -23,7 +23,7 @@ export const MESSAGE = Object.freeze({
 });
 
 export const PROTOCOL_VERSION = 6;
-export const STATE_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 2;
 
 export const TUNING = Object.freeze({
   ALL_TARGETS: 0xff,
@@ -110,14 +110,26 @@ export function parseStateStatus(payload) {
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   if (payload[0] !== STATE_SCHEMA_VERSION) throw new Error("Unsupported state telemetry schema");
   const count = payload[7];
-  requireBytes(payload, 8, count * 2, "state telemetry target levels");
   const levels = new Map();
-  for (let offset = 8; offset < 8 + count * 2; offset += 2) levels.set(payload[offset], payload[offset + 1]);
+  const labels = new Map();
+  const decoder = new TextDecoder();
+  let offset = 8;
+  for (let index = 0; index < count; index += 1) {
+    requireBytes(payload, offset, 3, "state telemetry target entry");
+    const targetId = payload[offset++];
+    const level = payload[offset++];
+    const labelLength = payload[offset++];
+    requireBytes(payload, offset, labelLength, "state telemetry target label");
+    levels.set(targetId, level);
+    labels.set(targetId, decoder.decode(payload.slice(offset, offset + labelLength)));
+    offset += labelLength;
+  }
   return {
     schemaVersion: payload[0],
     dropped: view.getUint32(1, true),
     queueCapacity: view.getUint16(5, true),
     levels,
+    labels,
   };
 }
 

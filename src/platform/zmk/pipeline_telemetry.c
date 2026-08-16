@@ -120,7 +120,7 @@ static int pipeline_telemetry_init(const struct device *dev) {
         for (size_t stage_index = 0; stage_index < pipeline->stage_count; stage_index++) {
             struct zpt_stage *stage = pipeline->stages[stage_index];
             uint8_t target_id;
-            ret = zpt_state_telemetry_register_target(&target_id);
+            ret = zpt_state_telemetry_register_target(&target_id, stage->stable_id);
             if (ret < 0) {
                 LOG_ERR("Telemetry target table exhausted while observing stage %s of pipeline %u",
                         stage->stable_id, (unsigned int)pipeline_index);

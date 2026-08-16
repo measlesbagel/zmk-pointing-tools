@@ -62,7 +62,8 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_TUNING_BATCH_HEADER_SIZE 2
 #define ZPT_TUNING_BATCH_VALUE_SIZE 5
 #define ZPT_TUNING_MAX_BATCH_VALUES 20
-#define ZPT_STATE_SCHEMA_VERSION 1
+#define ZPT_STATE_SCHEMA_VERSION 2
+#define ZPT_STATE_LABEL_MAX_LENGTH 24
 
 BUILD_ASSERT(ZPT_TUNING_BATCH_HEADER_SIZE +
                      ZPT_TUNING_MAX_BATCH_VALUES * ZPT_TUNING_BATCH_VALUE_SIZE <=
@@ -107,6 +108,7 @@ static atomic_t zpt_last_contact;
 static atomic_t zpt_state_dropped;
 static atomic_t zpt_state_stage_targets;
 static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
+static const char *zpt_state_labels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -118,14 +120,15 @@ enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id) {
     return (enum zpt_state_level)atomic_get(&zpt_state_levels[target_id]);
 }
 
-int zpt_state_telemetry_register_target(uint8_t *target_id) {
-    if (target_id == NULL) {
+int zpt_state_telemetry_register_target(uint8_t *target_id, const char *stable_id) {
+    if (target_id == NULL || stable_id == NULL) {
         return -EINVAL;
     }
     for (size_t index = 0; index < ARRAY_SIZE(zpt_state_levels); index++) {
         if (atomic_get(&zpt_state_levels[index]) == ZPT_STATE_LEVEL_OFF &&
             index >= zpt_tuning_target_count()) {
             *target_id = (uint8_t)index;
+            zpt_state_labels[index] = stable_id;
             atomic_inc(&zpt_state_stage_targets);
             return 0;
         }
@@ -202,7 +205,8 @@ static void zpt_send_state(const struct zpt_state_sample *sample) {
 }
 
 static void zpt_send_state_status(void) {
-    uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS * 2];
+    uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS *
+                            (3 + ZPT_STATE_LABEL_MAX_LENGTH)];
     const size_t target_count =
         MIN(zpt_tuning_target_count() + (size_t)atomic_get(&zpt_state_stage_targets),
             ARRAY_SIZE(zpt_state_levels));
@@ -212,8 +216,17 @@ static void zpt_send_state_status(void) {
     payload[7] = target_count;
     size_t offset = 8;
     for (size_t i = 0; i < target_count; i++) {
+        const struct zpt_tuning_target *target = zpt_tuning_target_get((uint8_t)i);
+        const char *label = target != NULL ? target->label : zpt_state_labels[i];
+        const size_t label_length =
+            label != NULL ? MIN(strlen(label), ZPT_STATE_LABEL_MAX_LENGTH) : 0;
         payload[offset++] = i;
         payload[offset++] = atomic_get(&zpt_state_levels[i]);
+        payload[offset++] = label_length;
+        if (label_length > 0) {
+            memcpy(&payload[offset], label, label_length);
+            offset += label_length;
+        }
     }
     zpt_send_frame(ZPT_RESP_STATE_STATUS, payload, offset);
 }

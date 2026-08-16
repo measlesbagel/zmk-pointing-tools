@@ -202,7 +202,14 @@ target-count:u8
 repeat target-count times:
   target-id:u8
   level:u8
+  label-length:u8
+  label:bytes[label-length]
 ```
+
+Status schema version 2 added the per-target label so hosts can render
+per-stage controls without tuning discovery. Tuning-registered targets report
+their tuning label and pipeline stage targets report their stable id; labels
+are capped at 24 bytes.
 
 State samples use schema version 1:
 
