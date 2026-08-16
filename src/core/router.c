@@ -145,15 +145,6 @@ int zpt_router_deactivate(struct zpt_router *router, uint32_t now_ms, enum zpt_r
     return ret;
 }
 
-void zpt_router_reset(struct zpt_router *router, enum zpt_reset_reason reason) {
-    if (router == NULL || !router->validated) {
-        return;
-    }
-    for (size_t index = 0; index < router->pipeline_count; index++) {
-        zpt_pipeline_reset(router->pipelines[index], reason);
-    }
-}
-
 int zpt_router_push(struct zpt_router *router, const struct zpt_signal *signal,
                     struct zpt_pipeline_result *result) {
     clear_result(result);
