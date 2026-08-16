@@ -10,7 +10,9 @@
  *
  * Converts Q16 millimetre motion into integer-valued Q16 pointer deltas,
  * carrying the fractional remainder between frames so sub-pixel movement
- * accumulates exactly. The units-per-millimetre factor maps millimetres to
+ * accumulates exactly. Each frame clamps to the signed 16-bit HID movement
+ * range; the excess stays in the remainder and is emitted on later frames
+ * rather than dropped. The units-per-millimetre factor maps millimetres to
  * the output device units (sensor counts or display pixels).
  */
 

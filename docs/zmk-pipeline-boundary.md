@@ -54,8 +54,10 @@ compiled CPI. The smoke keymap then composes three pipelines:
 - the text pipeline runs normalization and the text-navigation stage, whose
   action sink invokes bound keymap behaviors for cardinal gestures.
 
-The cursor sink accepts only whole pointer deltas within ZMK's signed 16-bit
-HID movement range. It performs no scaling, clipping, accumulation, or cadence
+The cursor quantizer clamps each frame to the signed 16-bit HID movement
+range the cursor sink accepts; motion beyond the range stays in the
+fractional remainder and is emitted on later frames instead of dropping the
+report. The sink performs no scaling, clipping, accumulation, or cadence
 selection. After validating both axes, it emits `REL_X` followed by a
 synchronized `REL_Y` from the router's virtual input device. The scroll sink
 emits wheel events for discrete steps, and the action sink drives keymap
