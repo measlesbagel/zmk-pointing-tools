@@ -51,9 +51,8 @@ static int scroll_batcher_provider_init(const struct device *dev) {
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
             .stage =                                                                               \
                 {                                                                                  \
-                    /* Integer wheel steps per metre to Q16 steps per millimetre. */               \
-                    .steps_per_millimeter =                                                        \
-                        (zpt_fixed_t)DT_INST_PROP(inst, steps_per_meter) * ZPT_FIXED_ONE / 1000,   \
+                    .steps_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(                 \
+                        DT_INST_PROP(inst, steps_per_meter)),                                      \
                     .report_interval_ms = DT_INST_PROP(inst, report_interval_ms),                  \
                 },                                                                                 \
             .suppression_device =                                                                  \

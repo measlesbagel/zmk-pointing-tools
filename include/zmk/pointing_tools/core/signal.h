@@ -102,3 +102,8 @@ static inline int zpt_signal_kind_valid(enum zpt_signal_kind kind) {
  * macro form keeps static provider configs constant-initializable. */
 #define ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(value)                                                \
     ((((int64_t)(value) * ZPT_FIXED_ONE) + 500) / 1000)
+
+/* Convert an integer units-per-metre sensitivity to Q16 units per
+ * millimetre. The devicetree and fixture surfaces keep the readable
+ * per-metre convention while stages scale millimetre signals directly. */
+#define ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(value) (((zpt_fixed_t)(value) * ZPT_FIXED_ONE) / 1000)

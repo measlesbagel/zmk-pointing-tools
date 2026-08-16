@@ -60,7 +60,7 @@ int main(void) {
         .scale_divisor = scale_divisor,
     };
     fixture.quantizer_config = (struct zpt_cursor_quantizer_config){
-        .units_per_meter = (zpt_fixed_t)units_per_meter * ZPT_FIXED_ONE / 1000,
+        .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(units_per_meter),
     };
     fixture.normalize_stage = (struct zpt_stage){
         .stable_id = "resolution-normalize",

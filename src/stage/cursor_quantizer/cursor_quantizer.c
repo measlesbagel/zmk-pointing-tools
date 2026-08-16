@@ -13,7 +13,7 @@ static int cursor_quantizer_stage_activate(struct zpt_stage *stage, enum zpt_res
         return -EINVAL;
     }
     const struct zpt_cursor_quantizer_config *config = stage->config;
-    return config->units_per_meter <= 0 ? -EINVAL : 0;
+    return config->units_per_millimeter <= 0 ? -EINVAL : 0;
 }
 
 static void cursor_quantizer_stage_reset(struct zpt_stage *stage, enum zpt_reset_reason reason) {
@@ -37,10 +37,10 @@ static int cursor_quantizer_stage_process(struct zpt_stage *stage, const struct 
     struct zpt_cursor_quantizer_state *state = stage->state;
 
     int64_t units_x = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.x, config->units_per_meter),
+        zpt_fixed_multiply(signal->data.fixed_vector.x, config->units_per_millimeter),
         state->remainder_x);
     int64_t units_y = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.y, config->units_per_meter),
+        zpt_fixed_multiply(signal->data.fixed_vector.y, config->units_per_millimeter),
         state->remainder_y);
     int32_t integer_x = zpt_fixed_to_int32(units_x);
     int32_t integer_y = zpt_fixed_to_int32(units_y);
