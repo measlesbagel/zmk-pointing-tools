@@ -5,7 +5,7 @@ import { STATE, TARGET_KIND } from "./protocol.js";
 /* The smoke keymap's pipeline-telemetry stage targets, in registration
  * order: cursor pipeline (normalize, gate, transfer, quantizer), scroll
  * pipeline (normalize, intent, constraint, batcher), text pipeline
- * (normalize, text navigation). */
+ * (normalize, intent, constraint, text navigation). */
 export const SIMULATED_STAGES = [
   { id: 0, label: "resolution-normalize" },
   { id: 1, label: "motion-gate" },
@@ -16,7 +16,9 @@ export const SIMULATED_STAGES = [
   { id: 6, label: "scroll-constraint" },
   { id: 7, label: "scroll-batcher" },
   { id: 8, label: "text-resolution-normalize" },
-  { id: 9, label: "text-nav" },
+  { id: 9, label: "text-axis-intent" },
+  { id: 10, label: "text-constraint" },
+  { id: 11, label: "text-nav" },
 ];
 
 /* A state-status payload shaped like real firmware: no tuning targets,

@@ -5,7 +5,7 @@ import { STATE, TARGET_KIND } from "./protocol.js";
 import { buildSimulatorEvent, buildSimulatorState, SIMULATED_STAGES } from "./simulator-model.js";
 
 test("simulator models the smoke keymap's stage targets only", () => {
-  assert.deepEqual(SIMULATED_STAGES.map(({ id }) => id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(SIMULATED_STAGES.map(({ id }) => id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.deepEqual(SIMULATED_STAGES.map(({ label }) => label), [
     "resolution-normalize",
     "motion-gate",
@@ -16,6 +16,8 @@ test("simulator models the smoke keymap's stage targets only", () => {
     "scroll-constraint",
     "scroll-batcher",
     "text-resolution-normalize",
+    "text-axis-intent",
+    "text-constraint",
     "text-nav",
   ]);
   for (const event of [
