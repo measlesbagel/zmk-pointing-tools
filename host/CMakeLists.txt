@@ -21,6 +21,8 @@ add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/stage/axis_constraint/axis_constraint.c"
   "${ZPT_ROOT}/src/stage/scroll_batcher/scroll_batcher.c"
   "${ZPT_ROOT}/src/stage/text_nav/text_nav.c"
+  "${ZPT_ROOT}/src/stage/cursor_transfer/cursor_transfer.c"
+  "${ZPT_ROOT}/src/stage/cursor_quantizer/cursor_quantizer.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement_stage.c"
   "${ZPT_ROOT}/src/legacy_processor/axis_intent.c"
@@ -54,11 +56,13 @@ zpt_host_executable(router_test tests/router_test.c)
 zpt_host_executable(route_override_test tests/route_override_test.c)
 zpt_host_executable(pipeline_scroll_text_test tests/pipeline_scroll_text_test.c)
 zpt_host_executable(stage_observer_test tests/stage_observer_test.c)
+zpt_host_executable(cursor_pipeline_test tests/cursor_pipeline_test.c)
 zpt_host_executable(source_normalization_test tests/source_normalization_test.c)
 zpt_host_executable(text_nav_test tests/text_nav_test.c)
 zpt_host_executable(zpt_noise_filter_replay runners/noise_filter_replay.c)
 zpt_host_executable(zpt_scroll_replay runners/scroll_replay.c)
 zpt_host_executable(zpt_scroll_pipeline_replay runners/scroll_pipeline_replay.c)
+zpt_host_executable(zpt_cursor_pipeline_replay runners/cursor_pipeline_replay.c)
 zpt_host_executable(zpt_text_nav_replay runners/text_nav_replay.c)
 zpt_host_executable(zpt_text_nav_pipeline_replay runners/text_nav_pipeline_replay.c)
 
@@ -73,6 +77,7 @@ add_test(NAME pipeline_router COMMAND router_test)
 add_test(NAME route_override COMMAND route_override_test)
 add_test(NAME pipeline_scroll_text COMMAND pipeline_scroll_text_test)
 add_test(NAME stage_observer COMMAND stage_observer_test)
+add_test(NAME cursor_pipeline COMMAND cursor_pipeline_test)
 add_test(NAME source_normalization COMMAND source_normalization_test)
 add_test(NAME text_navigation COMMAND text_nav_test)
 
@@ -86,6 +91,7 @@ add_test(
     --noise-runner "$<TARGET_FILE:zpt_noise_filter_replay>"
     --scroll-runner "$<TARGET_FILE:zpt_scroll_replay>"
     --scroll-pipeline-runner "$<TARGET_FILE:zpt_scroll_pipeline_replay>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
     --text-runner "$<TARGET_FILE:zpt_text_nav_replay>"
     --text-pipeline-runner "$<TARGET_FILE:zpt_text_nav_pipeline_replay>"
     ${ZPT_TRACE_FIXTURES}

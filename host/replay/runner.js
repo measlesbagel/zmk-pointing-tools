@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { encodeRunnerInput, validateFixture } from "./fixture.js";
 import {
   compareMetrics,
+  parseCursorMetrics,
   parseNoiseFilterMetrics,
   parseScrollMetrics,
   parseTextMetrics,
@@ -18,7 +19,8 @@ export function replayFixture(path, runners, update = false) {
     ? runners.scroll
     : fixture.processor.kind === "composed-scroll" ? runners.scrollPipeline
     : fixture.processor.kind === "text-navigation" ? runners.text
-    : fixture.processor.kind === "composed-text" ? runners.textPipeline : runners.noise;
+    : fixture.processor.kind === "composed-text" ? runners.textPipeline
+    : fixture.processor.kind === "cursor-pipeline" ? runners.cursorPipeline : runners.noise;
   const result = spawnSync(resolve(runner), [], {
     input: encodeRunnerInput(fixture),
     encoding: "utf8",
@@ -32,7 +34,9 @@ export function replayFixture(path, runners, update = false) {
     ? parseScrollMetrics(result.stdout, fixture)
     : fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text"
       ? parseTextMetrics(result.stdout, fixture)
-      : parseNoiseFilterMetrics(result.stdout, fixture);
+      : fixture.processor.kind === "cursor-pipeline"
+        ? parseCursorMetrics(result.stdout, fixture)
+        : parseNoiseFilterMetrics(result.stdout, fixture);
   if (update) {
     fixture.expect = metrics;
     writeFileSync(path, `${JSON.stringify(fixture, null, 2)}\n`);

@@ -1,0 +1,45 @@
+/* SPDX-License-Identifier: MIT */
+#define DT_DRV_COMPAT measlesbagel_zpt_stage_cursor_transfer
+
+#include <stdint.h>
+
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/sys/util.h>
+
+#include <zmk/pointing_tools/platform/zmk/stage_provider.h>
+#include <zmk/pointing_tools/stage/cursor_transfer.h>
+
+struct zpt_cursor_transfer_provider_config {
+    const char *stable_id;
+    struct zpt_cursor_transfer_config stage;
+};
+
+static int cursor_transfer_provider_init(const struct device *dev) {
+    const struct zpt_cursor_transfer_provider_config *config = dev->config;
+    return zpt_zmk_stage_provider_init(dev, config->stable_id, &zpt_cursor_transfer_stage_api,
+                                       &config->stage, NULL);
+}
+
+#define ZPT_CURSOR_TRANSFER_PROVIDER_DEFINE(inst)                                                  \
+    BUILD_ASSERT(DT_INST_PROP(inst, scale_multiplier) <= UINT16_MAX,                               \
+                 "scale-multiplier must fit in 16 bits");                                          \
+    BUILD_ASSERT(DT_INST_PROP(inst, scale_divisor) > 0 &&                                          \
+                     DT_INST_PROP(inst, scale_divisor) <= UINT16_MAX,                              \
+                 "scale-divisor must fit in 16 bits and be positive");                             \
+    static struct zpt_zmk_stage_provider_data zpt_cursor_transfer_provider_data_##inst;            \
+    static const struct zpt_cursor_transfer_provider_config                                        \
+        zpt_cursor_transfer_provider_config_##inst = {                                             \
+            .stable_id = DT_INST_PROP(inst, stable_id),                                            \
+            .stage =                                                                               \
+                {                                                                                  \
+                    .scale_multiplier = DT_INST_PROP(inst, scale_multiplier),                      \
+                    .scale_divisor = DT_INST_PROP(inst, scale_divisor),                            \
+                },                                                                                 \
+    };                                                                                             \
+    DEVICE_DT_INST_DEFINE(inst, cursor_transfer_provider_init, NULL,                               \
+                          &zpt_cursor_transfer_provider_data_##inst,                               \
+                          &zpt_cursor_transfer_provider_config_##inst, POST_KERNEL,                \
+                          CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &zpt_stage_provider_api);
+
+DT_INST_FOREACH_STATUS_OKAY(ZPT_CURSOR_TRANSFER_PROVIDER_DEFINE)

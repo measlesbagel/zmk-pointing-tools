@@ -111,10 +111,37 @@
         sink = <&zpt_test_action_sink>;
     };
 
+    zpt_test_cursor_transfer: zpt_test_cursor_transfer {
+        compatible = "measlesbagel,zpt-stage-cursor-transfer";
+        stable-id = "cursor-transfer";
+        scale-multiplier = <1>;
+        scale-divisor = <1>;
+    };
+
+    zpt_test_cursor_quantizer: zpt_test_cursor_quantizer {
+        compatible = "measlesbagel,zpt-stage-cursor-quantizer";
+        stable-id = "cursor-quantizer";
+        units-per-meter = <27559>;
+    };
+
+    zpt_test_normalized_cursor_sink: zpt_test_normalized_cursor_sink {
+        compatible = "measlesbagel,zpt-sink-cursor";
+        stable-id = "normalized-cursor";
+    };
+
+    zpt_test_normalized_cursor_pipeline: zpt_test_normalized_cursor_pipeline {
+        compatible = "measlesbagel,zpt-pipeline";
+        stable-id = "test-normalized-cursor";
+        stages = <&zpt_test_resolution_normalize &zpt_test_motion_gate
+                  &zpt_test_cursor_transfer &zpt_test_cursor_quantizer>;
+        sink = <&zpt_test_normalized_cursor_sink>;
+    };
+
     zpt_test_cursor_router: zpt_test_cursor_router {
         compatible = "measlesbagel,zpt-router";
         stable-id = "test-cursor-router";
-        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline
+                     &zpt_test_normalized_cursor_pipeline>;
         default-pipeline = <&zpt_test_cursor_pipeline>;
 
         test-layer-route {
@@ -144,6 +171,13 @@
         #binding-cells = <0>;
         router = <&zpt_test_cursor_router>;
         pipeline = <&zpt_test_text_pipeline>;
+    };
+
+    zpt_test_normalized_cursor_route: zpt_test_normalized_cursor_route {
+        compatible = "measlesbagel,zpt-behavior-route";
+        #binding-cells = <0>;
+        router = <&zpt_test_cursor_router>;
+        pipeline = <&zpt_test_normalized_cursor_pipeline>;
     };
 
     zpt_test_cursor_source: zpt_test_cursor_source {
@@ -306,7 +340,8 @@
 
     zpt_telemetry_pipeline {
         compatible = "measlesbagel,zpt-pipeline-telemetry";
-        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;
+        pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline
+                     &zpt_test_normalized_cursor_pipeline>;
     };
 
     chosen {
@@ -317,7 +352,7 @@
         compatible = "zmk,keymap";
         base {
             bindings = <
-                &zpt_test_cursor_route &zpt_test_scroll_route &zpt_test_text_route &none &none &none   &none &none &none &none &none &none
+                &zpt_test_cursor_route &zpt_test_scroll_route &zpt_test_text_route &zpt_test_normalized_cursor_route &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                                   &none &none &none   &none &none &none

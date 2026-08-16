@@ -34,6 +34,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/stage/scroll_batcher/scroll_batcher.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/text_nav/text_nav.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/cursor_transfer/cursor_transfer.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/stage/cursor_quantizer/cursor_quantizer.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_MOTION_GATE_CORE
     src/stage/motion_gate/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -78,6 +82,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/platform/zmk/stage/scroll_batcher.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/text_nav.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/platform/zmk/stage/cursor_transfer.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/platform/zmk/stage/cursor_quantizer.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE

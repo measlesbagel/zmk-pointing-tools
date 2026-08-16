@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+
+description: Cursor base gain transfer stage over normalized motion
+
+compatible: "measlesbagel,zpt-stage-cursor-transfer"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  scale-multiplier:
+    type: int
+    required: true
+    description: Base gain multiplier applied to Q16 millimetre motion
+
+  scale-divisor:
+    type: int
+    required: true
+    description: Base gain divisor applied to Q16 millimetre motion

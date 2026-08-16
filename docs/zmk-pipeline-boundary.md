@@ -221,7 +221,12 @@ selection is intentionally left for a separate behavior policy.
 
 The smoke firmware wires the output of the existing test noise device through
 the identity processor and into a dedicated output listener. The smoke router
-now owns cursor, scroll, and text pipelines selected by route behaviors: the
+now owns cursor, scroll, text, and normalized-cursor pipelines selected by
+route behaviors. The normalized cursor path composes resolution normalization,
+the motion gate, the cursor transfer gain, and the sub-pixel cursor quantizer,
+terminating at the thin cursor sink; the cursor-identity-roundtrip fixture
+proves the composed path reproduces the count domain within one sub-count
+unit at 700 CPI. The
 scroll pipeline composes the count-domain axis-intent, axis-constraint, and
 scroll-batcher stages with a thin wheel sink and a shared
 `measlesbagel,zpt-keypress-suppression` guard, and the text pipeline composes
