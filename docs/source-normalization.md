@@ -82,15 +82,17 @@ cadence or semantic gain from being applied twice.
 
 ## Current firmware integration
 
-The smoke identity cursor now executes orthogonal orientation before mapping
-raw counts to pointer counts. It also emits complete source metadata, including
-compiled CPI. The resolution-normalization stage is compiled in firmware and
-executed by host pipeline tests, but is not yet inserted into the cursor path:
-a normalized pointer mapper and fractional quantizer must precede the integral
-cursor sink first.
+The smoke keymap executes the normalized compositions end to end. Every
+pipeline starts from resolution normalization: the cursor pipeline feeds the
+coherent-displacement gate, a unit cursor transfer, and the sub-pixel cursor
+quantizer; the scroll pipeline feeds the axis-intent estimator, the
+axis-constraint, and the scroll batcher; and the text pipeline feeds the
+text-navigation stage directly. The compact-side path compiles the same
+normalize, transfer, and quantizer stages against the transported source
+contract without routing live motion through them.
 
-The Bridges configuration is unchanged. Runtime CPI discovery/control,
-calibration recommendations, and cursor mapping remain separate review layers.
-The optional compact transport codec is documented in
-[`compact-split-codec.md`](compact-split-codec.md); its decoder preserves
-source-side sequence and estimated span in this same raw source contract.
+Runtime CPI discovery/control, calibration recommendations, and cursor mapping
+remain separate review layers. The optional compact transport codec is
+documented in [`compact-split-codec.md`](compact-split-codec.md); its decoder
+preserves source-side sequence and estimated span in this same raw source
+contract.
