@@ -53,6 +53,13 @@
         };
     };
 
+    zpt_test_cursor_route: zpt_test_cursor_route {
+        compatible = "measlesbagel,zpt-behavior-route";
+        #binding-cells = <0>;
+        router = <&zpt_test_cursor_router>;
+        pipeline = <&zpt_test_cursor_pipeline>;
+    };
+
     zpt_test_cursor_source: zpt_test_cursor_source {
         compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
@@ -209,7 +216,7 @@
         compatible = "zmk,keymap";
         base {
             bindings = <
-                &none &none &none &none &none &none   &none &none &none &none &none &none
+                &zpt_test_cursor_route &none &none &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                 &none &none &none &none &none &none   &none &none &none &none &none &none
                                   &none &none &none   &none &none &none

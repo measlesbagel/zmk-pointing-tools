@@ -3,6 +3,7 @@ DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
 DT_COMPAT_ZPT_NOISE_FILTER := measlesbagel,zpt-input-processor-noise-filter
 DT_COMPAT_ZPT_ROUTER := measlesbagel,zpt-router
+DT_COMPAT_ZPT_ROUTE_BEHAVIOR := measlesbagel,zpt-behavior-route
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
 DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
 DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
@@ -50,6 +51,20 @@ config ZMK_POINTING_TOOLS_PIPELINE
 config ZMK_POINTING_TOOLS_MOTION_GATE_CORE
     bool
     default y if ZMK_POINTING_TOOLS_PIPELINE || ZMK_POINTING_TOOLS_NOISE_FILTER
+
+config ZMK_POINTING_TOOLS_ROUTE_BEHAVIOR
+    bool "Momentary pointing pipeline route behavior"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_ROUTE_BEHAVIOR))
+    depends on ZMK_POINTING_TOOLS_PIPELINE
+    help
+      Select a named router pipeline while a behavior binding is held, then
+      restore the newest remaining explicit override or the active layer route.
+
+config ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES
+    int "Maximum simultaneous explicit routes per pointing router"
+    default 4
+    range 1 16
+    depends on ZMK_POINTING_TOOLS_PIPELINE
 
 config ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     bool

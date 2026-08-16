@@ -1,9 +1,9 @@
 # Composable motion pipeline architecture
 
 Status: accepted direction; the shared runtime, source/router ZMK boundary,
-ordered devicetree stage references, explicit sink selection, and layer routing
-are implemented. Explicit behavior routing and observer discovery remain
-provisional.
+ordered devicetree stage references, explicit sink selection, layer routing,
+and momentary behavior overrides are implemented. Persistent route policy and
+observer discovery remain provisional.
 
 This document defines the intended architecture for issue
 [#36](https://github.com/measlesbagel/zmk-pointing-tools/issues/36). It is a

@@ -35,9 +35,20 @@ struct zpt_router_config {
     size_t layer_route_count;
 };
 
+struct zpt_explicit_route_override {
+    uint32_t position;
+    size_t pipeline_index;
+    uint64_t order;
+    bool active;
+};
+
 struct zpt_router_data {
     struct zpt_pipeline **pipelines;
     size_t *layer_route_pipeline_indices;
+    struct k_mutex route_lock;
+    struct zpt_explicit_route_override
+        overrides[CONFIG_ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES];
+    uint64_t next_override_order;
     struct zpt_router router;
     struct zpt_zmk_router_executor executor;
 };
@@ -77,16 +88,99 @@ static int selected_layer_pipeline(const struct device *dev, size_t *pipeline_in
     return 0;
 }
 
-static int router_refresh_layer_route(const struct device *dev, uint32_t now_ms) {
+static bool selected_override_pipeline(const struct zpt_router_data *data, size_t *pipeline_index) {
+    const struct zpt_explicit_route_override *selected = NULL;
+    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
+        const struct zpt_explicit_route_override *candidate = &data->overrides[index];
+        if (candidate->active && (selected == NULL || candidate->order > selected->order)) {
+            selected = candidate;
+        }
+    }
+    if (selected == NULL) {
+        return false;
+    }
+    *pipeline_index = selected->pipeline_index;
+    return true;
+}
+
+static int select_desired_route_locked(const struct device *dev, uint32_t now_ms) {
     struct zpt_router_data *data = dev->data;
     size_t pipeline_index;
-    int ret = selected_layer_pipeline(dev, &pipeline_index);
+    int ret = selected_override_pipeline(data, &pipeline_index)
+                  ? 0
+                  : selected_layer_pipeline(dev, &pipeline_index);
     if (ret < 0) {
         return ret;
     }
 
     struct zpt_pipeline_result result;
     return zpt_zmk_router_executor_select(&data->executor, pipeline_index, now_ms, &result);
+}
+
+static int unlock_route(struct zpt_router_data *data, int result) {
+    int unlock_result = k_mutex_unlock(&data->route_lock);
+    return result < 0 ? result : unlock_result;
+}
+
+static int router_refresh_layer_route(const struct device *dev, uint32_t now_ms) {
+    struct zpt_router_data *data = dev->data;
+    int ret = k_mutex_lock(&data->route_lock, K_FOREVER);
+    if (ret < 0) {
+        return ret;
+    }
+    return unlock_route(data, select_desired_route_locked(dev, now_ms));
+}
+
+static int router_override_press(const struct device *dev, const struct device *pipeline_device,
+                                 uint32_t position, uint32_t now_ms) {
+    const struct zpt_router_config *config = dev->config;
+    struct zpt_router_data *data = dev->data;
+    size_t pipeline_index;
+    int ret = pipeline_device_index(config, pipeline_device, &pipeline_index);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = k_mutex_lock(&data->route_lock, K_FOREVER);
+    if (ret < 0) {
+        return ret;
+    }
+
+    struct zpt_explicit_route_override *available = NULL;
+    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
+        struct zpt_explicit_route_override *candidate = &data->overrides[index];
+        if (candidate->active && candidate->position == position) {
+            available = candidate;
+            break;
+        }
+        if (!candidate->active && available == NULL) {
+            available = candidate;
+        }
+    }
+    if (available == NULL) {
+        return unlock_route(data, -ENOSPC);
+    }
+    *available = (struct zpt_explicit_route_override){
+        .position = position,
+        .pipeline_index = pipeline_index,
+        .order = ++data->next_override_order,
+        .active = true,
+    };
+    return unlock_route(data, select_desired_route_locked(dev, now_ms));
+}
+
+static int router_override_release(const struct device *dev, uint32_t position, uint32_t now_ms) {
+    struct zpt_router_data *data = dev->data;
+    int ret = k_mutex_lock(&data->route_lock, K_FOREVER);
+    if (ret < 0) {
+        return ret;
+    }
+    for (size_t index = 0; index < ARRAY_SIZE(data->overrides); index++) {
+        if (data->overrides[index].active && data->overrides[index].position == position) {
+            data->overrides[index].active = false;
+            return unlock_route(data, select_desired_route_locked(dev, now_ms));
+        }
+    }
+    return unlock_route(data, 0);
 }
 
 static int router_push(const struct device *dev, const struct zpt_signal *signal,
@@ -98,6 +192,8 @@ static int router_push(const struct device *dev, const struct zpt_signal *signal
 static DEVICE_API(zpt_router, router_api) = {
     .push = router_push,
     .refresh_layer_route = router_refresh_layer_route,
+    .override_press = router_override_press,
+    .override_release = router_override_release,
 };
 
 static int validate_router_device(const struct device *dev) {
@@ -132,9 +228,34 @@ int zpt_zmk_router_refresh_layer_route(const struct device *dev, uint32_t now_ms
     return api->refresh_layer_route == NULL ? -ENOSYS : api->refresh_layer_route(dev, now_ms);
 }
 
+int zpt_zmk_router_override_press(const struct device *dev, const struct device *pipeline_device,
+                                  uint32_t position, uint32_t now_ms) {
+    if (pipeline_device == NULL) {
+        return -EINVAL;
+    }
+    int ret = validate_router_device(dev);
+    if (ret < 0) {
+        return ret;
+    }
+    const struct zpt_router_driver_api *api = DEVICE_API_GET(zpt_router, dev);
+    return api->override_press == NULL
+               ? -ENOSYS
+               : api->override_press(dev, pipeline_device, position, now_ms);
+}
+
+int zpt_zmk_router_override_release(const struct device *dev, uint32_t position, uint32_t now_ms) {
+    int ret = validate_router_device(dev);
+    if (ret < 0) {
+        return ret;
+    }
+    const struct zpt_router_driver_api *api = DEVICE_API_GET(zpt_router, dev);
+    return api->override_release == NULL ? -ENOSYS : api->override_release(dev, position, now_ms);
+}
+
 static int router_init(const struct device *dev) {
     const struct zpt_router_config *config = dev->config;
     struct zpt_router_data *data = dev->data;
+    k_mutex_init(&data->route_lock);
 
     for (size_t index = 0; index < config->pipeline_count; index++) {
         int ret = zpt_zmk_pipeline_provider_prepare(config->pipeline_devices[index], dev,

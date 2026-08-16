@@ -92,7 +92,15 @@ synchronized `REL_Y` from the router's virtual input device.
          *     layers = <3>;
          *     pipeline = <&my_precision_pipeline>;
          * };
-         */
+        */
+    };
+
+    my_precision_route: my_precision_route {
+        compatible = "measlesbagel,zpt-behavior-route";
+        #binding-cells = <0>;
+        router = <&my_router>;
+        /* Replace with another pipeline owned by my_router. */
+        pipeline = <&my_cursor_pipeline>;
     };
 
     my_cursor_source: my_cursor_source {
@@ -187,10 +195,25 @@ highest in the current ZMK layer order wins. If two route nodes name the same
 layer, declaration order breaks the tie. If no configured route is active, the
 default pipeline is selected.
 
+## Explicit behavior routing
+
+A `measlesbagel,zpt-behavior-route` node binds one router and one of its owned
+pipelines. Using that zero-parameter behavior in a keymap selects the pipeline
+on press and removes the override on release. Explicit overrides take
+precedence over layer routes.
+
+Overrides are tracked by key position rather than as one global flag. If
+several route behaviors overlap, the most recently pressed wins; releasing it
+reveals the next newest held override, then the current layer route. The fixed
+per-router capacity defaults to four and is configured by
+`CONFIG_ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES`. Persistent route
+selection is intentionally left for a separate behavior policy.
+
 ## Current limits
 
 - Only the cursor sink provider is implemented so far; sink selection is explicit.
-- Explicit behavior-driven route overrides are not implemented yet.
+- Persistent explicit route selection is not implemented yet; the current
+  behavior is momentary.
 - Resolution normalization is available but not yet connected to a pointer
   mapper and quantizer in this identity cursor.
 - There are no calibration, tuning, or observer stages.

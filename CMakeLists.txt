@@ -39,6 +39,8 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/platform/zmk/router_executor.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/router.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_ROUTE_BEHAVIOR
+    src/platform/zmk/behavior_route.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/orientation.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
