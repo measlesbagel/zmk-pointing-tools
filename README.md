@@ -67,6 +67,8 @@ replay.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
+See [`docs/build.md`](docs/build.md) for host checks and the firmware smoke
+build.
 
 ## Local tuner
 

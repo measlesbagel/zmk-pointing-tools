@@ -1,5 +1,15 @@
-{ pkgs, ... }:
+{ pkgs, inputs, lib, ... }:
 
+let
+  zephyr-nix = inputs.zephyr-nix.packages.${pkgs.stdenv.system};
+
+  # Some Zephyr host tools dynamically load libatomic on Linux. Keep the
+  # workaround narrow instead of exposing the compiler's entire library tree.
+  libatomic = pkgs.runCommand "zmk-libatomic" { } ''
+    mkdir -p "$out/lib"
+    cp -d ${pkgs.stdenv.cc.cc.lib}/lib/libatomic.so* "$out/lib/"
+  '';
+in
 {
   packages = [
     pkgs.nodejs
@@ -44,6 +54,27 @@
       exec = "git diff --check";
       after = [ "javascript:check" "javascript:test" "host:test" ];
       before = [ "devenv:enterTest" ];
+    };
+  };
+
+  # Opt-in Zephyr toolchain for the repository-owned west workspace in
+  # config/west.yml. Only activated with `devenv shell -P firmware`; the
+  # default shell stays host-only and never downloads the SDK.
+  profiles."firmware" = {
+    module = {
+      packages = [
+        zephyr-nix.pythonEnv
+        (zephyr-nix.sdk-0_16.override {
+          targets = [ "arm-zephyr-eabi" ];
+        })
+        pkgs.dtc
+      ];
+
+      env = {
+        PYTHONPATH = "${zephyr-nix.pythonEnv}/${zephyr-nix.pythonEnv.sitePackages}";
+      } // lib.optionalAttrs pkgs.stdenv.isLinux {
+        LD_LIBRARY_PATH = "${libatomic}/lib";
+      };
     };
   };
 }

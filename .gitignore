@@ -1,4 +1,10 @@
+# Local west workspace (created by `west init -l config && west update`)
 .west/
+/zephyr/
+/zmk/
+/modules/
+/optional/
+
 build/
 node_modules/
 .devenv/
