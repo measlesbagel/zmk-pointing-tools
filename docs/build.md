@@ -24,8 +24,9 @@ downloads the Zephyr SDK.
 The repository owns its ZMK build workspace. `config/west.yml` pins ZMK by
 revision and imports its Zephyr revision, and the tracked `zephyr/module.yml`
 adds this repository itself to the build as a Zephyr module. The CI workflow
-provisions this exact layout: it runs `west init -l config`, `west update`,
-`west zephyr-export`, then the same `west build` command below.
+delegates to `urob/zmk-actions`, which initializes an isolated copy of this
+same layout with the equivalent west commands and builds it with the same
+west arguments; the steps below are the local equivalent.
 
 One-time workspace setup after cloning:
 

@@ -738,10 +738,11 @@ parity.
 6. **Motion gate migration:** the coherent-displacement strategy and its raw
    and normalized stage variants are implemented with parity fixtures.
 7. **Scroll migration:** the composed scroll pipeline (axis intent, axis
-   constraint, scroll batcher, thin wheel sink) replays every legacy trace
-   byte-identically.
-8. **Text migration:** the composed text pipeline (text-navigation stage,
-   action sink) replays the legacy trace byte-identically.
+   constraint, scroll batcher, thin wheel sink) replays the legacy traces
+   against behavioral baselines re-derived in physical units.
+8. **Text migration:** the composed text pipeline (shared estimator, axis
+   constraint, text-navigation mapper, action sink) replays the legacy trace
+   against a behavioral baseline re-derived in physical units.
 9. **Cleanup:** the superseded semantic processors, trace processor, legacy
    tuning targets, and transitional dependencies are removed; every fixture
    runs through the composed stages.
