@@ -1,9 +1,10 @@
 # Minimal ZMK pipeline boundary
 
-The first firmware integration of the composable runtime remains deliberately
-an identity cursor path. Its ordered stages are now independently allocated
-devicetree providers, validating explicit composition without changing motion
-semantics.
+The firmware integration exercises the complete composable runtime through
+the smoke keymap in `config/`. It instantiates cursor, scroll, and text
+pipelines over the canonical normalized-motion domain, validating explicit
+devicetree composition, lifecycle ownership, and stage telemetry without
+duplicating motion semantics inside the adapter.
 
 ```text
 physical or proxied input events
@@ -12,17 +13,16 @@ physical or proxied input events
   -> complete raw X/Y frame with source metadata
   -> layer-aware router
   -> selected named pipeline
-  -> orthogonal mounting orientation
-  -> raw-pointer identity stage
-  -> thin cursor sink
+       resolution-normalize -> semantic stages -> transfer/quantizer stages
+  -> owned sink
   -> virtual input device
   -> dedicated ZMK output listener
-  -> HID cursor report
+  -> HID cursor / wheel / action report
 ```
 
 ## Ingress choice
 
-The standard `zmk,input-listener` processor chain is the initial ingress host.
+The standard `zmk,input-listener` processor chain is the ingress host.
 This retains normal ZMK source selection and allows local and central-side
 split proxy devices to use the same adapter. A separate global Zephyr input
 callback would compete with the standard listener and would need to recreate
@@ -40,33 +40,60 @@ It remains attached once while the separate router observes route changes
 explicitly; using ZMK's per-event overrides as a router would reintroduce
 incomplete-frame and missing-lifecycle problems.
 
-## Identity stage and cursor sink
+## Composed pipelines and sinks
 
-An orthogonal orientation stage first applies the configured axis swap and
-inversions. The identity stage then maps those signed raw counts to whole Q16
-pointer deltas without gain, filtering, or rounding. It exists to prove exact
-cursor parity and will be bypassed by the normalized cursor composition once a
-pointer mapper and quantizer are available.
+Every pipeline starts from the resolution-normalization stage, which converts
+signed sensor counts to Q16 fixed-point millimetres using the frame's
+compiled CPI. The smoke keymap then composes three pipelines:
+
+- the cursor pipeline runs normalization, the coherent-displacement motion
+  gate, a unit cursor transfer, and the sub-pixel cursor quantizer;
+- the scroll pipeline runs normalization, the axis-intent estimator, the
+  axis-constraint, and the steps-per-metre scroll batcher, with a shared
+  `measlesbagel,zpt-keypress-suppression` guard on the stateful stages;
+- the text pipeline runs normalization and the text-navigation stage, whose
+  action sink invokes bound keymap behaviors for cardinal gestures.
 
 The cursor sink accepts only whole pointer deltas within ZMK's signed 16-bit
 HID movement range. It performs no scaling, clipping, accumulation, or cadence
 selection. After validating both axes, it emits `REL_X` followed by a
-synchronized `REL_Y` from the router's virtual input device.
+synchronized `REL_Y` from the router's virtual input device. The scroll sink
+emits wheel events for discrete steps, and the action sink drives keymap
+behaviors with the configured tap duration.
 
 ## Devicetree wiring
 
+The complete composition lives in `config/corne.keymap`. In condensed form,
+the cursor path is:
+
 ```dts
 / {
-    my_orientation: my_orientation {
-        compatible = "measlesbagel,zpt-stage-orientation";
-        stable-id = "orientation";
-        invert-x;
-        invert-y;
+    my_resolution_normalize: my_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "resolution-normalize";
     };
 
-    my_pointer_identity: my_pointer_identity {
-        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
-        stable-id = "raw-pointer-identity";
+    my_motion_gate: my_motion_gate {
+        compatible = "measlesbagel,zpt-stage-coherent-displacement";
+        stable-id = "motion-gate";
+        enabled;
+        activation-distance-micrometers = <220>;
+        coherence-percent = <60>;
+        qualification-timeout-ms = <160>;
+        idle-timeout-ms = <120>;
+    };
+
+    my_cursor_transfer: my_cursor_transfer {
+        compatible = "measlesbagel,zpt-stage-cursor-transfer";
+        stable-id = "cursor-transfer";
+        scale-multiplier = <1>;
+        scale-divisor = <1>;
+    };
+
+    my_cursor_quantizer: my_cursor_quantizer {
+        compatible = "measlesbagel,zpt-stage-cursor-quantizer";
+        stable-id = "cursor-quantizer";
+        units-per-meter = <27559>;
     };
 
     my_cursor_sink: my_cursor_sink {
@@ -77,7 +104,8 @@ synchronized `REL_Y` from the router's virtual input device.
     my_cursor_pipeline: my_cursor_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "right-cursor";
-        stages = <&my_orientation &my_pointer_identity>;
+        stages = <&my_resolution_normalize &my_motion_gate
+                  &my_cursor_transfer &my_cursor_quantizer>;
         sink = <&my_cursor_sink>;
     };
 
@@ -126,9 +154,9 @@ synchronized `REL_Y` from the router's virtual input device.
 
 `source-id` and each `stable-id` are metadata identities, not boot-time
 registration indexes. `resolution-cpi` must match the sensor's
-compiled/current setting.
-The orientation stage's `swap-xy`, `invert-x`, and `invert-y` properties
-describe physical mounting. Each stage phandle identifies one allocated
+compiled/current setting. An orthogonal `measlesbagel,zpt-stage-orientation`
+stage may precede normalization to apply the configured axis swap and
+inversions for physical mounting. Each stage phandle identifies one allocated
 instance and cannot be shared by multiple pipelines. Keep stable identities
 unchanged when later profiles and telemetry address pipeline boundaries.
 
@@ -152,17 +180,23 @@ The current devicetree-backed providers are:
 | Compatible | Input → output | State |
 | --- | --- | --- |
 | `measlesbagel,zpt-stage-orientation` | raw motion → raw motion | stateless |
-| `measlesbagel,zpt-stage-raw-pointer-identity` | raw motion → pointer delta | stateless |
 | `measlesbagel,zpt-stage-resolution-normalize` | raw motion → normalized motion | stateless |
 | `measlesbagel,zpt-stage-coherent-displacement` | normalized motion → normalized motion | stateful |
+| `measlesbagel,zpt-stage-axis-intent` | normalized motion → normalized motion | stateful |
+| `measlesbagel,zpt-stage-axis-constraint` | normalized motion → normalized motion | stateful |
+| `measlesbagel,zpt-stage-cursor-transfer` | normalized motion → normalized motion | stateless |
+| `measlesbagel,zpt-stage-cursor-quantizer` | normalized motion → pointer delta | stateful |
+| `measlesbagel,zpt-stage-scroll-batcher` | normalized motion → scroll steps | stateful |
+| `measlesbagel,zpt-stage-text-nav` | normalized motion → action | stateful |
 | `measlesbagel,zpt-sink-cursor` | pointer delta → synchronized ZMK events | stateless |
+| `measlesbagel,zpt-sink-scroll` | scroll steps → synchronized ZMK events | stateless |
+| `measlesbagel,zpt-sink-action` | action → bound keymap behaviors | stateless |
 
 The pipeline validates the expanded signal types and rejects an incompatible
-order at initialization. The coherent-displacement provider expresses its
-activation threshold as integer micrometres and converts it to the canonical
-Q16 millimetre domain. It cannot yet terminate at the fixed cursor sink without
-a normalized-motion pointer mapper, so it is present for composition and
-deadline integration rather than the identity smoke path.
+order at initialization. Distance and threshold providers express their
+activation thresholds as integer micrometres and convert them to the canonical
+Q16 millimetre domain; transfer stages express gain as a rational multiplier
+or as integer units per metre.
 
 `dispatch-budget` defaults to 16 stage/sink visits per push, flush, or
 deactivation. Increase it only when a deliberately fan-out-capable stage needs
@@ -209,6 +243,17 @@ per-router capacity defaults to four and is configured by
 `CONFIG_ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES`. Persistent route
 selection is intentionally left for a separate behavior policy.
 
+## Stage telemetry
+
+A `measlesbagel,zpt-pipeline-telemetry` device observes every stage of its
+configured pipelines: each stage receives a state-telemetry target id and
+reports suppression, discard, qualification, intent, flush, and action
+decisions as state samples keyed by the stage's stable identity, while the
+lookup API locates a stage by stable id without coupling the algorithms to
+telemetry. The state-status response enumerates the observed stage targets
+with their stable identities so the web tuner can render per-stage controls
+without tuning discovery.
+
 ## Current limits
 
 - Sink providers cover cursor, scroll, and text actions; sink selection is
@@ -219,29 +264,10 @@ selection is intentionally left for a separate behavior policy.
   transfer-stage work.
 - The Bridges configuration is not migrated by this slice.
 
-The smoke firmware instantiates the composed cursor, scroll, and text
-pipelines and their providers; the smoke router owns them selected by route
-behaviors. The cursor path composes resolution normalization, the motion
-gate, the cursor transfer gain, and the sub-pixel cursor quantizer,
-terminating at the thin cursor sink; the cursor-identity-roundtrip fixture
-proves the composed path reproduces the count domain within one sub-count
-unit at 700 CPI. The scroll pipeline composes normalization, the
-axis-intent estimator, the axis-constraint, and the steps-per-metre scroll
-batcher with a thin wheel sink and a shared
-`measlesbagel,zpt-keypress-suppression` guard, and the text pipeline composes
-normalization and the text-navigation stage with an action sink invoking
-bound keymap behaviors.
-
-A `measlesbagel,zpt-pipeline-telemetry` device observes every stage of its
-configured pipelines: each stage receives a state-telemetry target id and
-reports suppression, discard, qualification, intent, flush, and action
-decisions as state samples keyed by the stage's stable identity, while the
-lookup API locates a stage by stable id without coupling the algorithms to
-telemetry.
-
-Host tests cover frame reconstruction, saturation evidence, identity mapping,
-metadata preservation, and overflow rejection. The `composed-noise`,
-`composed-scroll`, `composed-text`, and `cursor-pipeline` fixture kinds replay
-traces through the composed stages and must produce byte-identical runner
-output against the expectations captured from the superseded processors,
-proving migration parity before their removal.
+Host tests cover frame reconstruction, saturation evidence, metadata
+preservation, and overflow rejection. The `composed-noise`, `composed-scroll`,
+`composed-text`, and `cursor-pipeline` fixture kinds replay traces through the
+same production stage code the firmware compiles. Their expectations are
+behavioral baselines captured in physical units, not byte-identical parity
+with any predecessor: when stage behavior changes deliberately, the replay
+report is the review surface and expectations are re-derived from it.
