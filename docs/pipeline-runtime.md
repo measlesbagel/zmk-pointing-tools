@@ -109,6 +109,14 @@ pipeline that has already been deactivated.
 
 ## Current stages
 
+Stages carry an optional observer slot that receives generic decision
+events (suppression, discard, qualification, intent changes, flushes, and
+actions) without coupling algorithms to any telemetry transport. A ZMK
+pipeline-telemetry device attaches observers to every stage of its configured
+pipelines, allocates a state-telemetry target per stage, and reports decisions
+as state samples; stages remain discoverable by stable id through the lookup
+API.
+
 Most host tests intentionally use local fake stages and sinks rather than
 shipping premature production algorithms. They prove:
 

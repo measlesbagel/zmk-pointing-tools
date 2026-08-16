@@ -30,6 +30,28 @@ enum zpt_stage_flag {
     ZPT_STAGE_STATEFUL = UINT32_C(1) << 0,
 };
 
+/* Generic stage decisions observable without coupling algorithms to a
+ * telemetry transport. Values carry the relevant quantity: the new intent
+ * for INTENT_CHANGED, the total emitted steps for FLUSHED, the action id
+ * for ACTION, and zero for the remaining events. */
+enum zpt_stage_event {
+    ZPT_STAGE_EVENT_SUPPRESSED = 0,
+    ZPT_STAGE_EVENT_DISCARDED,
+    ZPT_STAGE_EVENT_QUALIFIED,
+    ZPT_STAGE_EVENT_INTENT_CHANGED,
+    ZPT_STAGE_EVENT_FLUSHED,
+    ZPT_STAGE_EVENT_ACTION,
+};
+
+typedef void (*zpt_stage_observer_callback_t)(const struct zpt_stage *stage,
+                                              enum zpt_stage_event event, int64_t value,
+                                              uint32_t now_ms, void *user_data);
+
+struct zpt_stage_observer {
+    zpt_stage_observer_callback_t callback;
+    void *user_data;
+};
+
 struct zpt_pipeline_result {
     uint32_t dispatches;
     uint32_t outputs;
@@ -67,6 +89,7 @@ struct zpt_stage {
     struct zpt_pipeline *owner;
     uint32_t deadline_ms;
     bool deadline_pending;
+    struct zpt_stage_observer observer;
 };
 
 typedef int (*zpt_sink_emit_t)(struct zpt_sink *sink, const struct zpt_signal *signal);
@@ -119,6 +142,10 @@ bool zpt_pipeline_next_deadline(const struct zpt_pipeline *pipeline, uint32_t no
                                 uint32_t *deadline_ms);
 
 int zpt_stage_emit(struct zpt_stage_context *context, const struct zpt_signal *signal);
+
+/* Notify the stage's observer of a decision; a no-op without an observer. */
+void zpt_stage_notify(struct zpt_stage_context *context, enum zpt_stage_event event,
+                      int64_t value);
 int zpt_stage_schedule_flush(struct zpt_stage_context *context, uint32_t deadline_ms);
 void zpt_stage_cancel_flush(struct zpt_stage_context *context);
 uint32_t zpt_stage_now_ms(const struct zpt_stage_context *context);

@@ -70,6 +70,7 @@ struct zpt_axis_intent_stage_state {
     struct zpt_axis_intent_state estimator;
     uint32_t last_frame_ms;
     bool have_last_frame;
+    uint8_t last_notified_intent;
 };
 
 /* Normalized-motion variant carrying Q16 millimetre activation distances. */

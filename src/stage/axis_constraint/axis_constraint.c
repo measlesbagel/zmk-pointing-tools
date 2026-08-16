@@ -73,7 +73,10 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     bool suppressed = suppression_active(config, signal, now);
     if (suppressed) {
         clear_undecided(state);
-        return 0;
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
+        /* Pass the frame through so downstream stages observe the same
+         * suppression and clear their own buffered state. */
+        return zpt_stage_emit(context, signal);
     }
     if (!state->have_last_frame ||
         (config->idle_timeout_ms != 0U && elapsed >= config->idle_timeout_ms)) {
@@ -148,6 +151,7 @@ static int axis_constraint_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
         return zpt_stage_emit(context, &output);
     }
     clear_undecided(state);
+    zpt_stage_notify(context, ZPT_STAGE_EVENT_DISCARDED, 0);
     return 0;
 }
 

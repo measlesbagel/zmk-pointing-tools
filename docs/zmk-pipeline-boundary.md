@@ -227,6 +227,13 @@ scroll-batcher stages with a thin wheel sink and a shared
 `measlesbagel,zpt-keypress-suppression` guard, and the text pipeline composes
 the text-navigation stage with an action sink invoking bound keymap behaviors.
 
+A `measlesbagel,zpt-pipeline-telemetry` device observes every stage of its
+configured pipelines: each stage receives a state-telemetry target id and
+reports suppression, discard, qualification, intent, flush, and action
+decisions as state samples keyed by the stage's stable identity, while the
+lookup API locates a stage by stable id without coupling the algorithms to
+telemetry.
+
 Host tests cover frame reconstruction, saturation evidence, identity mapping,
 metadata preservation, and overflow rejection. Every legacy scroll and text
 fixture has a composed-pipeline twin (`composed-scroll` and `composed-text`

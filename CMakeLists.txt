@@ -54,6 +54,8 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/keypress_suppression.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
+    src/platform/zmk/pipeline_telemetry.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/pipeline_provider.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/router_executor.c)

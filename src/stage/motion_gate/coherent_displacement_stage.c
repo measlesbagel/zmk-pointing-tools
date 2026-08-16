@@ -94,6 +94,11 @@ static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_sign
         result.reset_for_timeout || !had_pending) {
         clear_pending_evidence(state);
     }
+    if (result.suppressed) {
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
+    } else if (result.discarded && (result.reset_for_idle || result.reset_for_timeout)) {
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_DISCARDED, 0);
+    }
 
     if (result.phase == ZPT_MOTION_GATE_PENDING || result.qualified) {
         accumulate_pending_evidence(state, signal);
@@ -118,6 +123,7 @@ static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_sign
             output.metadata.flags |= ZPT_SIGNAL_FLAG_COALESCED;
         }
         clear_pending_evidence(state);
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_QUALIFIED, 0);
         return zpt_stage_emit(context, &output);
     }
     if (result.phase == ZPT_MOTION_GATE_ACTIVE) {

@@ -68,8 +68,21 @@ static int pipeline_provider_prepare(const struct device *dev, const struct devi
     return 0;
 }
 
+static int pipeline_provider_get(const struct device *dev, struct zpt_pipeline **pipeline) {
+    if (pipeline == NULL) {
+        return -EINVAL;
+    }
+    struct zpt_pipeline_provider_data *data = dev->data;
+    if (data->pipeline.stable_id == NULL) {
+        return -EAGAIN;
+    }
+    *pipeline = &data->pipeline;
+    return 0;
+}
+
 static DEVICE_API(zpt_pipeline_provider, pipeline_provider_api) = {
     .prepare = pipeline_provider_prepare,
+    .get = pipeline_provider_get,
 };
 
 int zpt_zmk_pipeline_provider_prepare(const struct device *dev, const struct device *output_device,
@@ -85,6 +98,20 @@ int zpt_zmk_pipeline_provider_prepare(const struct device *dev, const struct dev
     }
     const struct zpt_pipeline_provider_driver_api *api = DEVICE_API_GET(zpt_pipeline_provider, dev);
     return api->prepare == NULL ? -ENOSYS : api->prepare(dev, output_device, pipeline);
+}
+
+int zpt_zmk_pipeline_provider_get(const struct device *dev, struct zpt_pipeline **pipeline) {
+    if (pipeline == NULL) {
+        return -EINVAL;
+    }
+    if (!device_is_ready(dev)) {
+        return -ENODEV;
+    }
+    if (!DEVICE_API_IS(zpt_pipeline_provider, dev)) {
+        return -EPROTOTYPE;
+    }
+    const struct zpt_pipeline_provider_driver_api *api = DEVICE_API_GET(zpt_pipeline_provider, dev);
+    return api->get == NULL ? -ENOSYS : api->get(dev, pipeline);
 }
 
 #define ZPT_PIPELINE_STAGE_DEVICE(node_id, prop, index)                                            \

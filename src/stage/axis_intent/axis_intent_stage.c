@@ -47,6 +47,8 @@ static void axis_intent_stage_reset(struct zpt_stage *stage, enum zpt_reset_reas
     struct zpt_axis_intent_stage_state *state = stage->state;
     zpt_axis_intent_reset(&state->estimator);
     state->have_last_frame = false;
+    /* Sentinel: the first processed frame always reports its intent. */
+    state->last_notified_intent = UINT8_MAX;
 }
 
 static bool suppression_active(const struct zpt_axis_intent_stage_config *config,
@@ -71,12 +73,17 @@ static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_s
     if (suppressed || !state->have_last_frame ||
         (config->idle_timeout_ms != 0U && elapsed >= config->idle_timeout_ms)) {
         zpt_axis_intent_reset(&state->estimator);
+        if (!suppressed && state->last_notified_intent != ZPT_AXIS_INTENT_UNDECIDED) {
+            zpt_stage_notify(context, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_UNDECIDED);
+        }
+        state->last_notified_intent = ZPT_AXIS_INTENT_UNDECIDED;
     }
     state->last_frame_ms = now;
     state->have_last_frame = true;
     if (suppressed) {
         /* Pass the frame through unchanged so downstream stages observe the
          * same suppression and clear their own buffered state. */
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
         return zpt_stage_emit(context, signal);
     }
 
@@ -93,6 +100,10 @@ static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_s
                                                      ? zpt_axis_intent_confidence(&state->estimator)
                                                      : 100U;
     output.annotations.speed_per_second = axis_speed_per_second(x, y, elapsed);
+    if (state->last_notified_intent != (uint8_t)intent) {
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_INTENT_CHANGED, (int64_t)intent);
+        state->last_notified_intent = (uint8_t)intent;
+    }
     return zpt_stage_emit(context, &output);
 }
 
