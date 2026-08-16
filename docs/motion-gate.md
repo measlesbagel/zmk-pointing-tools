@@ -73,9 +73,8 @@ settings update.
 
 ## Current migration status
 
-The pure strategy, normalized pipeline stage, external suppression contract,
-deadline behavior, and host tests are implemented. The existing
-`legacy_processor/noise_filter` now delegates its count-domain decisions to the
-same strategy, preserving all existing replay fixtures and tuning behavior. Its
-virtual ZMK device remains active for the Bridges firmware until configurable
-pipeline routing can replace that plumbing.
+The pure strategy, raw and normalized pipeline stages, external suppression
+contract, deadline behavior, and host tests are implemented. The count-domain
+fixtures replay through the composed raw gate stage and must produce
+byte-identical output, proving the migration that removed the monolithic
+noise-filter processor.

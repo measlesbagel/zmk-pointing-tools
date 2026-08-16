@@ -1,7 +1,7 @@
 {
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
-  "id": "left-split-transport",
+  "id": "left-split-transport-composed",
   "description": "Coalesced 16 ms split frames retain fractional distance with the left-device gain.",
   "metadata": {
     "device": "left-trackball",
@@ -11,7 +11,7 @@
     "provenance": "Anonymized shape of the historical slow-left-trackball capture"
   },
   "processor": {
-    "kind": "adaptive-scroll",
+    "kind": "composed-scroll",
     "policy": "adaptive",
     "settings": {
       "scaleMultiplier": 7,

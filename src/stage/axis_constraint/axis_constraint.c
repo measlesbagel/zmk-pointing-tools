@@ -48,11 +48,13 @@ static void axis_constraint_stage_reset(struct zpt_stage *stage, enum zpt_reset_
 static void schedule_undecided_expiry(struct zpt_axis_constraint_state *state,
                                       const struct zpt_axis_constraint_config *config,
                                       struct zpt_stage_context *context, uint32_t now) {
-    if (config->idle_timeout_ms == 0U) {
+    uint32_t interval =
+        config->fold_interval_ms != 0U ? config->fold_interval_ms : config->idle_timeout_ms;
+    if (interval == 0U) {
         return;
     }
     if (state->have_undecided) {
-        zpt_stage_schedule_flush(context, now + config->idle_timeout_ms);
+        zpt_stage_schedule_flush(context, now + interval);
     } else {
         zpt_stage_cancel_flush(context);
     }

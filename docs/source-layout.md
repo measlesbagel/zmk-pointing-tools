@@ -14,7 +14,6 @@ placeholder directories.
 | `platform/zmk/` | ZMK and Zephyr integration around reusable source, pipeline, stage, and sink code |
 | `observer/` | Non-mutating trace and semantic-state observation contracts |
 | `service/` | Cross-cutting runtime services such as discovery, tuning, and telemetry transport |
-| `legacy_processor/` | Current monolithic processor models and ZMK adapters retained until composed replacements reach parity |
 
 Public headers under `include/zmk/pointing_tools/` mirror these roles. Platform
 integration without a public contract remains private under `src/platform/`.
@@ -47,14 +46,6 @@ Top-level `strategy/` and `policy/` directories are intentionally avoided: they
 would separate an algorithm from the contract and lifecycle that give it
 meaning.
 
-## Transitional processors
-
-Files under `legacy_processor/` remain supported by the current Bridges
-firmware. “Legacy” describes their pre-pipeline architecture, not an unused or
-unmaintained status. Their host replay tests remain authoritative until each
-capability is migrated and the old implementation can be deleted.
-
-New reusable capabilities should not be added to a monolithic processor merely
-for convenience. Generic behavior belongs in a source component or stage, with
-the existing processor changed only when necessary to preserve current
-firmware during migration.
+New reusable capabilities belong in a source component or stage; the
+superseded monolithic processors were removed once their composed
+replacements reached replay parity.

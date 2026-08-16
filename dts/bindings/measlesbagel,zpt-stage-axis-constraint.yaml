@@ -15,6 +15,10 @@ properties:
     type: int
     description: Gap after which buffered undecided motion is folded or discarded
 
+  fold-interval-ms:
+    type: int
+    description: Report cadence at which buffered undecided motion is folded or discarded; absent uses idle-timeout-ms
+
   suppression:
     type: phandle
     description: Keypress suppression policy clearing buffered motion while active

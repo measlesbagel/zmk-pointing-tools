@@ -89,6 +89,7 @@ int main(void) {
 
     fixture.constraint_config.discard_unclassified = discard != 0;
     fixture.constraint_config.idle_timeout_ms = fixture.intent_config.idle_timeout_ms;
+    fixture.constraint_config.fold_interval_ms = fixture.batcher_config.report_interval_ms;
     fixture.intent_config.policy = (enum zpt_axis_policy)policy_value;
     fixture.intent_config.settings.activation_distance = activation_distance;
 

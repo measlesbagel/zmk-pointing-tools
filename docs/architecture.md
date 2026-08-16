@@ -734,15 +734,16 @@ parity.
    encoder/decoder with diagnostics. The reusable codec and initial ZMK
    endpoints are implemented; Bridges migration remains gated on composed
    scroll parity.
-6. **Motion gate migration:** the coherent-displacement strategy and normalized
-   stage are implemented, and the legacy adapter reuses the same strategy.
-   Remove its independent virtual-device plumbing only after firmware routing
-   reaches parity.
-7. **Scroll migration:** compose intent, constraint, transfer, quantizer,
-   batcher, and thin scroll sink with parity fixtures.
-8. **Text migration:** compose intent, text quantization, action mapping, and
-   thin action sink with parity fixtures.
-9. **Cleanup:** remove superseded processors and transitional dependencies.
+6. **Motion gate migration:** the coherent-displacement strategy and its raw
+   and normalized stage variants are implemented with parity fixtures.
+7. **Scroll migration:** the composed scroll pipeline (axis intent, axis
+   constraint, scroll batcher, thin wheel sink) replays every legacy trace
+   byte-identically.
+8. **Text migration:** the composed text pipeline (text-navigation stage,
+   action sink) replays the legacy trace byte-identically.
+9. **Cleanup:** the superseded semantic processors, trace processor, legacy
+   tuning targets, and transitional dependencies are removed; every fixture
+   runs through the composed stages.
 10. **New algorithms:** evaluate adaptive smoothing and cursor acceleration
     only on the established architecture.
 

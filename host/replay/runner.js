@@ -20,7 +20,8 @@ export function replayFixture(path, runners, update = false) {
     : fixture.processor.kind === "composed-scroll" ? runners.scrollPipeline
     : fixture.processor.kind === "text-navigation" ? runners.text
     : fixture.processor.kind === "composed-text" ? runners.textPipeline
-    : fixture.processor.kind === "cursor-pipeline" ? runners.cursorPipeline : runners.noise;
+    : fixture.processor.kind === "cursor-pipeline" ? runners.cursorPipeline
+    : fixture.processor.kind === "composed-noise" ? runners.noisePipeline : runners.noise;
   const result = spawnSync(resolve(runner), [], {
     input: encodeRunnerInput(fixture),
     encoding: "utf8",

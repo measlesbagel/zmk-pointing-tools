@@ -1,7 +1,7 @@
 {
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
-  "id": "typing-keypress-guard",
+  "id": "typing-keypress-guard-composed",
   "description": "One-to-four-count typing vibration is rejected while intentional motion after the guard survives.",
   "metadata": {
     "device": "left-trackball",
@@ -11,7 +11,7 @@
     "provenance": "Curated from normal typing and moving-keyboard hardware captures"
   },
   "processor": {
-    "kind": "adaptive-scroll",
+    "kind": "composed-scroll",
     "policy": "adaptive",
     "settings": {
       "scaleMultiplier": 7,

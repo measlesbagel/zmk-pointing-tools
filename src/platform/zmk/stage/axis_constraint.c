@@ -51,6 +51,7 @@ static int axis_constraint_provider_init(const struct device *dev) {
                 {                                                                                  \
                     .discard_unclassified = DT_INST_PROP_OR(inst, discard_unclassified, false),    \
                     .idle_timeout_ms = DT_INST_PROP_OR(inst, idle_timeout_ms, 0),                  \
+                    .fold_interval_ms = DT_INST_PROP_OR(inst, fold_interval_ms, 0),                \
                 },                                                                                 \
             .suppression_device =                                                                  \
                 COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, suppression),                              \

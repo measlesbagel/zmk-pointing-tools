@@ -16,7 +16,8 @@ export function validateFixture(fixture, path = "fixture") {
     throw new Error(`${path}: expected ${FIXTURE_SCHEMA} v${FIXTURE_VERSION}`);
   }
   if (!fixture.id || !["adaptive-scroll", "text-navigation", "noise-filter",
-    "composed-scroll", "composed-text", "cursor-pipeline"].includes(fixture.processor?.kind)) {
+    "composed-scroll", "composed-text", "composed-noise",
+    "cursor-pipeline"].includes(fixture.processor?.kind)) {
     throw new Error(`${path}: id and a supported processor are required`);
   }
 
@@ -40,6 +41,19 @@ export function validateFixture(fixture, path = "fixture") {
     for (const key of ["horizontalThreshold", "verticalThreshold", "idleTimeoutMs",
       "activationDistance", "engageRatioPercent"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+  } else if (fixture.processor.kind === "composed-noise") {
+    if (typeof settings?.enabled !== "boolean") {
+      throw new Error(`${path}: settings.enabled must be boolean`);
+    }
+    for (const key of ["activationDistance", "qualificationTimeoutMs", "idleTimeoutMs"]) {
+      requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+    requireInteger(settings?.coherencePercent, `${path}: settings.coherencePercent`, 0);
+    requireInteger(settings?.suppressAfterKeypressMs,
+      `${path}: settings.suppressAfterKeypressMs`, 0);
+    if (settings.coherencePercent > 100) {
+      throw new Error(`${path}: settings.coherencePercent must not exceed 100`);
     }
   } else {
     if (typeof settings?.enabled !== "boolean") {
