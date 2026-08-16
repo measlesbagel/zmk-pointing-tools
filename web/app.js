@@ -19,6 +19,7 @@ import {
   parseTuningTargetMetadata,
   parseTuningTargets,
 } from "./protocol.js";
+import { buildSimulatorEvent, buildSimulatorState } from "./simulator-model.js";
 import {
   createTuningProfile,
   prepareProfileImport,
@@ -111,7 +112,7 @@ function renderTuning() {
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
   if (!tuningTargets.size) {
-    elements.tuning.innerHTML = '<p class="muted">Connect current firmware to discover tunable processors.</p>';
+    elements.tuning.innerHTML = '<p class="muted">No tunable targets yet; runtime stage tuning is reserved for a later milestone.</p>';
     return;
   }
 
@@ -170,7 +171,7 @@ function renderDiagnostics() {
     ? `${stateStatus.dropped.toLocaleString()} dropped · queue capacity ${stateStatus.queueCapacity || "?"}`
     : "Requires protocol v6";
   if (!supported) {
-    elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect processor decisions.</p>';
+    elements.diagnostics.innerHTML = '<p class="muted">Connect current firmware to inspect stage decisions.</p>';
     return;
   }
 
@@ -453,35 +454,34 @@ function startSimulator() {
     return;
   }
   setDescription({ version: PROTOCOL_VERSION });
-  setTuningTargets([{ id: 0, stableId: "simulated-scroll", kind: 1, label: "Simulated adaptive scroll", devicetreePath: "/simulated_scroll", parameters: [
-    { id: 6, key: "activation-distance", devicetreeProperty: "activation-distance", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 16, current: 16, label: "Activation distance", unit: "counts", description: "Accumulated motion required before adaptive axis classification." },
-    { id: 9, key: "suppress-after-keypress-ms", devicetreeProperty: "suppress-after-keypress-ms", type: TUNING.INTEGER, minimum: 0, maximum: 500, step: 1, compiled: 40, current: 40, label: "Physical keypress guard", unit: "ms", description: "Ignores movement briefly after a physical key press to reject typing vibration." },
-    { id: 10, key: "discard-unclassified", devicetreeProperty: "discard-unclassified", type: TUNING.BOOLEAN, minimum: 0, maximum: 1, step: 1, compiled: 0, current: 0, label: "Discard unclassified motion", unit: "", description: "Drops motion that ends before adaptive classification." },
-  ] }, { id: 1, stableId: "simulated-text-navigation", kind: 2, label: "Simulated text navigation", devicetreePath: "/simulated_text_navigation", parameters: [
-    { id: 1, key: "horizontal-threshold", devicetreeProperty: "horizontal-threshold", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 25, current: 25, label: "Horizontal step distance", unit: "counts", description: "Horizontal movement required for one left or right key tap." },
-    { id: 2, key: "vertical-threshold", devicetreeProperty: "vertical-threshold", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 50, current: 50, label: "Vertical step distance", unit: "counts", description: "Vertical movement required for one up or down key tap." },
-    { id: 3, key: "activation-distance", devicetreeProperty: "activation-distance", type: TUNING.INTEGER, minimum: 1, maximum: 10000, step: 1, compiled: 12, current: 12, label: "Activation distance", unit: "counts", description: "Accumulated movement required before choosing the gesture's locked axis." },
-    { id: 4, key: "engage-ratio-percent", devicetreeProperty: "engage-ratio-percent", type: TUNING.INTEGER, minimum: 101, maximum: 1000, step: 1, compiled: 150, current: 150, label: "Axis engage ratio", unit: "%", description: "Dominant-to-minor movement ratio required to choose an axis." },
-    { id: 5, key: "idle-timeout-ms", devicetreeProperty: "idle-timeout-ms", type: TUNING.INTEGER, minimum: 10, maximum: 2000, step: 1, compiled: 120, current: 120, label: "Gesture idle timeout", unit: "ms", description: "The motion-free gap that ends the current gesture." },
-  ] }], false);
-  setStateStatus({
-    schemaVersion: 2,
-    dropped: 0,
-    queueCapacity: 64,
-    levels: new Map([[0, STATE.OFF], [1, STATE.OFF]]),
-    labels: new Map([[0, "Simulated adaptive scroll"], [1, "Simulated text navigation"]]),
-  });
+  tuningTargets = new Map();
+  renderTuning();
+  setStateStatus(buildSimulatorState());
+  let sequence = 0;
   let tick = 0;
   simulator = setInterval(() => {
-    const raw = { x: Math.round(4 * Math.cos(tick / 14) + Math.random() * 2 - 1), y: Math.round(4 * Math.sin(tick / 14) + Math.random() * 2 - 1) };
-    const level = stateStatus.levels.get(0) ?? STATE.OFF;
-    if (level === STATE.VERBOSE || (level === STATE.DECISIONS && tick % 20 === 0)) {
-      const intent = Math.abs(raw.x) >= Math.abs(raw.y) ? 2 : 3;
-      addStateEvent({ targetId: 0, targetKind: 4, event: STATE.EVENT_FRAME,
-        intent: tick % 20 === 0 ? intent : 0,
-        flags: tick % 20 === 0 ? STATE.FLAG_INTENT_CHANGED : 0,
-        timestamp: tick * 8, sequence: tick + 2,
-        values: [STAGE_EVENT_INTENT_CHANGED, intent, 0, 0, 0, 0, 0, 0, 0, 0] });
+    const emit = (targetId, event, flags, values) => {
+      const level = stateStatus.levels.get(targetId) ?? STATE.OFF;
+      if (level === STATE.OFF) return;
+      sequence += 1;
+      addStateEvent(buildSimulatorEvent(targetId, event, flags, tick * 8, sequence, values));
+    };
+    if (tick % 24 === 0) {
+      emit(1, STATE.EVENT_FRAME, STATE.FLAG_QUALIFIED, [STAGE_EVENT_LABELS.indexOf("qualified"), 0]);
+    }
+    if (tick % 120 === 60) {
+      emit(1, STATE.EVENT_FRAME, STATE.FLAG_DISCARDED, [STAGE_EVENT_LABELS.indexOf("discarded"), 0]);
+    }
+    const intent = tick % 80 < 40 ? 2 : 3;
+    if (tick % 40 === 0) {
+      emit(5, STATE.EVENT_FRAME, STATE.FLAG_INTENT_CHANGED,
+        [STAGE_EVENT_INTENT_CHANGED, intent]);
+    }
+    if (tick % 90 === 30) {
+      emit(6, STATE.EVENT_FRAME, STATE.FLAG_SUPPRESSED, [STAGE_EVENT_LABELS.indexOf("suppressed"), 0]);
+    }
+    if (tick % 24 === 12) {
+      emit(7, STATE.EVENT_FLUSH, STATE.FLAG_OUTPUT, [STAGE_EVENT_LABELS.indexOf("flushed"), 3 + (tick % 4)]);
     }
     tick += 1;
   }, 8);
