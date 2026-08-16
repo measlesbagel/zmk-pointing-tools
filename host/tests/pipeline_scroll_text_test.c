@@ -1,0 +1,262 @@
+/* SPDX-License-Identifier: MIT */
+
+#include <assert.h>
+#include <errno.h>
+#include <stdio.h>
+
+#include <zmk/pointing_tools/core/pipeline.h>
+#include <zmk/pointing_tools/policy/suppression.h>
+#include <zmk/pointing_tools/stage/axis_constraint.h>
+#include <zmk/pointing_tools/stage/axis_intent.h>
+#include <zmk/pointing_tools/stage/scroll_batcher.h>
+#include <zmk/pointing_tools/stage/text_nav.h>
+
+struct capture_state {
+    struct zpt_signal signal;
+    uint32_t outputs;
+};
+
+static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
+    struct capture_state *capture = sink->state;
+    capture->signal = *signal;
+    capture->outputs++;
+    return 0;
+}
+
+static const struct zpt_sink_api capture_api = {
+    .type_id = "capture",
+    .accepted_kinds =
+        ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_SCROLL_STEPS) | ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_ACTION),
+    .emit = capture_emit,
+};
+
+struct suppression_state {
+    bool active;
+};
+
+static bool suppression_active(void *context, const struct zpt_signal *signal, uint32_t now_ms) {
+    (void)signal;
+    (void)now_ms;
+    return ((struct suppression_state *)context)->active;
+}
+
+struct scroll_fixture {
+    struct suppression_state suppression_state;
+    struct zpt_suppression_policy suppression;
+    struct zpt_axis_intent_stage_config intent_config;
+    struct zpt_axis_intent_stage_state intent_state;
+    struct zpt_axis_constraint_config constraint_config;
+    struct zpt_axis_constraint_state constraint_state;
+    struct zpt_scroll_batcher_config batcher_config;
+    struct zpt_scroll_batcher_state batcher_state;
+    struct zpt_stage intent_stage;
+    struct zpt_stage constraint_stage;
+    struct zpt_stage batcher_stage;
+    struct zpt_stage *stages[3];
+    struct capture_state capture;
+    struct zpt_sink sink;
+    struct zpt_pipeline pipeline;
+};
+
+static void scroll_fixture_init(struct scroll_fixture *fixture) {
+    *fixture = (struct scroll_fixture){0};
+    fixture->suppression = (struct zpt_suppression_policy){
+        .is_suppressed = suppression_active,
+        .context = &fixture->suppression_state,
+    };
+    fixture->intent_config = (struct zpt_axis_intent_stage_config){
+        .settings =
+            {
+                .engage_ratio_percent = 300,
+                .release_ratio_percent = 180,
+                .activation_distance = 16,
+                .window_ms = 64,
+            },
+        .policy = ZPT_AXIS_POLICY_ADAPTIVE,
+        .idle_timeout_ms = 120,
+        .suppression = &fixture->suppression,
+    };
+    fixture->constraint_config = (struct zpt_axis_constraint_config){
+        .discard_unclassified = false,
+        .idle_timeout_ms = 120,
+        .suppression = &fixture->suppression,
+    };
+    fixture->batcher_config = (struct zpt_scroll_batcher_config){
+        .scale_multiplier = 1,
+        .scale_divisor = 8,
+        .report_interval_ms = 16,
+        .suppression = &fixture->suppression,
+    };
+    fixture->intent_stage = (struct zpt_stage){
+        .stable_id = "axis-intent",
+        .api = &zpt_axis_intent_raw_stage_api,
+        .config = &fixture->intent_config,
+        .state = &fixture->intent_state,
+    };
+    fixture->constraint_stage = (struct zpt_stage){
+        .stable_id = "axis-constraint",
+        .api = &zpt_axis_constraint_stage_api,
+        .config = &fixture->constraint_config,
+        .state = &fixture->constraint_state,
+    };
+    fixture->batcher_stage = (struct zpt_stage){
+        .stable_id = "scroll-batcher",
+        .api = &zpt_scroll_batcher_stage_api,
+        .config = &fixture->batcher_config,
+        .state = &fixture->batcher_state,
+    };
+    fixture->stages[0] = &fixture->intent_stage;
+    fixture->stages[1] = &fixture->constraint_stage;
+    fixture->stages[2] = &fixture->batcher_stage;
+    fixture->sink = (struct zpt_sink){
+        .stable_id = "capture",
+        .api = &capture_api,
+        .state = &fixture->capture,
+    };
+    fixture->pipeline = (struct zpt_pipeline){
+        .stable_id = "scroll-test",
+        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .stages = fixture->stages,
+        .stage_count = 3,
+        .sink = &fixture->sink,
+        .dispatch_budget = 8,
+    };
+    assert(zpt_pipeline_validate(&fixture->pipeline) == 0);
+    assert(zpt_pipeline_activate(&fixture->pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+}
+
+static struct zpt_signal raw_signal(uint32_t timestamp, int32_t x, int32_t y) {
+    return (struct zpt_signal){
+        .kind = ZPT_SIGNAL_RAW_MOTION,
+        .metadata = {.observed_at_ms = timestamp},
+        .data.raw_motion = {.x_counts = x, .y_counts = y},
+    };
+}
+
+static int push_raw(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
+                    uint32_t timestamp, int32_t x, int32_t y) {
+    struct zpt_signal signal = raw_signal(timestamp, x, y);
+    return zpt_pipeline_push(pipeline, &signal, result);
+}
+
+static void test_suppression_clears_buffers_and_keeps_remainder(void) {
+    struct scroll_fixture fixture;
+    scroll_fixture_init(&fixture);
+
+    struct zpt_pipeline_result result;
+    assert(push_raw(&fixture.pipeline, &result, 0, 10, 1) == 0);
+    assert(push_raw(&fixture.pipeline, &result, 8, 10, 1) == 0);
+    assert(fixture.batcher_state.pending_x == 20);
+    assert(fixture.constraint_state.have_undecided == false);
+
+    /* A flush produces one step and a remainder, then suppression clears the
+     * pending motion while the remainder survives. */
+    assert(zpt_pipeline_flush(&fixture.pipeline, 16, &result) == 0);
+    assert(fixture.capture.outputs == 1);
+    assert(fixture.capture.signal.kind == ZPT_SIGNAL_SCROLL_STEPS);
+    assert(fixture.capture.signal.data.steps.x == 2);
+    assert(fixture.batcher_state.remainder_x == 4);
+
+    fixture.suppression_state.active = true;
+    assert(push_raw(&fixture.pipeline, &result, 20, 10, 0) == 0);
+    assert(fixture.batcher_state.pending_x == 0);
+    assert(fixture.batcher_state.remainder_x == 4);
+    assert(fixture.intent_state.estimator.horizontal_energy == 0);
+}
+
+static void test_discard_unclassified_clears_undecided_on_expiry(void) {
+    struct scroll_fixture fixture;
+    scroll_fixture_init(&fixture);
+    fixture.constraint_config.discard_unclassified = true;
+
+    struct zpt_pipeline_result result;
+    assert(push_raw(&fixture.pipeline, &result, 0, 3, 3) == 0);
+    assert(fixture.constraint_state.have_undecided);
+    assert(push_raw(&fixture.pipeline, &result, 8, 3, 3) == 0);
+    assert(fixture.constraint_state.undecided_x == 6);
+
+    /* Idle expiry folds or discards the undecided motion. */
+    uint32_t deadline;
+    assert(zpt_pipeline_next_deadline(&fixture.pipeline, 128, &deadline));
+    assert(zpt_pipeline_flush(&fixture.pipeline, 128, &result) == 0);
+    assert(!fixture.constraint_state.have_undecided);
+    /* Discarded: nothing reached the batcher. */
+    assert(fixture.batcher_state.pending_x == 0);
+    assert(fixture.capture.outputs == 0);
+}
+
+static void test_discard_off_folds_undecided_on_expiry(void) {
+    struct scroll_fixture fixture;
+    scroll_fixture_init(&fixture);
+
+    struct zpt_pipeline_result result;
+    assert(push_raw(&fixture.pipeline, &result, 0, 3, 3) == 0);
+    assert(push_raw(&fixture.pipeline, &result, 8, 3, 3) == 0);
+
+    uint32_t deadline;
+    assert(zpt_pipeline_next_deadline(&fixture.pipeline, 128, &deadline));
+    assert(zpt_pipeline_flush(&fixture.pipeline, 128, &result) == 0);
+    /* Folded as free motion into the batcher; the batcher's own due flush
+     * scaled it to zero steps and kept the fractional remainder. */
+    assert(fixture.batcher_state.pending_x == 0);
+    assert(fixture.batcher_state.remainder_x == 6);
+    assert(fixture.batcher_state.pending_y == 0);
+    assert(fixture.batcher_state.remainder_y == 6);
+}
+
+static void test_text_nav_emits_actions_and_resets_on_idle(void) {
+    struct zpt_text_nav_config config = {
+        .horizontal_threshold = 75,
+        .vertical_threshold = 75,
+        .idle_timeout_ms = 40,
+        .activation_distance = 35,
+        .engage_ratio_percent = 150,
+    };
+    struct zpt_text_nav_state state = {0};
+    struct zpt_stage stage = {
+        .stable_id = "text-nav",
+        .api = &zpt_text_nav_stage_api,
+        .config = &config,
+        .state = &state,
+    };
+    struct zpt_stage *stages[1] = {&stage};
+    struct capture_state capture = {0};
+    struct zpt_sink sink = {
+        .stable_id = "capture",
+        .api = &capture_api,
+        .state = &capture,
+    };
+    struct zpt_pipeline pipeline = {
+        .stable_id = "text-test",
+        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .stages = stages,
+        .stage_count = 1,
+        .sink = &sink,
+        .dispatch_budget = 4,
+    };
+    assert(zpt_pipeline_validate(&pipeline) == 0);
+    assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+
+    struct zpt_pipeline_result result;
+    assert(push_raw(&pipeline, &result, 0, 20, 3) == 0);
+    assert(push_raw(&pipeline, &result, 8, 25, -2) == 0);
+    assert(push_raw(&pipeline, &result, 16, 30, 4) == 0);
+    assert(capture.outputs == 1);
+    assert(capture.signal.kind == ZPT_SIGNAL_ACTION);
+    assert(capture.signal.data.action.id == ZPT_TEXT_NAV_RIGHT);
+
+    /* Idle gap resets the gesture accumulator. */
+    assert(push_raw(&pipeline, &result, 80, 3, -40) == 0);
+    assert(push_raw(&pipeline, &result, 88, -2, -35) == 0);
+    assert(capture.outputs == 2);
+    assert(capture.signal.data.action.id == ZPT_TEXT_NAV_UP);
+}
+
+int main(void) {
+    test_suppression_clears_buffers_and_keeps_remainder();
+    test_discard_unclassified_clears_undecided_on_expiry();
+    test_discard_off_folds_undecided_on_expiry();
+    test_text_nav_emits_actions_and_resets_on_idle();
+    puts("scroll and text pipeline tests passed");
+    return 0;
+}

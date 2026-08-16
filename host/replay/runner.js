@@ -16,7 +16,9 @@ export function replayFixture(path, runners, update = false) {
   const fixture = validateFixture(JSON.parse(readFileSync(path, "utf8")), path);
   const runner = fixture.processor.kind === "adaptive-scroll"
     ? runners.scroll
-    : fixture.processor.kind === "text-navigation" ? runners.text : runners.noise;
+    : fixture.processor.kind === "composed-scroll" ? runners.scrollPipeline
+    : fixture.processor.kind === "text-navigation" ? runners.text
+    : fixture.processor.kind === "composed-text" ? runners.textPipeline : runners.noise;
   const result = spawnSync(resolve(runner), [], {
     input: encodeRunnerInput(fixture),
     encoding: "utf8",
@@ -25,9 +27,10 @@ export function replayFixture(path, runners, update = false) {
     throw new Error(`${fixture.id}: runner failed: ${result.stderr.trim()}`);
   }
 
-  const metrics = fixture.processor.kind === "adaptive-scroll"
+  const metrics = fixture.processor.kind === "adaptive-scroll" ||
+    fixture.processor.kind === "composed-scroll"
     ? parseScrollMetrics(result.stdout, fixture)
-    : fixture.processor.kind === "text-navigation"
+    : fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text"
       ? parseTextMetrics(result.stdout, fixture)
       : parseNoiseFilterMetrics(result.stdout, fixture);
   if (update) {

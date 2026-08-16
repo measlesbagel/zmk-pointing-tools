@@ -45,7 +45,7 @@ static bool suppression_active(void *context, const struct zpt_signal *signal, u
 
 struct gate_fixture {
     struct suppression_context suppression_context;
-    struct zpt_motion_gate_suppression_policy suppression;
+    struct zpt_suppression_policy suppression;
     struct zpt_coherent_displacement_stage_config config;
     struct zpt_coherent_displacement_stage_state state;
     struct zpt_stage stage;
@@ -57,7 +57,7 @@ struct gate_fixture {
 
 static void gate_fixture_init(struct gate_fixture *fixture, bool enabled, int64_t activation) {
     *fixture = (struct gate_fixture){0};
-    fixture->suppression = (struct zpt_motion_gate_suppression_policy){
+    fixture->suppression = (struct zpt_suppression_policy){
         .is_suppressed = suppression_active,
         .context = &fixture->suppression_context,
     };

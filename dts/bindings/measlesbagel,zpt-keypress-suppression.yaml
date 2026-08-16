@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+
+description: Shared keypress suppression policy for composed pointing pipelines
+
+compatible: "measlesbagel,zpt-keypress-suppression"
+
+properties:
+  suppress-after-keypress-ms:
+    type: int
+    required: true
+    description: Suppression window after any physical keypress

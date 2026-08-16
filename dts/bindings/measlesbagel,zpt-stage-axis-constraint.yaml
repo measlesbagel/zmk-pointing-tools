@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+
+description: Axis-constraint stage applying the intent annotation over raw motion
+
+compatible: "measlesbagel,zpt-stage-axis-constraint"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  discard-unclassified:
+    type: boolean
+    description: Discard buffered undecided motion on flush instead of folding it as free
+
+  idle-timeout-ms:
+    type: int
+    description: Gap after which buffered undecided motion is folded or discarded
+
+  suppression:
+    type: phandle
+    description: Keypress suppression policy clearing buffered motion while active

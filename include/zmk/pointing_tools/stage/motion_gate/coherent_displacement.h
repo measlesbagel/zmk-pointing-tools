@@ -56,7 +56,7 @@ zpt_coherent_displacement_expire(struct zpt_coherent_displacement_state *state,
 
 struct zpt_coherent_displacement_stage_config {
     struct zpt_coherent_displacement_settings settings;
-    const struct zpt_motion_gate_suppression_policy *suppression;
+    const struct zpt_suppression_policy *suppression;
 };
 
 struct zpt_coherent_displacement_stage_state {

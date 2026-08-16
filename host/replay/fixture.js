@@ -15,12 +15,13 @@ export function validateFixture(fixture, path = "fixture") {
   if (fixture.schema !== FIXTURE_SCHEMA || fixture.version !== FIXTURE_VERSION) {
     throw new Error(`${path}: expected ${FIXTURE_SCHEMA} v${FIXTURE_VERSION}`);
   }
-  if (!fixture.id || !["adaptive-scroll", "text-navigation", "noise-filter"].includes(fixture.processor?.kind)) {
+  if (!fixture.id || !["adaptive-scroll", "text-navigation", "noise-filter",
+    "composed-scroll", "composed-text"].includes(fixture.processor?.kind)) {
     throw new Error(`${path}: id and a supported processor are required`);
   }
 
   const settings = fixture.processor.settings;
-  if (fixture.processor.kind === "adaptive-scroll") {
+  if (fixture.processor.kind === "adaptive-scroll" || fixture.processor.kind === "composed-scroll") {
     for (const key of ["scaleMultiplier", "scaleDivisor", "reportIntervalMs", "idleTimeoutMs",
       "suppressAfterKeypressMs", "engageRatioPercent", "releaseRatioPercent",
       "activationDistance", "intentWindowMs"]) {
@@ -31,7 +32,7 @@ export function validateFixture(fixture, path = "fixture") {
       throw new Error(`${path}: discardUnclassified must be boolean`);
     }
     if (!(fixture.processor.policy in POLICIES)) throw new Error(`${path}: unknown axis policy`);
-  } else if (fixture.processor.kind === "text-navigation") {
+  } else if (fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text") {
     for (const key of ["horizontalThreshold", "verticalThreshold", "idleTimeoutMs",
       "activationDistance", "engageRatioPercent"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
@@ -77,13 +78,14 @@ export function validateFixture(fixture, path = "fixture") {
 
 export function encodeRunnerInput(fixture) {
   const settings = fixture.processor.settings;
-  const configuration = fixture.processor.kind === "adaptive-scroll"
+  const configuration = fixture.processor.kind === "adaptive-scroll" ||
+    fixture.processor.kind === "composed-scroll"
     ? ["C", settings.scaleMultiplier, settings.scaleDivisor, settings.reportIntervalMs,
       settings.idleTimeoutMs, settings.suppressAfterKeypressMs,
       Number(settings.discardUnclassified), settings.engageRatioPercent,
       settings.releaseRatioPercent, settings.activationDistance, settings.intentWindowMs,
       POLICIES[fixture.processor.policy]]
-    : fixture.processor.kind === "text-navigation"
+    : fixture.processor.kind === "text-navigation" || fixture.processor.kind === "composed-text"
       ? ["C", settings.horizontalThreshold, settings.verticalThreshold, settings.idleTimeoutMs,
         settings.activationDistance, settings.engageRatioPercent]
       : ["C", Number(settings.enabled), settings.activationDistance, settings.coherencePercent,

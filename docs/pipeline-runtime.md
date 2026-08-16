@@ -129,7 +129,13 @@ displacement motion gating over normalized motion, including buffered evidence,
 external suppression policy, and idle/qualification deadlines. The axis-intent
 stage reuses the legacy windowed-energy estimator semantics as a unit-
 independent strategy and carries intent, confidence, and speed annotations on
-normalized frames for scroll, text, and optional cursor-constraint consumers.
+raw or normalized frames for scroll, text, and optional cursor-constraint
+consumers. The axis-constraint stage buffers undecided motion and applies the
+intent annotation over raw motion, the scroll batcher reproduces the legacy
+transfer, quantizer, and report-interval batching semantics, and the text-
+navigation stage emits actions from threshold crossings. All three accept a
+shared suppression policy so a single ZMK keypress guard participates in the
+pass, buffer, and drop decisions of the whole scroll pipeline.
 The ZMK adapter uses the standard input listener as its source-specific
 processor host and feeds reconstructed frames to a separate router device.
 Pipelines, their ordered stages, and cursor sinks are independently allocated
