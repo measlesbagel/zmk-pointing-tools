@@ -57,10 +57,9 @@ compiled CPI. The smoke keymap then composes three pipelines:
   gestures.
 
 The cursor quantizer clamps each frame to the signed 16-bit HID movement
-range the cursor sink accepts; motion beyond the range stays in the
-fractional remainder and is emitted on later frames instead of dropping the
-report. The sink performs no scaling, clipping, accumulation, or cadence
-selection. After validating both axes, it emits `REL_X` followed by a
+range the cursor sink accepts; whole units beyond the range are dropped,
+while the fractional part stays in the remainder for later frames. The sink
+performs no scaling, clipping, accumulation, or cadence selection. After validating both axes, it emits `REL_X` followed by a
 synchronized `REL_Y` from the router's virtual input device. The scroll sink
 emits wheel events for discrete steps, and the action sink drives keymap
 behaviors with the configured tap duration.
