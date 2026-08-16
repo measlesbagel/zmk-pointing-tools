@@ -97,8 +97,9 @@ int zpt_router_select(struct zpt_router *router, size_t pipeline_index, uint32_t
         return 0;
     }
 
-    int first_error = 0;
+    size_t previous_index = router->active_pipeline_index;
     struct zpt_pipeline *outgoing = zpt_router_active_pipeline(router);
+    int first_error = 0;
     if (outgoing != NULL) {
         int ret = zpt_pipeline_deactivate(outgoing, now_ms, ZPT_RESET_PIPELINE_LEFT, result);
         if (ret < 0) {
@@ -110,6 +111,17 @@ int zpt_router_select(struct zpt_router *router, size_t pipeline_index, uint32_t
     struct zpt_pipeline *incoming = router->pipelines[pipeline_index];
     int ret = zpt_pipeline_activate(incoming, ZPT_RESET_PIPELINE_ENTERED);
     if (ret < 0) {
+        /* Roll back to the previous pipeline so input never goes unhandled
+         * after an activation failure; stale input is never sent through a
+         * pipeline that has already been deactivated. */
+        if (outgoing != NULL) {
+            int restore_ret = zpt_pipeline_activate(outgoing, ZPT_RESET_PIPELINE_ENTERED);
+            if (restore_ret < 0) {
+                router->active_pipeline_index = ZPT_ROUTER_NO_PIPELINE;
+                return restore_ret;
+            }
+            router->active_pipeline_index = previous_index;
+        }
         return ret;
     }
     router->active_pipeline_index = pipeline_index;

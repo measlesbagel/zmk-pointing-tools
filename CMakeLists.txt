@@ -14,10 +14,12 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
   # Composable pipeline architecture.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/core/pipeline.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/core/router.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/core/route_override.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/frame_assembler.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/motion_source.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     src/source/transport/compact_split_codec.c)
+  # Core stage implementations (host-replayable algorithms).
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/orientation.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/stage/pointer_identity.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -26,7 +28,9 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/stage/motion_gate/coherent_displacement.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/stage/motion_gate/coherent_displacement_stage.c)
+  # Core sink adapters (ZMK-bound output; excluded from host builds).
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/sink/cursor.c)
+  # Devicetree providers for stages, sinks, pipelines, and the router.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage_provider.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
@@ -41,6 +45,7 @@ if(CONFIG_ZMK_POINTING_TOOLS_TRACE OR
     src/platform/zmk/router.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_ROUTE_BEHAVIOR
     src/platform/zmk/behavior_route.c)
+  # Devicetree stage providers mirroring the core stage implementations.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE
     src/platform/zmk/stage/orientation.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE

@@ -19,7 +19,7 @@ properties:
   coherence-percent:
     type: int
     required: true
-    description: Minimum rotation-invariant directional coherence from 0 through 100
+    description: Minimum rotation-invariant directional coherence from 1 through 100, or 0 to disable the coherence requirement
 
   qualification-timeout-ms:
     type: int

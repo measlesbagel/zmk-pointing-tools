@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 
+/*
+ * ZMK output adapter for the cursor sink.
+ *
+ * This file deliberately lives outside the host-replayable core algorithms:
+ * it converts canonical pointer deltas into Zephyr input reports on the bound
+ * output device and is excluded from host builds. Fractional fixed-point
+ * values are rejected until a quantizer stage owns rounding and remainders.
+ */
+
 #include <errno.h>
 #include <limits.h>
 

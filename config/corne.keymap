@@ -48,7 +48,9 @@
         default-pipeline = <&zpt_test_cursor_pipeline>;
 
         test-layer-route {
-            layers = <1>;
+            /* Layer 0 is the only keymap layer; the route stays within range
+             * and always selects the single smoke pipeline. */
+            layers = <0>;
             pipeline = <&zpt_test_cursor_pipeline>;
         };
     };
