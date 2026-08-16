@@ -105,6 +105,8 @@ shipping premature production algorithms. They prove:
 
 Production stateless stages now provide exact orthogonal orientation,
 counts-per-inch normalization to Q16 millimetres, and raw-count pointer identity
-for boundary testing. The ZMK adapter uses the standard input listener as its
-source-specific processor host; routing and timer scheduling remain later
-slices.
+for boundary testing. The first production stateful stage provides coherent
+displacement motion gating over normalized motion, including buffered evidence,
+external suppression policy, and idle/qualification deadlines. The ZMK adapter
+uses the standard input listener as its source-specific processor host; routing
+and firmware deadline scheduling remain later slices.
