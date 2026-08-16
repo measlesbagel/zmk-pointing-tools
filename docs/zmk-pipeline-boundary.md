@@ -51,8 +51,10 @@ compiled CPI. The smoke keymap then composes three pipelines:
 - the scroll pipeline runs normalization, the axis-intent estimator, the
   axis-constraint, and the steps-per-metre scroll batcher, with a shared
   `measlesbagel,zpt-keypress-suppression` guard on the stateful stages;
-- the text pipeline runs normalization and the text-navigation stage, whose
-  action sink invokes bound keymap behaviors for cardinal gestures.
+- the text pipeline runs normalization, the shared axis-intent estimator,
+  the axis-constraint with discard-unclassified, and the text-navigation
+  mapper, whose action sink invokes bound keymap behaviors for cardinal
+  gestures.
 
 The cursor quantizer clamps each frame to the signed 16-bit HID movement
 range the cursor sink accepts; motion beyond the range stays in the

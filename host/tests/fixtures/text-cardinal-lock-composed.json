@@ -2,23 +2,27 @@
   "schema": "zmk-pointing-tools/trace-fixture",
   "version": 1,
   "id": "text-cardinal-lock-composed",
-  "description": "Text navigation emits horizontal steps without vertical leakage, then changes axis after idle. Expectations are a behavioral baseline for the composed normalized pipeline.",
+  "description": "Text navigation emits horizontal steps without vertical leakage, then changes axis after idle. Expectations are a behavioral baseline for the composed normalized pipeline: the text mapper consumes intent decisions from the shared axis-intent estimator and axis-constraint.",
   "metadata": {
     "device": "right-trackball",
     "cpi": 700,
     "cadenceMs": 8,
     "mode": "text-navigation",
-    "provenance": "Curated synthetic regression derived from text-cardinal hardware captures"
+    "provenance": "Curated synthetic regression re-composed onto the shared axis-intent estimator and axis-constraint from the text-cardinal hardware captures"
   },
   "processor": {
     "kind": "composed-text",
     "settings": {
-      "idleTimeoutMs": 40,
-      "engageRatioPercent": 150,
       "cpi": 700,
+      "engageRatioPercent": 150,
+      "releaseRatioPercent": 90,
+      "activationDistanceMicrometers": 1270,
+      "intentWindowMs": 32,
+      "idleTimeoutMs": 40,
+      "discardUnclassified": true,
       "horizontalThresholdMicrometers": 2721,
       "verticalThresholdMicrometers": 2721,
-      "activationDistanceMicrometers": 1270
+      "mapperIdleTimeoutMs": 40
     }
   },
   "events": [

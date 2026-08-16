@@ -31,11 +31,6 @@ ZPT_STAGE_PROVIDER_INIT_SIMPLE(text_nav, &zpt_text_nav_stage_api, &config->stage
     BUILD_ASSERT(DT_INST_PROP(inst, idle_timeout_ms) > 0 &&                                        \
                      DT_INST_PROP(inst, idle_timeout_ms) <= UINT16_MAX,                            \
                  "idle-timeout-ms must fit in 16 bits and be positive");                           \
-    BUILD_ASSERT(DT_INST_PROP(inst, activation_distance_micrometers) > 0,                          \
-                 "activation-distance-micrometers must be positive");                              \
-    BUILD_ASSERT(DT_INST_PROP(inst, engage_ratio_percent) > 0 &&                                   \
-                     DT_INST_PROP(inst, engage_ratio_percent) <= UINT16_MAX,                       \
-                 "engage-ratio-percent must fit in 16 bits and be positive");                      \
     static struct zpt_text_nav_provider_data zpt_text_nav_provider_data_##inst;                    \
     static const struct zpt_text_nav_provider_config zpt_text_nav_provider_config_##inst = {       \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
@@ -46,9 +41,6 @@ ZPT_STAGE_PROVIDER_INIT_SIMPLE(text_nav, &zpt_text_nav_stage_api, &config->stage
                 .vertical_threshold = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                        \
                     DT_INST_PROP(inst, vertical_threshold_micrometers)),                           \
                 .idle_timeout_ms = DT_INST_PROP(inst, idle_timeout_ms),                            \
-                .activation_distance = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                       \
-                    DT_INST_PROP(inst, activation_distance_micrometers)),                          \
-                .engage_ratio_percent = DT_INST_PROP(inst, engage_ratio_percent),                  \
             },                                                                                     \
     };                                                                                             \
     ZPT_STAGE_PROVIDER_DEVICE_DEFINE(inst, text_nav)

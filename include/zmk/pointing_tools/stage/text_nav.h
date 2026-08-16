@@ -7,11 +7,14 @@
 #include <zmk/pointing_tools/core/pipeline.h>
 
 /*
- * Text-navigation stage over normalized motion.
+ * Text-navigation mapper over normalized motion.
  *
- * Accumulates a gesture and emits ACTION signals when the engaged axis
- * crosses its threshold, subtracting the threshold from the accumulator so
- * sustained motion repeats. Thresholds are signed Q16 millimetres.
+ * Consumes motion that already carries a decided axis-intent annotation
+ * (produced by the shared axis-intent estimator upstream), accumulates only
+ * the engaged axis, and emits ACTION signals when that axis crosses its
+ * threshold, subtracting the threshold so sustained motion repeats. The idle
+ * timeout resets the accumulator at gesture boundaries. Thresholds are
+ * signed Q16 millimetres.
  */
 
 enum zpt_text_nav_direction {
@@ -27,14 +30,11 @@ struct zpt_text_nav_config {
     int64_t horizontal_threshold;
     int64_t vertical_threshold;
     uint16_t idle_timeout_ms;
-    int64_t activation_distance;
-    uint16_t engage_ratio_percent;
 };
 
 struct zpt_text_nav_state {
     int64_t accumulated_x;
     int64_t accumulated_y;
-    uint8_t intent;
     /* Last emitted direction for telemetry and replay observation. */
     int32_t last_direction;
     uint32_t last_frame_ms;

@@ -100,11 +100,31 @@
         sink = <&zpt_test_scroll_sink>;
     };
 
-    /* Text pipeline: gesture thresholds over normalized motion emitting
-     * action taps. */
+    /* Text pipeline: the shared estimator and constraint over normalized
+     * motion with a threshold-to-action mapper. */
     zpt_test_text_resolution_normalize: zpt_test_text_resolution_normalize {
         compatible = "measlesbagel,zpt-stage-resolution-normalize";
         stable-id = "text-resolution-normalize";
+    };
+
+    zpt_test_text_axis_intent: zpt_test_text_axis_intent {
+        compatible = "measlesbagel,zpt-stage-axis-intent";
+        stable-id = "text-axis-intent";
+        policy = <1>;
+        engage-ratio-percent = <150>;
+        release-ratio-percent = <90>;
+        activation-distance-micrometers = <1270>;
+        window-ms = <32>;
+        idle-timeout-ms = <40>;
+        suppression = <&zpt_test_keypress_guard>;
+    };
+
+    zpt_test_text_constraint: zpt_test_text_constraint {
+        compatible = "measlesbagel,zpt-stage-axis-constraint";
+        stable-id = "text-constraint";
+        discard-unclassified;
+        idle-timeout-ms = <40>;
+        suppression = <&zpt_test_keypress_guard>;
     };
 
     zpt_test_composed_text_nav: zpt_test_composed_text_nav {
@@ -113,8 +133,6 @@
         horizontal-threshold-micrometers = <2721>;
         vertical-threshold-micrometers = <2721>;
         idle-timeout-ms = <40>;
-        activation-distance-micrometers = <1270>;
-        engage-ratio-percent = <150>;
     };
 
     zpt_test_action_sink: zpt_test_action_sink {
@@ -127,7 +145,8 @@
     zpt_test_text_pipeline: zpt_test_text_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-text";
-        stages = <&zpt_test_text_resolution_normalize &zpt_test_composed_text_nav>;
+        stages = <&zpt_test_text_resolution_normalize &zpt_test_text_axis_intent
+                  &zpt_test_text_constraint &zpt_test_composed_text_nav>;
         sink = <&zpt_test_action_sink>;
     };
 

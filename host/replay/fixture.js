@@ -37,9 +37,14 @@ export function validateFixture(fixture, path = "fixture") {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
   } else if (fixture.processor.kind === "composed-text") {
-    for (const key of ["cpi", "horizontalThresholdMicrometers", "verticalThresholdMicrometers",
-      "idleTimeoutMs", "activationDistanceMicrometers", "engageRatioPercent"]) {
+    for (const key of ["cpi", "engageRatioPercent", "releaseRatioPercent",
+      "activationDistanceMicrometers", "intentWindowMs", "idleTimeoutMs",
+      "horizontalThresholdMicrometers", "verticalThresholdMicrometers",
+      "mapperIdleTimeoutMs"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
+    }
+    if (typeof settings.discardUnclassified !== "boolean") {
+      throw new Error(`${path}: discardUnclassified must be boolean`);
     }
   } else if (fixture.processor.kind === "composed-noise") {
     if (typeof settings?.enabled !== "boolean") {
@@ -87,9 +92,10 @@ export function encodeRunnerInput(fixture) {
       settings.releaseRatioPercent, settings.activationDistanceMicrometers,
       settings.intentWindowMs, POLICIES[fixture.processor.policy]]
     : fixture.processor.kind === "composed-text"
-      ? ["C", settings.cpi, settings.horizontalThresholdMicrometers,
-        settings.verticalThresholdMicrometers, settings.idleTimeoutMs,
-        settings.activationDistanceMicrometers, settings.engageRatioPercent]
+      ? ["C", settings.cpi, settings.engageRatioPercent, settings.releaseRatioPercent,
+        settings.activationDistanceMicrometers, settings.intentWindowMs, settings.idleTimeoutMs,
+        Number(settings.discardUnclassified), settings.horizontalThresholdMicrometers,
+        settings.verticalThresholdMicrometers, settings.mapperIdleTimeoutMs]
       : fixture.processor.kind === "cursor-pipeline"
         ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor,
           settings.unitsPerMeter]

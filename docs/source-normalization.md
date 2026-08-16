@@ -86,8 +86,8 @@ The smoke keymap executes the normalized compositions end to end. Every
 pipeline starts from resolution normalization: the cursor pipeline feeds the
 coherent-displacement gate, a unit cursor transfer, and the sub-pixel cursor
 quantizer; the scroll pipeline feeds the axis-intent estimator, the
-axis-constraint, and the scroll batcher; and the text pipeline feeds the
-text-navigation stage directly. The compact-side path compiles the same
+axis-constraint, and the scroll batcher; and the text pipeline feeds the shared axis-intent estimator, the
+axis-constraint, and the text-navigation threshold mapper. The compact-side path compiles the same
 normalize, transfer, and quantizer stages against the transported source
 contract without routing live motion through them.
 
