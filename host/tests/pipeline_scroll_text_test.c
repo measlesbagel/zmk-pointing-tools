@@ -9,6 +9,7 @@
 #include <zmk/pointing_tools/policy/suppression.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
 #include <zmk/pointing_tools/stage/scroll_batcher.h>
 #include <zmk/pointing_tools/stage/text_nav.h>
 
@@ -127,9 +128,11 @@ static void scroll_fixture_init(struct scroll_fixture *fixture) {
     assert(zpt_pipeline_activate(&fixture->pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 }
 
-/* 700 CPI sensor: counts to Q16 millimetres. */
+/* 700 CPI sensor: counts to Q16 millimetres via the shared normalizer. */
 static zpt_fixed_t counts_to_q16_mm(int32_t counts) {
-    return ((zpt_fixed_t)counts * ZPT_FIXED_ONE * 254 + 3500) / 7000;
+    zpt_fixed_t millimeters;
+    assert(zpt_counts_to_millimeters(counts, 700, &millimeters) == 0);
+    return millimeters;
 }
 
 static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,

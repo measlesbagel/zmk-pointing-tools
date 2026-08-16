@@ -4,34 +4,9 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include <zmk/pointing_tools/core/fixed.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/text_nav.h>
-
-static int64_t saturating_add_i64(int64_t left, int64_t right) {
-    if (right > 0 && left > INT64_MAX - right) {
-        return INT64_MAX;
-    }
-    if (right < 0 && left < INT64_MIN - right) {
-        return INT64_MIN;
-    }
-    return left + right;
-}
-
-static uint64_t magnitude(int64_t value) {
-    if (value >= 0) {
-        return (uint64_t)value;
-    }
-    return (uint64_t)(-(value + 1)) + 1U;
-}
-
-static bool dominates(uint64_t major, uint64_t minor, uint16_t ratio_percent) {
-    if (minor != 0U && ratio_percent != 0U && minor > UINT64_MAX / ratio_percent) {
-        return true;
-    }
-    uint64_t product = minor * ratio_percent;
-    uint64_t required = product / 100U + (product % 100U != 0U ? 1U : 0U);
-    return major >= required;
-}
 
 static int text_nav_stage_activate(struct zpt_stage *stage, enum zpt_reset_reason reason) {
     (void)reason;
@@ -80,20 +55,20 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     int64_t y = signal->data.fixed_vector.y;
 
     if (state->intent == ZPT_AXIS_INTENT_UNDECIDED) {
-        state->accumulated_x = saturating_add_i64(state->accumulated_x, x);
-        state->accumulated_y = saturating_add_i64(state->accumulated_y, y);
+        state->accumulated_x = zpt_fixed_saturating_add(state->accumulated_x, x);
+        state->accumulated_y = zpt_fixed_saturating_add(state->accumulated_y, y);
 
-        uint64_t horizontal = magnitude(state->accumulated_x);
-        uint64_t vertical = magnitude(state->accumulated_y);
+        uint64_t horizontal = zpt_fixed_magnitude(state->accumulated_x);
+        uint64_t vertical = zpt_fixed_magnitude(state->accumulated_y);
         if (horizontal + vertical < (uint64_t)config->activation_distance) {
             state->last_direction = ZPT_TEXT_NAV_NONE;
             return 0;
         }
 
-        if (dominates(horizontal, vertical, config->engage_ratio_percent)) {
+        if (zpt_fixed_ratio_dominates(horizontal, vertical, config->engage_ratio_percent)) {
             state->intent = ZPT_AXIS_INTENT_HORIZONTAL;
             state->accumulated_y = 0;
-        } else if (dominates(vertical, horizontal, config->engage_ratio_percent)) {
+        } else if (zpt_fixed_ratio_dominates(vertical, horizontal, config->engage_ratio_percent)) {
             state->intent = ZPT_AXIS_INTENT_VERTICAL;
             state->accumulated_x = 0;
         } else {
@@ -101,9 +76,9 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
             return 0;
         }
     } else if (state->intent == ZPT_AXIS_INTENT_HORIZONTAL) {
-        state->accumulated_x = saturating_add_i64(state->accumulated_x, x);
+        state->accumulated_x = zpt_fixed_saturating_add(state->accumulated_x, x);
     } else {
-        state->accumulated_y = saturating_add_i64(state->accumulated_y, y);
+        state->accumulated_y = zpt_fixed_saturating_add(state->accumulated_y, y);
     }
 
     int64_t *movement;
@@ -122,7 +97,7 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
         positive_direction = ZPT_TEXT_NAV_DOWN;
     }
 
-    if (magnitude(*movement) < (uint64_t)threshold) {
+    if (zpt_fixed_magnitude(*movement) < (uint64_t)threshold) {
         state->last_direction = ZPT_TEXT_NAV_NONE;
         return 0;
     }
@@ -135,7 +110,6 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     output.kind = ZPT_SIGNAL_ACTION;
     output.metadata.observed_at_ms = now;
     output.data.action.id = (uint32_t)direction;
-    output.data.action.value = 1;
     zpt_stage_notify(context, ZPT_STAGE_EVENT_ACTION, (int64_t)direction);
     return zpt_stage_emit(context, &output);
 }

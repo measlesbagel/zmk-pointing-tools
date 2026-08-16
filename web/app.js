@@ -141,16 +141,11 @@ function renderTuning() {
 
 function stateFlagLabels(flags) {
   return [
-    [STATE.FLAG_IDLE_RESET, "idle reset"],
     [STATE.FLAG_INTENT_CHANGED, "intent changed"],
     [STATE.FLAG_SUPPRESSED, "suppressed"],
-    [STATE.FLAG_SUPPRESSION_CHANGED, "guard transition"],
     [STATE.FLAG_DISCARDED, "discarded"],
     [STATE.FLAG_OUTPUT, "output"],
-    [STATE.FLAG_CLIPPED_HORIZONTAL, "H clipped"],
-    [STATE.FLAG_CLIPPED_VERTICAL, "V clipped"],
     [STATE.FLAG_QUALIFIED, "qualified"],
-    [STATE.FLAG_PENDING_DISCARDED, "pending discarded"],
   ].filter(([flag]) => flags & flag).map(([, label]) => label);
 }
 

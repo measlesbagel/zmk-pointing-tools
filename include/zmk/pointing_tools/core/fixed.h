@@ -2,6 +2,7 @@
 #pragma once
 
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <zmk/pointing_tools/core/signal.h>
@@ -25,6 +26,21 @@ static inline int64_t zpt_fixed_saturating_add(int64_t left, int64_t right) {
         return INT64_MIN;
     }
     return left + right;
+}
+
+static inline uint64_t zpt_fixed_saturating_add_u64(uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+/* major * 100 >= minor * ratio, evaluated without overflow. */
+static inline bool zpt_fixed_ratio_dominates(uint64_t major, uint64_t minor,
+                                             uint16_t ratio_percent) {
+    if (minor != 0U && ratio_percent != 0U && minor > UINT64_MAX / ratio_percent) {
+        return true;
+    }
+    uint64_t product = minor * ratio_percent;
+    uint64_t required = product / 100U + (product % 100U != 0U ? 1U : 0U);
+    return major >= required;
 }
 
 /* Q16 by Q16 multiply with saturation: (left * right) >> 16. */

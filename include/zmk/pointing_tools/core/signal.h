@@ -31,9 +31,8 @@ enum zpt_signal_flag {
     ZPT_SIGNAL_FLAG_TIMING_ESTIMATED = UINT32_C(1) << 3,
     ZPT_SIGNAL_FLAG_CLIPPED = UINT32_C(1) << 4,
     ZPT_SIGNAL_FLAG_SEQUENCE_GAP = UINT32_C(1) << 5,
-    ZPT_SIGNAL_FLAG_MALFORMED = UINT32_C(1) << 6,
-    ZPT_SIGNAL_FLAG_DISCONTINUITY = UINT32_C(1) << 7,
-    ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED = UINT32_C(1) << 8,
+    ZPT_SIGNAL_FLAG_DISCONTINUITY = UINT32_C(1) << 6,
+    ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED = UINT32_C(1) << 7,
 };
 
 enum zpt_signal_axis_intent {
@@ -77,8 +76,6 @@ struct zpt_delta {
 
 struct zpt_action {
     uint32_t id;
-    int32_t value;
-    uint32_t duration_ms;
 };
 
 struct zpt_signal {

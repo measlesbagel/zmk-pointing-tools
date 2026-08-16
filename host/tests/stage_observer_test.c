@@ -9,6 +9,7 @@
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
 #include <zmk/pointing_tools/stage/scroll_batcher.h>
 #include <zmk/pointing_tools/stage/text_nav.h>
 
@@ -70,6 +71,12 @@ static bool suppression_active(void *context, const struct zpt_signal *signal, u
     (void)signal;
     (void)now_ms;
     return ((struct suppression_state *)context)->active;
+}
+
+static zpt_fixed_t counts_to_q16_mm(int32_t counts) {
+    zpt_fixed_t millimeters;
+    assert(zpt_counts_to_millimeters(counts, 700, &millimeters) == 0);
+    return millimeters;
 }
 
 static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
@@ -202,9 +209,8 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    /* 10,1 counts at 700 CPI as Q16 millimetres. */
-    assert(push_normalized(&pipeline, &result, 0, 23780, 2378) == 0);
-    assert(push_normalized(&pipeline, &result, 8, 23780, 2378) == 0);
+    assert(push_normalized(&pipeline, &result, 0, counts_to_q16_mm(10), counts_to_q16_mm(1)) == 0);
+    assert(push_normalized(&pipeline, &result, 8, counts_to_q16_mm(10), counts_to_q16_mm(1)) == 0);
     /* Undecided then horizontal intent changes. */
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_UNDECIDED));
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_HORIZONTAL));
@@ -215,18 +221,17 @@ static void test_scroll_observer_sees_intent_suppression_and_flush(void) {
 
     /* Suppression clears and notifies every stage. */
     suppression_context.active = true;
-    assert(push_normalized(&pipeline, &result, 20, 23780, 0) == 0);
+    assert(push_normalized(&pipeline, &result, 20, counts_to_q16_mm(10), 0) == 0);
     assert(has_event(&intent_observer, ZPT_STAGE_EVENT_SUPPRESSED, 0));
     assert(has_event(&batcher_observer, ZPT_STAGE_EVENT_SUPPRESSED, 0));
 }
 
 static void test_text_observer_sees_actions(void) {
     struct zpt_text_nav_config config = {
-        /* Count-equivalent thresholds at 700 CPI, rounded to nearest. */
-        .horizontal_threshold = (75 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
-        .vertical_threshold = (75 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
+        .horizontal_threshold = counts_to_q16_mm(75),
+        .vertical_threshold = counts_to_q16_mm(75),
         .idle_timeout_ms = 40,
-        .activation_distance = (35 * ZPT_FIXED_ONE * 254 + 3500) / 7000,
+        .activation_distance = counts_to_q16_mm(35),
         .engage_ratio_percent = 150,
     };
     struct zpt_text_nav_state state = {0};
@@ -253,15 +258,9 @@ static void test_text_observer_sees_actions(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    zpt_fixed_t x20 = (20 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    zpt_fixed_t x3 = (3 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    zpt_fixed_t x25 = (25 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    zpt_fixed_t xm2 = (-2 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    zpt_fixed_t x30 = (30 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    zpt_fixed_t x4 = (4 * ZPT_FIXED_ONE * 254 + 3500) / 7000;
-    assert(push_normalized(&pipeline, &result, 0, x20, x3) == 0);
-    assert(push_normalized(&pipeline, &result, 8, x25, xm2) == 0);
-    assert(push_normalized(&pipeline, &result, 16, x30, x4) == 0);
+    assert(push_normalized(&pipeline, &result, 0, counts_to_q16_mm(20), counts_to_q16_mm(3)) == 0);
+    assert(push_normalized(&pipeline, &result, 8, counts_to_q16_mm(25), counts_to_q16_mm(-2)) == 0);
+    assert(push_normalized(&pipeline, &result, 16, counts_to_q16_mm(30), counts_to_q16_mm(4)) == 0);
     assert(has_event(&observer, ZPT_STAGE_EVENT_ACTION, ZPT_TEXT_NAV_RIGHT));
 }
 
