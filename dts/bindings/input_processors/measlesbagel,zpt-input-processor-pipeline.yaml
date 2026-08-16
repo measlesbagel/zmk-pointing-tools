@@ -1,17 +1,12 @@
 # SPDX-License-Identifier: MIT
 
-description: Frame-aware ingress backed by a composed cursor pipeline
+description: Frame-aware source ingress backed by one pipeline provider
 
 compatible: "measlesbagel,zpt-input-processor-pipeline"
 
 include: ip_zero_param.yaml
 
 properties:
-  stable-id:
-    type: string
-    required: true
-    description: Stable identity for the constructed pipeline
-
   source-id:
     type: int
     required: true
@@ -22,15 +17,10 @@ properties:
     required: true
     description: Compiled sensor resolution used for source metadata
 
-  stages:
-    type: phandles
+  pipeline:
+    type: phandle
     required: true
-    description: Ordered references to independently allocated pointing-tool stages
-
-  dispatch-budget:
-    type: int
-    default: 16
-    description: Maximum stage and sink visits allowed for one pipeline operation
+    description: Named pipeline provider receiving reconstructed source frames
 
   transported:
     type: boolean
