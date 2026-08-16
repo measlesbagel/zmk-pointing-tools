@@ -110,5 +110,6 @@ counts-per-inch normalization to Q16 millimetres, and raw-count pointer identity
 for boundary testing. The first production stateful stage provides coherent
 displacement motion gating over normalized motion, including buffered evidence,
 external suppression policy, and idle/qualification deadlines. The ZMK adapter
-uses the standard input listener as its source-specific processor host; routing
-and firmware deadline scheduling remain later slices.
+uses the standard input listener as its source-specific processor host and
+resolves its ordered stages from devicetree providers. Its cursor sink remains
+implicit; routing and firmware deadline scheduling remain later slices.

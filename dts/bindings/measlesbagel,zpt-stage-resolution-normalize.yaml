@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+
+description: Nominal source resolution to Q16 millimetre normalization stage
+
+compatible: "measlesbagel,zpt-stage-resolution-normalize"
+
+include: measlesbagel,zpt-stage-base.yaml

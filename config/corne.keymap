@@ -19,12 +19,23 @@
         label = "Test output";
     };
 
+    zpt_test_orientation: zpt_test_orientation {
+        compatible = "measlesbagel,zpt-stage-orientation";
+        stable-id = "orientation";
+    };
+
+    zpt_test_pointer_identity: zpt_test_pointer_identity {
+        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
+        stable-id = "raw-pointer-identity";
+    };
+
     zpt_test_cursor_pipeline: zpt_test_cursor_pipeline {
         compatible = "measlesbagel,zpt-input-processor-pipeline";
         #input-processor-cells = <0>;
         stable-id = "test-cursor";
         source-id = <1>;
         resolution-cpi = <700>;
+        stages = <&zpt_test_orientation &zpt_test_pointer_identity>;
     };
 
     zpt_test_cursor_output: zpt_test_cursor_output {
@@ -41,6 +52,16 @@
         event-code = <INPUT_REL_Z>;
     };
 
+    zpt_test_compact_orientation: zpt_test_compact_orientation {
+        compatible = "measlesbagel,zpt-stage-orientation";
+        stable-id = "orientation";
+    };
+
+    zpt_test_compact_pointer_identity: zpt_test_compact_pointer_identity {
+        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
+        stable-id = "raw-pointer-identity";
+    };
+
     zpt_test_compact_pipeline: zpt_test_compact_pipeline {
         compatible = "measlesbagel,zpt-input-processor-pipeline";
         #input-processor-cells = <0>;
@@ -50,11 +71,29 @@
         transported;
         compact-event-code = <INPUT_REL_Z>;
         compact-transport-coalesced;
+        stages = <&zpt_test_compact_orientation &zpt_test_compact_pointer_identity>;
     };
 
     zpt_test_compact_output: zpt_test_compact_output {
         compatible = "zmk,input-listener";
         device = <&zpt_test_compact_pipeline>;
+    };
+
+    /* Instantiate normalized, stateful stage providers even though the
+     * identity smoke path cannot yet terminate normalized motion. */
+    zpt_test_resolution_normalize: zpt_test_resolution_normalize {
+        compatible = "measlesbagel,zpt-stage-resolution-normalize";
+        stable-id = "resolution-normalize";
+    };
+
+    zpt_test_motion_gate: zpt_test_motion_gate {
+        compatible = "measlesbagel,zpt-stage-coherent-displacement";
+        stable-id = "motion-gate";
+        enabled;
+        activation-distance-micrometers = <220>;
+        coherence-percent = <60>;
+        qualification-timeout-ms = <160>;
+        idle-timeout-ms = <120>;
     };
 
     zpt_test_scroll: zpt_test_scroll {

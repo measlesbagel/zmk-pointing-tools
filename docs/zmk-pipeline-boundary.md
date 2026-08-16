@@ -1,8 +1,9 @@
 # Minimal ZMK pipeline boundary
 
-The first firmware integration of the composable runtime is deliberately an
-identity cursor path. It validates the ZMK boundary without changing motion
-semantics or prematurely fixing the full pipeline devicetree model.
+The first firmware integration of the composable runtime remains deliberately
+an identity cursor path. Its ordered stages are now independently allocated
+devicetree providers, validating explicit composition without changing motion
+semantics.
 
 ```text
 physical or proxied input events
@@ -54,14 +55,25 @@ synchronized `REL_Y` from the pipeline processor's virtual input device.
 
 ```dts
 / {
+    my_orientation: my_orientation {
+        compatible = "measlesbagel,zpt-stage-orientation";
+        stable-id = "orientation";
+        invert-x;
+        invert-y;
+    };
+
+    my_pointer_identity: my_pointer_identity {
+        compatible = "measlesbagel,zpt-stage-raw-pointer-identity";
+        stable-id = "raw-pointer-identity";
+    };
+
     my_cursor_pipeline: my_cursor_pipeline {
         compatible = "measlesbagel,zpt-input-processor-pipeline";
         #input-processor-cells = <0>;
         stable-id = "right-cursor";
         source-id = <1>;
         resolution-cpi = <700>;
-        invert-x;
-        invert-y;
+        stages = <&my_orientation &my_pointer_identity>;
         /* Add for a central-side split proxy source. */
         /* transported; */
     };
@@ -79,9 +91,10 @@ synchronized `REL_Y` from the pipeline processor's virtual input device.
 
 `source-id` and `stable-id` are metadata identities, not boot-time registration
 indexes. `resolution-cpi` must match the sensor's compiled/current setting.
-`swap-xy`, `invert-x`, and `invert-y` describe physical mounting. Keep stable
-identities unchanged when later profiles and telemetry address pipeline
-boundaries.
+The orientation stage's `swap-xy`, `invert-x`, and `invert-y` properties
+describe physical mounting. Each stage phandle identifies one allocated
+instance and cannot be shared by multiple pipelines. Keep stable identities
+unchanged when later profiles and telemetry address pipeline boundaries.
 
 A transported source may additionally set `compact-event-code` to accept the
 matched complete-frame format documented in
@@ -89,9 +102,31 @@ matched complete-frame format documented in
 source boundary rather than as a generic X/Y expander, preserving packet
 sequence and source-side span metadata.
 
+## Stage providers
+
+The current devicetree-backed providers are:
+
+| Compatible | Input → output | State |
+| --- | --- | --- |
+| `measlesbagel,zpt-stage-orientation` | raw motion → raw motion | stateless |
+| `measlesbagel,zpt-stage-raw-pointer-identity` | raw motion → pointer delta | stateless |
+| `measlesbagel,zpt-stage-resolution-normalize` | raw motion → normalized motion | stateless |
+| `measlesbagel,zpt-stage-coherent-displacement` | normalized motion → normalized motion | stateful |
+
+The pipeline validates the expanded signal types and rejects an incompatible
+order at initialization. The coherent-displacement provider expresses its
+activation threshold as integer micrometres and converts it to the canonical
+Q16 millimetre domain. It cannot yet terminate at the fixed cursor sink without
+a normalized-motion pointer mapper, so it is present for composition and
+deadline integration rather than the identity smoke path.
+
+`dispatch-budget` defaults to 16 stage/sink visits per push, flush, or
+deactivation. Increase it only when a deliberately fan-out-capable stage needs
+more bounded dispatches.
+
 ## Current limits
 
-- Only the fixed identity cursor composition is constructed.
+- The terminal sink is still the fixed cursor sink; stage order is configurable.
 - There is no layer or behavior router yet.
 - Resolution normalization is available but not yet connected to a pointer
   mapper and quantizer in this identity cursor.

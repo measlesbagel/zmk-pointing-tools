@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-description: Frame-aware ingress backed by an identity cursor pipeline
+description: Frame-aware ingress backed by a composed cursor pipeline
 
 compatible: "measlesbagel,zpt-input-processor-pipeline"
 
@@ -22,6 +22,16 @@ properties:
     required: true
     description: Compiled sensor resolution used for source metadata
 
+  stages:
+    type: phandles
+    required: true
+    description: Ordered references to independently allocated pointing-tool stages
+
+  dispatch-budget:
+    type: int
+    default: 16
+    description: Maximum stage and sink visits allowed for one pipeline operation
+
   transported:
     type: boolean
     description: Mark source frames as having crossed split transport
@@ -33,15 +43,3 @@ properties:
   compact-transport-coalesced:
     type: boolean
     description: Mark decoded compact frames as source-coalesced
-
-  swap-xy:
-    type: boolean
-    description: Swap physical X and Y before the cursor identity stage
-
-  invert-x:
-    type: boolean
-    description: Invert the oriented X axis
-
-  invert-y:
-    type: boolean
-    description: Invert the oriented Y axis

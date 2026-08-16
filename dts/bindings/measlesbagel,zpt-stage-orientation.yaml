@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+
+description: Exact orthogonal physical mounting orientation stage
+
+compatible: "measlesbagel,zpt-stage-orientation"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  swap-xy:
+    type: boolean
+    description: Swap physical X and Y before applying logical inversions
+
+  invert-x:
+    type: boolean
+    description: Invert the oriented logical X axis
+
+  invert-y:
+    type: boolean
+    description: Invert the oriented logical Y axis
