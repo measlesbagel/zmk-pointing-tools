@@ -11,10 +11,6 @@
 #include <zmk/pointing_tools/stage/cursor_transfer.h>
 #include <zmk/pointing_tools/stage/resolution_normalize.h>
 
-struct capture_state {
-    uint32_t outputs;
-};
-
 static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     (void)sink;
     if (signal->kind != ZPT_SIGNAL_POINTER_DELTA) {
@@ -39,7 +35,6 @@ struct cursor_pipeline_fixture {
     struct zpt_stage transfer_stage;
     struct zpt_stage quantizer_stage;
     struct zpt_stage *stages[3];
-    struct capture_state capture;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
 };
@@ -88,7 +83,6 @@ int main(void) {
     fixture.sink = (struct zpt_sink){
         .stable_id = "capture",
         .api = &capture_api,
-        .state = &fixture.capture,
     };
     fixture.pipeline = (struct zpt_pipeline){
         .stable_id = "cursor-replay",
