@@ -26,11 +26,6 @@ struct zpt_motion_source_state {
 int zpt_motion_source_init(struct zpt_motion_source_state *state,
                            const struct zpt_motion_source_config *config);
 
-/* Update CPI between frames; returns -EBUSY rather than relabel pending motion. */
-int zpt_motion_source_set_resolution(struct zpt_motion_source_state *state,
-                                     uint16_t resolution_cpi);
-uint16_t zpt_motion_source_get_resolution(const struct zpt_motion_source_state *state);
-
 /* Accumulate scalar axis events until the adapter observes a frame sync. */
 void zpt_motion_source_add(struct zpt_motion_source_state *state, enum zpt_motion_axis axis,
                            int64_t counts);

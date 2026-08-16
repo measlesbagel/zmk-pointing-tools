@@ -48,7 +48,7 @@ static void cursor_fixture_init(struct cursor_fixture *fixture, uint16_t multipl
         .scale_divisor = divisor,
     };
     fixture->quantizer_config = (struct zpt_cursor_quantizer_config){
-        .units_per_meter = units_per_meter,
+        .units_per_millimeter = units_per_meter,
     };
     fixture->transfer_stage = (struct zpt_stage){
         .stable_id = "cursor-transfer",
@@ -166,7 +166,7 @@ static void test_identity_round_trip_through_normalization(void) {
     };
     struct zpt_cursor_transfer_config transfer_config = {.scale_multiplier = 1, .scale_divisor = 1};
     struct zpt_cursor_quantizer_config quantizer_config = {
-        .units_per_meter = (zpt_fixed_t)27559 * ZPT_FIXED_ONE / 1000,
+        .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(27559),
     };
     struct zpt_cursor_quantizer_state quantizer_state = {0};
     struct zpt_stage transfer_stage = {

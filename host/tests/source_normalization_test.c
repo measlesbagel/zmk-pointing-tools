@@ -39,7 +39,6 @@ static void test_local_source_metadata_and_sequence(void) {
     };
     struct zpt_motion_source_state source;
     assert(zpt_motion_source_init(&source, &config) == 0);
-    assert(zpt_motion_source_get_resolution(&source) == 700);
 
     zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, 4);
     zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, -1);
@@ -54,14 +53,9 @@ static void test_local_source_metadata_and_sequence(void) {
     assert(signal.metadata.flags == (ZPT_SIGNAL_FLAG_LOCAL | ZPT_SIGNAL_FLAG_COALESCED));
 
     zpt_motion_source_add(&source, ZPT_MOTION_AXIS_Y, 5);
-    assert(zpt_motion_source_set_resolution(&source, 1200) == -EBUSY);
     assert(zpt_motion_source_take(&source, 130, 0, 0, &signal));
     assert(signal.metadata.sequence == 1);
     assert(signal.data.raw_motion.x_counts == 0 && signal.data.raw_motion.y_counts == 5);
-
-    assert(zpt_motion_source_set_resolution(&source, 1200) == 0);
-    assert(zpt_motion_source_get_resolution(&source) == 1200);
-    assert(zpt_motion_source_set_resolution(&source, 0) == -EINVAL);
 }
 
 static void test_transported_source_and_clipping_evidence(void) {

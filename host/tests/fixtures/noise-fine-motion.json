@@ -84,15 +84,13 @@
       "signedDistance": 21402,
       "absoluteDistance": 21402,
       "nonzeroFrames": 2,
-      "directionChanges": 0,
-      "clippedFrames": 0
+      "directionChanges": 0
     },
     "vertical": {
       "signedDistance": -2378,
       "absoluteDistance": 2378,
       "nonzeroFrames": 1,
-      "directionChanges": 0,
-      "clippedFrames": 0
+      "directionChanges": 0
     },
     "phaseFrames": {
       "idle": 0,

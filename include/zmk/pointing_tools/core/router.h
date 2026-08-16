@@ -28,7 +28,6 @@ int zpt_router_deactivate(struct zpt_router *router, uint32_t now_ms, enum zpt_r
                           struct zpt_pipeline_result *result);
 int zpt_router_select(struct zpt_router *router, size_t pipeline_index, uint32_t now_ms,
                       struct zpt_pipeline_result *result);
-void zpt_router_reset(struct zpt_router *router, enum zpt_reset_reason reason);
 
 int zpt_router_push(struct zpt_router *router, const struct zpt_signal *signal,
                     struct zpt_pipeline_result *result);

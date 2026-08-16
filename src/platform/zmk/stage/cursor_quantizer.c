@@ -35,9 +35,8 @@ static int cursor_quantizer_provider_init(const struct device *dev) {
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
             .stage =                                                                               \
                 {                                                                                  \
-                    /* Integer units per metre to Q16 units per metre. */                          \
-                    .units_per_meter =                                                             \
-                        (zpt_fixed_t)DT_INST_PROP(inst, units_per_meter) * ZPT_FIXED_ONE / 1000,   \
+                    .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(                 \
+                        DT_INST_PROP(inst, units_per_meter)),                                      \
                 },                                                                                 \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, cursor_quantizer_provider_init, NULL,                              \

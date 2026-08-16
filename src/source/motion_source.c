@@ -26,22 +26,6 @@ int zpt_motion_source_init(struct zpt_motion_source_state *state,
     return 0;
 }
 
-int zpt_motion_source_set_resolution(struct zpt_motion_source_state *state,
-                                     uint16_t resolution_cpi) {
-    if (state == NULL || resolution_cpi == 0U) {
-        return -EINVAL;
-    }
-    if (state->frame.saw_axis) {
-        return -EBUSY;
-    }
-    state->resolution_cpi = resolution_cpi;
-    return 0;
-}
-
-uint16_t zpt_motion_source_get_resolution(const struct zpt_motion_source_state *state) {
-    return state == NULL ? 0U : state->resolution_cpi;
-}
-
 void zpt_motion_source_add(struct zpt_motion_source_state *state, enum zpt_motion_axis axis,
                            int64_t counts) {
     if (state != NULL) {

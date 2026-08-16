@@ -10,13 +10,15 @@
  *
  * Converts Q16 millimetre motion into integer-valued Q16 pointer deltas,
  * carrying the fractional remainder between frames so sub-pixel movement
- * accumulates exactly. The units-per-meter factor maps millimetres to the
- * output device units (sensor counts or display pixels).
+ * accumulates exactly. Each frame clamps to the signed 16-bit HID movement
+ * range; the excess stays in the remainder and is emitted on later frames
+ * rather than dropped. The units-per-millimetre factor maps millimetres to
+ * the output device units (sensor counts or display pixels).
  */
 
 struct zpt_cursor_quantizer_config {
-    /* Output units per metre, as a Q16 fixed-point factor. */
-    zpt_fixed_t units_per_meter;
+    /* Output units per millimetre, as a Q16 fixed-point factor. */
+    zpt_fixed_t units_per_millimeter;
 };
 
 struct zpt_cursor_quantizer_state {

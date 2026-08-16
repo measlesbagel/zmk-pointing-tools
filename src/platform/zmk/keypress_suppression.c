@@ -18,8 +18,9 @@ struct zpt_keypress_suppression_config {
 
 struct zpt_keypress_suppression_data {
     uint32_t suppress_after_ms;
-    uint32_t last_keypress_ms;
-    bool have_keypress;
+    /* Written by the ZMK event listener thread, read by the input thread. */
+    atomic_t last_keypress_ms;
+    atomic_t have_keypress;
     struct zpt_suppression_policy policy;
 };
 
@@ -27,7 +28,10 @@ static bool keypress_is_suppressed(void *context, const struct zpt_signal *signa
                                    uint32_t now_ms) {
     (void)signal;
     struct zpt_keypress_suppression_data *data = context;
-    return data->have_keypress && now_ms - data->last_keypress_ms < data->suppress_after_ms;
+    /* have_keypress is published after last_keypress_ms, so observing it
+     * nonzero means the timestamp is already the newest press. */
+    return atomic_get(&data->have_keypress) != 0 &&
+           now_ms - (uint32_t)atomic_get(&data->last_keypress_ms) < data->suppress_after_ms;
 }
 
 static const struct zpt_suppression_policy *

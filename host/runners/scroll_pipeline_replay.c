@@ -26,10 +26,6 @@ static bool replay_suppressed(void *context, const struct zpt_signal *signal, ui
     return ((struct replay_suppression *)context)->active;
 }
 
-struct capture_state {
-    uint32_t outputs;
-};
-
 static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     (void)sink;
     if (signal->kind != ZPT_SIGNAL_SCROLL_STEPS) {
@@ -62,7 +58,6 @@ struct scroll_pipeline_fixture {
     struct zpt_stage constraint_stage;
     struct zpt_stage batcher_stage;
     struct zpt_stage *stages[4];
-    struct capture_state capture;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
 };
@@ -98,7 +93,7 @@ int main(void) {
     fixture.intent_config.settings.activation_distance =
         ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(activation_micrometers);
     fixture.batcher_config.steps_per_millimeter =
-        (zpt_fixed_t)steps_per_meter * ZPT_FIXED_ONE / 1000;
+        ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(steps_per_meter);
 
     fixture.suppression_policy = (struct zpt_suppression_policy){
         .is_suppressed = replay_suppressed,
@@ -137,7 +132,6 @@ int main(void) {
     fixture.sink = (struct zpt_sink){
         .stable_id = "capture",
         .api = &capture_api,
-        .state = &fixture.capture,
     };
     fixture.pipeline = (struct zpt_pipeline){
         .stable_id = "scroll-replay",

@@ -14,7 +14,6 @@ function axisMetrics(outputs, index) {
     absoluteDistance: values.reduce((total, value) => total + Math.abs(value), 0),
     nonzeroFrames: nonzero.length,
     directionChanges,
-    clippedFrames: values.filter((value) => value === 32767 || value === -32768).length,
   };
 }
 
