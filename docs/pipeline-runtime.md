@@ -112,4 +112,6 @@ displacement motion gating over normalized motion, including buffered evidence,
 external suppression policy, and idle/qualification deadlines. The ZMK adapter
 uses the standard input listener as its source-specific processor host and
 resolves its ordered stages from devicetree providers. Its cursor sink remains
-implicit; routing and firmware deadline scheduling remain later slices.
+implicit. A Zephyr executor serializes input pushes with delayable-work flushes
+and reschedules the nearest requested stage deadline after every operation;
+routing remains a later slice.

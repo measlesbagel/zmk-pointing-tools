@@ -124,6 +124,20 @@ deadline integration rather than the identity smoke path.
 deactivation. Increase it only when a deliberately fan-out-capable stage needs
 more bounded dispatches.
 
+## Firmware deadlines and concurrency
+
+Each composed pipeline is hosted by a ZMK executor that serializes input-thread
+pushes and Zephyr work-queue flushes. After every operation it asks the core
+runtime for the nearest absolute deadline, reschedules one delayable work item,
+and calls `zpt_pipeline_flush()` when that deadline is due. A stage therefore
+expires buffered state without requiring a later physical motion frame.
+
+Resetting or deactivating a pipeline clears its core deadlines and cancels
+pending work. A stale work callback that was already running is harmless: it
+rechecks pipeline state while holding the same executor mutex. The adapter
+requires Zephyr's threaded input mode so input processing never tries to take
+the mutex from an interrupt context.
+
 ## Current limits
 
 - The terminal sink is still the fixed cursor sink; stage order is configurable.
@@ -131,8 +145,6 @@ more bounded dispatches.
 - Resolution normalization is available but not yet connected to a pointer
   mapper and quantizer in this identity cursor.
 - There are no calibration, tuning, or observer stages.
-- The Zephyr adapter does not schedule runtime stage deadlines because the
-  identity stage is stateless.
 - The Bridges configuration is not migrated by this slice.
 
 The smoke firmware wires the output of the existing test noise device through
