@@ -26,10 +26,12 @@ independently.
 
 ## Pipeline validation
 
-A pipeline declares one input kind, an ordered array of stage instances, one
-sink, and a dispatch budget. Stage APIs identify their strategy and sink APIs
-identify their output type independently from instance stable IDs. Validation
-checks:
+A pipeline declares one input kind, an ordered array of references to stage
+instances, one sink, and a dispatch budget. References preserve each stage's
+identity and ownership when configuration systems such as devicetree compose
+a pipeline from independently allocated instances. Stage APIs identify their
+strategy and sink APIs identify their output type independently from instance
+stable IDs. Validation checks:
 
 - stable identities and required callbacks;
 - type compatibility at every boundary;

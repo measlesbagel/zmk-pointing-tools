@@ -247,10 +247,11 @@ static struct zpt_signal normalized_signal(uint32_t timestamp_ms, int32_t x, int
 
 static void test_typed_pipeline_and_metadata(void) {
     const struct transform_config normalize_config = {.numerator = 2, .denominator = 1};
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "normalize", .api = &normalize_api, .config = &normalize_config},
         {.stable_id = "pointer-map", .api = &pointer_map_api},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0], &stage_storage[1]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "cursor",
@@ -289,9 +290,10 @@ static void test_typed_pipeline_and_metadata(void) {
 }
 
 static void test_raw_pointer_identity_stage(void) {
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "identity", .api = &zpt_raw_pointer_identity_stage_api},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "cursor",
@@ -331,9 +333,10 @@ static void test_validation_rejects_incompatible_and_shared_state(void) {
         .api = &normalized_sink_api,
         .state = &sink_state,
     };
-    struct zpt_stage incompatible[] = {
+    struct zpt_stage incompatible_storage[] = {
         {.stable_id = "pointer-map", .api = &pointer_map_api},
     };
+    struct zpt_stage *incompatible[] = {&incompatible_storage[0]};
     struct zpt_pipeline bad_types = {
         .stable_id = "bad-types",
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
@@ -344,11 +347,24 @@ static void test_validation_rejects_incompatible_and_shared_state(void) {
     };
     assert(zpt_pipeline_validate(&bad_types) == -EINVAL);
 
+    struct zpt_stage *null_stage[] = {NULL};
+    struct zpt_pipeline missing_stage = {
+        .stable_id = "missing-stage",
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .stages = null_stage,
+        .stage_count = ARRAY_SIZE(null_stage),
+        .sink = &sink,
+        .dispatch_budget = 8,
+    };
+    assert(zpt_pipeline_validate(&missing_stage) == -EINVAL);
+
     struct buffered_stage_state shared_state = {0};
-    struct zpt_stage duplicated_state[] = {
+    struct zpt_stage duplicated_state_storage[] = {
         {.stable_id = "first", .api = &buffered_api, .state = &shared_state},
         {.stable_id = "second", .api = &buffered_api, .state = &shared_state},
     };
+    struct zpt_stage *duplicated_state[] = {&duplicated_state_storage[0],
+                                            &duplicated_state_storage[1]};
     struct zpt_pipeline bad_state = {
         .stable_id = "bad-state",
         .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
@@ -358,12 +374,33 @@ static void test_validation_rejects_incompatible_and_shared_state(void) {
         .dispatch_budget = 8,
     };
     assert(zpt_pipeline_validate(&bad_state) == -EBUSY);
+
+    struct buffered_stage_state owned_state = {0};
+    struct zpt_stage owned_stage = {
+        .stable_id = "owned",
+        .api = &buffered_api,
+        .state = &owned_state,
+    };
+    struct zpt_stage *owned_stages[] = {&owned_stage};
+    struct zpt_pipeline first_owner = {
+        .stable_id = "first-owner",
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .stages = owned_stages,
+        .stage_count = ARRAY_SIZE(owned_stages),
+        .sink = &sink,
+        .dispatch_budget = 8,
+    };
+    struct zpt_pipeline second_owner = first_owner;
+    second_owner.stable_id = "second-owner";
+    assert(zpt_pipeline_validate(&first_owner) == 0);
+    assert(zpt_pipeline_validate(&second_owner) == -EBUSY);
 }
 
 static void test_zero_many_and_dispatch_budget(void) {
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "duplicate", .api = &duplicate_api},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "normalized-sink",
@@ -394,9 +431,10 @@ static void test_zero_many_and_dispatch_budget(void) {
 
 static void test_deadline_flush_and_wrap(void) {
     struct buffered_stage_state buffer = {.delay_ms = 20};
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "buffer", .api = &buffered_api, .state = &buffer},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "normalized-sink",
@@ -437,9 +475,10 @@ static void test_lifecycle_emits_then_resets(void) {
         .emit_on_deactivate = true,
         .delay_ms = 100,
     };
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "buffer", .api = &buffered_api, .state = &buffer},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "normalized-sink",
@@ -475,9 +514,10 @@ static void test_lifecycle_emits_then_resets(void) {
 }
 
 static void test_runtime_rejects_wrong_stage_output(void) {
-    struct zpt_stage stages[] = {
+    struct zpt_stage stage_storage[] = {
         {.stable_id = "wrong-kind", .api = &wrong_kind_api},
     };
+    struct zpt_stage *stages[] = {&stage_storage[0]};
     struct capture_sink_state sink_state = {0};
     struct zpt_sink sink = {
         .stable_id = "normalized-sink",

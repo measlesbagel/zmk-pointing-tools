@@ -49,6 +49,7 @@ struct gate_fixture {
     struct zpt_coherent_displacement_stage_config config;
     struct zpt_coherent_displacement_stage_state state;
     struct zpt_stage stage;
+    struct zpt_stage *stages[1];
     struct capture_state capture;
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
@@ -77,6 +78,7 @@ static void gate_fixture_init(struct gate_fixture *fixture, bool enabled, int64_
         .config = &fixture->config,
         .state = &fixture->state,
     };
+    fixture->stages[0] = &fixture->stage;
     fixture->sink = (struct zpt_sink){
         .stable_id = "capture",
         .api = &capture_api,
@@ -85,7 +87,7 @@ static void gate_fixture_init(struct gate_fixture *fixture, bool enabled, int64_
     fixture->pipeline = (struct zpt_pipeline){
         .stable_id = "gate-test",
         .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
-        .stages = &fixture->stage,
+        .stages = fixture->stages,
         .stage_count = 1,
         .sink = &fixture->sink,
         .dispatch_budget = 3,

@@ -34,7 +34,8 @@ struct zpt_pipeline_processor_data {
     struct zpt_motion_source_state source;
     struct zpt_compact_split_decoder compact_decoder;
     struct zpt_cursor_sink_config sink_config;
-    struct zpt_stage stages[2];
+    struct zpt_stage stage_storage[2];
+    struct zpt_stage *stages[2];
     struct zpt_sink sink;
     struct zpt_pipeline pipeline;
 };
@@ -51,15 +52,17 @@ static int zpt_pipeline_processor_init(const struct device *dev) {
     zpt_compact_split_decoder_init(&data->compact_decoder);
 
     data->sink_config.output_device = dev;
-    data->stages[0] = (struct zpt_stage){
+    data->stage_storage[0] = (struct zpt_stage){
         .stable_id = "orientation",
         .api = &zpt_orthogonal_orientation_stage_api,
         .config = &config->orientation,
     };
-    data->stages[1] = (struct zpt_stage){
+    data->stage_storage[1] = (struct zpt_stage){
         .stable_id = "raw-pointer-identity",
         .api = &zpt_raw_pointer_identity_stage_api,
     };
+    data->stages[0] = &data->stage_storage[0];
+    data->stages[1] = &data->stage_storage[1];
     data->sink = (struct zpt_sink){
         .stable_id = "cursor",
         .api = &zpt_cursor_sink_api,

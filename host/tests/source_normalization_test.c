@@ -11,6 +11,8 @@
 #include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/resolution_normalize.h>
 
+#define ARRAY_SIZE(values) (sizeof(values) / sizeof((values)[0]))
+
 struct capture_state {
     struct zpt_signal signal;
     uint32_t outputs;
@@ -168,6 +170,7 @@ static void test_orient_then_normalize_pipeline(void) {
          .config = &orientation},
         {.stable_id = "resolution", .api = &zpt_resolution_normalize_stage_api},
     };
+    struct zpt_stage *stage_refs[] = {&stages[0], &stages[1]};
     struct capture_state capture = {0};
     struct zpt_sink sink = {
         .stable_id = "capture",
@@ -177,8 +180,8 @@ static void test_orient_then_normalize_pipeline(void) {
     struct zpt_pipeline pipeline = {
         .stable_id = "normalized-source",
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
-        .stages = stages,
-        .stage_count = 2,
+        .stages = stage_refs,
+        .stage_count = ARRAY_SIZE(stage_refs),
         .sink = &sink,
         .dispatch_budget = 4,
     };
