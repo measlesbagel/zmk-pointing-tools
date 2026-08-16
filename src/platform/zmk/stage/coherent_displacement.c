@@ -8,6 +8,8 @@
 #include <zephyr/sys/util.h>
 
 #include <zmk/pointing_tools/platform/zmk/stage_provider.h>
+
+#include "provider_define.h"
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 
 struct zpt_coherent_displacement_provider_config {
@@ -20,13 +22,8 @@ struct zpt_coherent_displacement_provider_data {
     struct zpt_coherent_displacement_stage_state state;
 };
 
-static int coherent_displacement_provider_init(const struct device *dev) {
-    const struct zpt_coherent_displacement_provider_config *config = dev->config;
-    struct zpt_coherent_displacement_provider_data *data = dev->data;
-    return zpt_zmk_stage_provider_init(dev, config->stable_id, &zpt_coherent_displacement_stage_api,
-                                       &config->stage, &data->state);
-}
-
+ZPT_STAGE_PROVIDER_INIT_SIMPLE(coherent_displacement, &zpt_coherent_displacement_stage_api,
+                               &config->stage, &data->state)
 #define ZPT_COHERENT_DISPLACEMENT_PROVIDER_DEFINE(inst)                                            \
     BUILD_ASSERT(DT_INST_PROP(inst, activation_distance_micrometers) > 0,                          \
                  "activation-distance-micrometers must be positive");                              \
@@ -57,9 +54,6 @@ static int coherent_displacement_provider_init(const struct device *dev) {
                         },                                                                         \
                 },                                                                                 \
     };                                                                                             \
-    DEVICE_DT_INST_DEFINE(inst, coherent_displacement_provider_init, NULL,                         \
-                          &zpt_coherent_displacement_provider_data_##inst,                         \
-                          &zpt_coherent_displacement_provider_config_##inst, POST_KERNEL,          \
-                          CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &zpt_stage_provider_api);
+    ZPT_STAGE_PROVIDER_DEVICE_DEFINE(inst, coherent_displacement)
 
 DT_INST_FOREACH_STATUS_OKAY(ZPT_COHERENT_DISPLACEMENT_PROVIDER_DEFINE)
