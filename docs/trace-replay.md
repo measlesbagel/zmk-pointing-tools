@@ -61,8 +61,9 @@ Supported pipeline kinds are currently:
   coherent-displacement gate;
 - `composed-scroll`, backed by resolution normalization, the axis-intent
   estimator, the axis-constraint, and the scroll batcher;
-- `composed-text`, backed by resolution normalization and the
-  text-navigation stage;
+- `composed-text`, backed by resolution normalization, the shared
+  axis-intent estimator, the axis-constraint, and the text-navigation
+  threshold mapper;
 - `cursor-pipeline`, backed by resolution normalization, the cursor transfer,
   and the sub-pixel cursor quantizer.
 
