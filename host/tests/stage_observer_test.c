@@ -79,6 +79,17 @@ static zpt_fixed_t counts_to_q16_mm(int32_t counts) {
     return millimeters;
 }
 
+static int push_annotated(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
+                          uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y, uint8_t axis_intent) {
+    struct zpt_signal signal = {
+        .kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .metadata = {.observed_at_ms = timestamp},
+        .annotations = {.axis_intent = axis_intent},
+        .data.fixed_vector = {.x = x, .y = y},
+    };
+    return zpt_pipeline_push(pipeline, &signal, result);
+}
+
 static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
                            uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y) {
     struct zpt_signal signal = {
@@ -231,8 +242,6 @@ static void test_text_observer_sees_actions(void) {
         .horizontal_threshold = counts_to_q16_mm(75),
         .vertical_threshold = counts_to_q16_mm(75),
         .idle_timeout_ms = 40,
-        .activation_distance = counts_to_q16_mm(35),
-        .engage_ratio_percent = 150,
     };
     struct zpt_text_nav_state state = {0};
     struct observer_state observer = {0};
@@ -258,9 +267,12 @@ static void test_text_observer_sees_actions(void) {
     assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
 
     struct zpt_pipeline_result result;
-    assert(push_normalized(&pipeline, &result, 0, counts_to_q16_mm(20), counts_to_q16_mm(3)) == 0);
-    assert(push_normalized(&pipeline, &result, 8, counts_to_q16_mm(25), counts_to_q16_mm(-2)) == 0);
-    assert(push_normalized(&pipeline, &result, 16, counts_to_q16_mm(30), counts_to_q16_mm(4)) == 0);
+    assert(push_annotated(&pipeline, &result, 0, counts_to_q16_mm(20), counts_to_q16_mm(3),
+                          ZPT_AXIS_INTENT_HORIZONTAL) == 0);
+    assert(push_annotated(&pipeline, &result, 8, counts_to_q16_mm(25), counts_to_q16_mm(-2),
+                          ZPT_AXIS_INTENT_HORIZONTAL) == 0);
+    assert(push_annotated(&pipeline, &result, 16, counts_to_q16_mm(30), counts_to_q16_mm(4),
+                          ZPT_AXIS_INTENT_HORIZONTAL) == 0);
     assert(has_event(&observer, ZPT_STAGE_EVENT_ACTION, ZPT_TEXT_NAV_RIGHT));
 }
 

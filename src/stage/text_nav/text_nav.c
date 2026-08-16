@@ -15,8 +15,7 @@ static int text_nav_stage_activate(struct zpt_stage *stage, enum zpt_reset_reaso
     }
     const struct zpt_text_nav_config *config = stage->config;
     return config->horizontal_threshold <= 0 || config->vertical_threshold <= 0 ||
-                   config->idle_timeout_ms == 0U || config->activation_distance <= 0 ||
-                   config->engage_ratio_percent == 0U
+                   config->idle_timeout_ms == 0U
                ? -EINVAL
                : 0;
 }
@@ -41,12 +40,10 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     struct zpt_text_nav_state *state = stage->state;
     uint32_t now = zpt_stage_now_ms(context);
     uint32_t elapsed = state->have_last_frame ? now - state->last_frame_ms : 0U;
-    bool continuing_gesture = state->have_last_frame;
 
-    if (!continuing_gesture || elapsed >= config->idle_timeout_ms) {
+    if (!state->have_last_frame || elapsed >= config->idle_timeout_ms) {
         state->accumulated_x = 0;
         state->accumulated_y = 0;
-        state->intent = ZPT_AXIS_INTENT_UNDECIDED;
     }
     state->last_frame_ms = now;
     state->have_last_frame = true;
@@ -54,56 +51,46 @@ static int text_nav_stage_process(struct zpt_stage *stage, const struct zpt_sign
     int64_t x = signal->data.fixed_vector.x;
     int64_t y = signal->data.fixed_vector.y;
 
-    if (state->intent == ZPT_AXIS_INTENT_UNDECIDED) {
-        state->accumulated_x = zpt_fixed_saturating_add(state->accumulated_x, x);
-        state->accumulated_y = zpt_fixed_saturating_add(state->accumulated_y, y);
-
-        uint64_t horizontal = zpt_fixed_magnitude(state->accumulated_x);
-        uint64_t vertical = zpt_fixed_magnitude(state->accumulated_y);
-        if (horizontal + vertical < (uint64_t)config->activation_distance) {
-            state->last_direction = ZPT_TEXT_NAV_NONE;
-            return 0;
-        }
-
-        if (zpt_fixed_ratio_dominates(horizontal, vertical, config->engage_ratio_percent)) {
-            state->intent = ZPT_AXIS_INTENT_HORIZONTAL;
-            state->accumulated_y = 0;
-        } else if (zpt_fixed_ratio_dominates(vertical, horizontal, config->engage_ratio_percent)) {
-            state->intent = ZPT_AXIS_INTENT_VERTICAL;
-            state->accumulated_x = 0;
-        } else {
-            state->last_direction = ZPT_TEXT_NAV_NONE;
-            return 0;
-        }
-    } else if (state->intent == ZPT_AXIS_INTENT_HORIZONTAL) {
-        state->accumulated_x = zpt_fixed_saturating_add(state->accumulated_x, x);
-    } else {
-        state->accumulated_y = zpt_fixed_saturating_add(state->accumulated_y, y);
-    }
-
-    int64_t *movement;
+    int64_t accumulated;
     int64_t threshold;
     enum zpt_text_nav_direction negative_direction;
     enum zpt_text_nav_direction positive_direction;
-    if (state->intent == ZPT_AXIS_INTENT_HORIZONTAL) {
-        movement = &state->accumulated_x;
+    switch (signal->annotations.axis_intent) {
+    case ZPT_AXIS_INTENT_HORIZONTAL:
+        accumulated = zpt_fixed_saturating_add(state->accumulated_x, x);
         threshold = config->horizontal_threshold;
         negative_direction = ZPT_TEXT_NAV_LEFT;
         positive_direction = ZPT_TEXT_NAV_RIGHT;
-    } else {
-        movement = &state->accumulated_y;
+        break;
+    case ZPT_AXIS_INTENT_VERTICAL:
+        accumulated = zpt_fixed_saturating_add(state->accumulated_y, y);
         threshold = config->vertical_threshold;
         negative_direction = ZPT_TEXT_NAV_UP;
         positive_direction = ZPT_TEXT_NAV_DOWN;
-    }
-
-    if (zpt_fixed_magnitude(*movement) < (uint64_t)threshold) {
+        break;
+    default:
         state->last_direction = ZPT_TEXT_NAV_NONE;
         return 0;
     }
 
-    enum zpt_text_nav_direction direction = *movement < 0 ? negative_direction : positive_direction;
-    *movement += *movement < 0 ? threshold : -threshold;
+    if (zpt_fixed_magnitude(accumulated) < (uint64_t)threshold) {
+        if (signal->annotations.axis_intent == ZPT_AXIS_INTENT_HORIZONTAL) {
+            state->accumulated_x = accumulated;
+        } else {
+            state->accumulated_y = accumulated;
+        }
+        state->last_direction = ZPT_TEXT_NAV_NONE;
+        return 0;
+    }
+
+    enum zpt_text_nav_direction direction =
+        accumulated < 0 ? negative_direction : positive_direction;
+    accumulated += accumulated < 0 ? threshold : -threshold;
+    if (signal->annotations.axis_intent == ZPT_AXIS_INTENT_HORIZONTAL) {
+        state->accumulated_x = accumulated;
+    } else {
+        state->accumulated_y = accumulated;
+    }
     state->last_direction = direction;
 
     struct zpt_signal output = {0};
