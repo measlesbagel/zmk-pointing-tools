@@ -41,17 +41,29 @@
         sink = <&zpt_test_cursor_sink>;
     };
 
+    zpt_test_cursor_router: zpt_test_cursor_router {
+        compatible = "measlesbagel,zpt-router";
+        stable-id = "test-cursor-router";
+        pipelines = <&zpt_test_cursor_pipeline>;
+        default-pipeline = <&zpt_test_cursor_pipeline>;
+
+        test-layer-route {
+            layers = <1>;
+            pipeline = <&zpt_test_cursor_pipeline>;
+        };
+    };
+
     zpt_test_cursor_source: zpt_test_cursor_source {
-        compatible = "measlesbagel,zpt-input-processor-pipeline";
+        compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
         source-id = <1>;
         resolution-cpi = <700>;
-        pipeline = <&zpt_test_cursor_pipeline>;
+        router = <&zpt_test_cursor_router>;
     };
 
     zpt_test_cursor_output: zpt_test_cursor_output {
         compatible = "zmk,input-listener";
-        device = <&zpt_test_cursor_source>;
+        device = <&zpt_test_cursor_router>;
         input-processors = <&zpt_test_output>;
     };
 
@@ -85,20 +97,27 @@
         sink = <&zpt_test_compact_sink>;
     };
 
+    zpt_test_compact_router: zpt_test_compact_router {
+        compatible = "measlesbagel,zpt-router";
+        stable-id = "test-compact-router";
+        pipelines = <&zpt_test_compact_pipeline>;
+        default-pipeline = <&zpt_test_compact_pipeline>;
+    };
+
     zpt_test_compact_source: zpt_test_compact_source {
-        compatible = "measlesbagel,zpt-input-processor-pipeline";
+        compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
         source-id = <2>;
         resolution-cpi = <700>;
         transported;
         compact-event-code = <INPUT_REL_Z>;
         compact-transport-coalesced;
-        pipeline = <&zpt_test_compact_pipeline>;
+        router = <&zpt_test_compact_router>;
     };
 
     zpt_test_compact_output: zpt_test_compact_output {
         compatible = "zmk,input-listener";
-        device = <&zpt_test_compact_source>;
+        device = <&zpt_test_compact_router>;
     };
 
     /* Instantiate normalized, stateful stage providers even though the

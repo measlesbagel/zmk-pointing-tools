@@ -15,7 +15,7 @@ peripheral sensor X/Y events
   -> one configured relative input event
   -> ZMK input split
   -> central proxy
-  -> pipeline ingress compact decoder
+  -> source ingress compact decoder
   -> canonical raw motion and transport diagnostics
 ```
 
@@ -110,16 +110,17 @@ compact_encoder: compact_encoder {
 };
 ```
 
-The matching decoder is configured on a transported central pipeline ingress
-so decoded sequence and timing metadata enter the canonical source directly:
+The matching decoder is configured on a transported central source ingress so
+decoded sequence and timing metadata enter the canonical source directly. The
+router and its pipelines are configured independently:
 
 ```dts
-compact_cursor_pipeline: compact_cursor_pipeline {
-    compatible = "measlesbagel,zpt-input-processor-pipeline";
+compact_cursor_source: compact_cursor_source {
+    compatible = "measlesbagel,zpt-input-processor-source";
     #input-processor-cells = <0>;
-    stable-id = "left-cursor";
     source-id = <2>;
     resolution-cpi = <700>;
+    router = <&left_router>;
     transported;
     compact-event-code = <INPUT_REL_Z>;
     compact-transport-coalesced;

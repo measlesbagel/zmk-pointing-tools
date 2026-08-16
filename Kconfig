@@ -2,7 +2,7 @@ DT_COMPAT_ZPT_TRACE := measlesbagel,zpt-input-processor-trace
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_SCROLL := measlesbagel,zpt-input-processor-scroll
 DT_COMPAT_ZPT_NOISE_FILTER := measlesbagel,zpt-input-processor-noise-filter
-DT_COMPAT_ZPT_PIPELINE := measlesbagel,zpt-input-processor-pipeline
+DT_COMPAT_ZPT_ROUTER := measlesbagel,zpt-router
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
 DT_COMPAT_ZPT_TEXT_NAV := measlesbagel,zpt-input-processor-text-nav
 DT_COMPAT_ZPT_SIGN_EXTEND_XY := measlesbagel,zpt-input-processor-sign-extend-xy
@@ -35,16 +35,17 @@ config ZMK_POINTING_TOOLS_NOISE_FILTER
 
 config ZMK_POINTING_TOOLS_PIPELINE
     bool "Composable motion pipeline boundary"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_PIPELINE))
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_ROUTER))
     depends on ZMK_POINTING
     depends on INPUT_MODE_THREAD
     depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
     help
       Reconstruct synchronized X/Y frames with source identity, transport, and
-      CPI metadata; execute an ordered devicetree composition through the
-      shared motion pipeline runtime; schedule stateful-stage deadlines; and
-      emit terminal cursor output through a virtual input device. The terminal
-      sink remains an identity cursor path during the migration.
+      CPI metadata; route it through ordered devicetree pipeline compositions;
+      apply explicit enter/leave lifecycle on ZMK layer changes; schedule
+      stateful-stage deadlines; and emit terminal cursor output through the
+      router's virtual input device. The only terminal sink currently provided
+      is cursor output.
 
 config ZMK_POINTING_TOOLS_MOTION_GATE_CORE
     bool
