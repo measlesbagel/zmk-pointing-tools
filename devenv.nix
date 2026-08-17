@@ -19,6 +19,7 @@ in
     pkgs.cmake
     pkgs.ninja
     pkgs.clang-tools
+    pkgs.cppcheck
     pkgs.python3Packages.lizard
   ];
 
@@ -43,6 +44,16 @@ in
     "host:test:asan" = {
       description = "Build and run host tests with ASan/UBSan";
       exec = "cmake -S host -B build/host-asan -G Ninja -DZPT_ENABLE_SANITIZERS=ON && cmake --build build/host-asan && ctest --test-dir build/host-asan --output-on-failure";
+    };
+
+    "c:tidy:check" = {
+      description = "Run clang-tidy over the host compile database";
+      exec = "cmake -S host -B build/host -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/host && run-clang-tidy -p build/host";
+    };
+
+    "c:cppcheck:check" = {
+      description = "Run cppcheck over C sources";
+      exec = """cppcheck --enable=warning,performance,portability --std=c11 -I include --include=tooling/cppcheck/preinclude.h --inline-suppr --suppress=missingIncludeSystem --suppressions-list .cppcheck-suppressions --error-exitcode=1 src include host""";
     };
 
     "javascript:check" = {
@@ -77,6 +88,8 @@ in
       after = [
         "c:format:check"
         "c:complexity:check"
+        "c:tidy:check"
+        "c:cppcheck:check"
         "javascript:check"
         "javascript:test"
         "host:test"

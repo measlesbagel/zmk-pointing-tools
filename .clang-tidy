@@ -1,0 +1,39 @@
+---
+# Clang-tidy configuration for the C sources in this repository.
+#
+# Scope: firmware core (src/core, src/stage, src/source, include/) and the
+# host harness (host/). The platform layer (src/platform/zmk) is analyzed by
+# the same configuration through the firmware compile database (see
+# docs/quality.md, issue #76).
+#
+# The check set favors correctness (bugprone, clang-analyzer, misc,
+# portability) over style; style is enforced by clang-format instead.
+# Cognitive complexity complements the lizard cyclomatic gate.
+#
+# Excluded:
+# - bugprone-easily-swappable-parameters: pure noise for this codebase
+#   (parameters are documented in headers).
+# - clang-analyzer-security.insecureAPI.*: the recommended C11 Annex K
+#   bounded alternatives (sscanf_s & co.) do not exist on the Zephyr/newlib
+#   target, and the only affected code parses trusted local input read into
+#   bounded buffers by fgets().
+# - misc-include-cleaner: churn-only for a codebase with stable includes.
+# - misc-non-private-member-variables-in-classes: C++-only.
+# - performance-enum-size: enums are used as typed constants; resizing them
+#   would change ABI without benefit.
+Checks: >
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.*,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  performance-*,
+  -performance-enum-size,
+  portability-*,
+  readability-function-cognitive-complexity
+WarningsAsErrors: '*'
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: '25'
+  readability-function-cognitive-complexity.DescribeBasicIncrements: 'true'

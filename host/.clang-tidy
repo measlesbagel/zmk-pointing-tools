@@ -1,0 +1,26 @@
+---
+# Clang-tidy configuration for the host test/runner harness.
+#
+# The check set mirrors the root .clang-tidy (this nearest config fully
+# replaces it for files under host/); the only difference is the cognitive
+# complexity threshold. Test functions are long sequential lists of verify
+# blocks, which inflate cognitive complexity without indicating the nested
+# decision logic the check exists to catch. The threshold is therefore a
+# ratchet set above the current worst function (84) and should be lowered
+# over time as tests are decomposed (see docs/quality.md, issue #76).
+Checks: >
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.*,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  performance-*,
+  -performance-enum-size,
+  portability-*,
+  readability-function-cognitive-complexity
+WarningsAsErrors: '*'
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: '100'
+  readability-function-cognitive-complexity.DescribeBasicIncrements: 'true'

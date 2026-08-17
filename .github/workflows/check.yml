@@ -41,6 +41,26 @@ jobs:
           lizard -l c -C 30 -w src include
           lizard -l c -C 40 -w host
 
+  c-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Configure host build with compile database
+        run: cmake -S host -B build/host-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build host targets
+        run: cmake --build build/host-tidy
+      - name: Run clang-tidy over the host compile database
+        run: run-clang-tidy -q -p build/host-tidy
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,performance,portability --std=c11 \
+            -I include --include=tooling/cppcheck/preinclude.h \
+            --inline-suppr --suppress=missingIncludeSystem \
+            --suppressions-list .cppcheck-suppressions \
+            --error-exitcode=1 src include host
+
   host-sanitizers:
     runs-on: ubuntu-latest
     steps:
