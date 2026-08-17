@@ -35,7 +35,6 @@
     zpt_test_cursor_quantizer: zpt_test_cursor_quantizer {
         compatible = "measlesbagel,zpt-stage-cursor-quantizer";
         stable-id = "cursor-quantizer";
-        units-per-meter = <27559>;
     };
 
     zpt_test_cursor_sink: zpt_test_cursor_sink {
@@ -213,7 +212,6 @@
     zpt_test_compact_quantizer: zpt_test_compact_quantizer {
         compatible = "measlesbagel,zpt-stage-cursor-quantizer";
         stable-id = "compact-quantizer";
-        units-per-meter = <27559>;
     };
 
     zpt_test_compact_sink: zpt_test_compact_sink {

@@ -96,7 +96,6 @@ the cursor path is:
     my_cursor_quantizer: my_cursor_quantizer {
         compatible = "measlesbagel,zpt-stage-cursor-quantizer";
         stable-id = "cursor-quantizer";
-        units-per-meter = <27559>;
     };
 
     my_cursor_sink: my_cursor_sink {

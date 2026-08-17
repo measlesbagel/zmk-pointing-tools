@@ -15,8 +15,7 @@
     "settings": {
       "cpi": 700,
       "scaleMultiplier": 1,
-      "scaleDivisor": 1,
-      "unitsPerMeter": 27559
+      "scaleDivisor": 1
     }
   },
   "events": [

@@ -114,8 +114,10 @@ The cursor transfer stage applies a base gain to Q16 millimetre motion,
 saturating at the fixed-point limits with a clipped flag, and the cursor
 quantizer converts normalized motion to integer-valued pointer deltas while
 carrying the fractional remainder between frames so sub-pixel movement
-accumulates exactly. With a units-per-meter factor derived from the sensor
-CPI and identity gain, the composed path reproduces the count-domain cursor
+accumulates exactly. The quantizer derives its output factor from each frame's
+resolution-CPI (ZPT_CPI_TO_FIXED_PER_MILLIMETER), so a cursor travels the same
+physical distance as the ball at its CPI and the transfer gain scales on top;
+with identity gain the composed path reproduces the count-domain cursor
 behavior within one sub-count unit.
 
 Stages carry an optional observer slot that receives generic decision

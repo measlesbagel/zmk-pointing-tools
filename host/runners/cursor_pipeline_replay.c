@@ -29,7 +29,6 @@ static const struct zpt_sink_api capture_api = {
 
 struct cursor_pipeline_fixture {
     struct zpt_cursor_transfer_config transfer_config;
-    struct zpt_cursor_quantizer_config quantizer_config;
     struct zpt_cursor_quantizer_state quantizer_state;
     struct zpt_stage normalize_stage;
     struct zpt_stage transfer_stage;
@@ -44,13 +43,12 @@ int main(void) {
     uint16_t resolution_cpi;
     uint16_t scale_multiplier;
     uint16_t scale_divisor;
-    int32_t units_per_meter;
     char line[256];
 
     if (fgets(line, sizeof(line), stdin) == NULL ||
-        sscanf(line, "C %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNd32, &resolution_cpi,
-               &scale_multiplier, &scale_divisor, &units_per_meter) != 4 ||
-        resolution_cpi == 0 || scale_divisor == 0 || units_per_meter <= 0) {
+        sscanf(line, "C %" SCNu16 " %" SCNu16 " %" SCNu16, &resolution_cpi, &scale_multiplier,
+               &scale_divisor) != 3 ||
+        resolution_cpi == 0 || scale_divisor == 0) {
         fputs("invalid replay configuration\n", stderr);
         return 2;
     }
@@ -58,9 +56,6 @@ int main(void) {
     fixture.transfer_config = (struct zpt_cursor_transfer_config){
         .scale_multiplier = scale_multiplier,
         .scale_divisor = scale_divisor,
-    };
-    fixture.quantizer_config = (struct zpt_cursor_quantizer_config){
-        .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(units_per_meter),
     };
     fixture.normalize_stage = (struct zpt_stage){
         .stable_id = "resolution-normalize",
@@ -74,7 +69,6 @@ int main(void) {
     fixture.quantizer_stage = (struct zpt_stage){
         .stable_id = "cursor-quantizer",
         .api = &zpt_cursor_quantizer_stage_api,
-        .config = &fixture.quantizer_config,
         .state = &fixture.quantizer_state,
     };
     fixture.stages[0] = &fixture.normalize_stage;

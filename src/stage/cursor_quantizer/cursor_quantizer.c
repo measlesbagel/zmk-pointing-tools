@@ -9,11 +9,8 @@
 
 static int cursor_quantizer_stage_activate(struct zpt_stage *stage, enum zpt_reset_reason reason) {
     (void)reason;
-    if (stage == NULL || stage->config == NULL || stage->state == NULL) {
-        return -EINVAL;
-    }
-    const struct zpt_cursor_quantizer_config *config = stage->config;
-    return config->units_per_millimeter <= 0 ? -EINVAL : 0;
+    /* No config: the output factor is derived from each frame's CPI. */
+    return (stage == NULL || stage->state == NULL) ? -EINVAL : 0;
 }
 
 static void cursor_quantizer_stage_reset(struct zpt_stage *stage, enum zpt_reset_reason reason) {
@@ -28,19 +25,20 @@ static void cursor_quantizer_stage_reset(struct zpt_stage *stage, enum zpt_reset
 
 static int cursor_quantizer_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                           struct zpt_stage_context *context) {
-    if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
-        stage->state == NULL || signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION) {
+    if (stage == NULL || signal == NULL || context == NULL || stage->state == NULL ||
+        signal->kind != ZPT_SIGNAL_NORMALIZED_MOTION || signal->metadata.resolution_cpi == 0) {
         return -EINVAL;
     }
 
-    const struct zpt_cursor_quantizer_config *config = stage->config;
     struct zpt_cursor_quantizer_state *state = stage->state;
+    zpt_fixed_t units_per_millimeter =
+        ZPT_CPI_TO_FIXED_PER_MILLIMETER(signal->metadata.resolution_cpi);
 
     int64_t units_x = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.x, config->units_per_millimeter),
+        zpt_fixed_multiply(signal->data.fixed_vector.x, units_per_millimeter),
         state->remainder_x);
     int64_t units_y = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.y, config->units_per_millimeter),
+        zpt_fixed_multiply(signal->data.fixed_vector.y, units_per_millimeter),
         state->remainder_y);
     /* Defer only the fractional part of the truncated value; whole units
      * beyond the signed 16-bit HID movement range are dropped by the clamp,

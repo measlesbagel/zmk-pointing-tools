@@ -107,3 +107,10 @@ static inline int zpt_signal_kind_valid(enum zpt_signal_kind kind) {
  * millimetre. The devicetree and fixture surfaces keep the readable
  * per-metre convention while stages scale millimetre signals directly. */
 #define ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(value) (((zpt_fixed_t)(value) * ZPT_FIXED_ONE) / 1000)
+
+/* Derive the 1:1 cursor output factor (pointer units per millimetre, Q16)
+ * from a sensor resolution in counts-per-inch: CPI/25.4 mm-per-inch scaled
+ * to Q16. The 10/254 clears the 25.4 decimal without floating point. With
+ * this factor a cursor travels the same physical distance as the ball at its
+ * CPI; the cursor-transfer gain scales on top. */
+#define ZPT_CPI_TO_FIXED_PER_MILLIMETER(cpi) (((int64_t)(cpi) * ZPT_FIXED_ONE * 10) / 254)
