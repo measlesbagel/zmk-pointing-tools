@@ -82,6 +82,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history of the head branch: the script diffs
+          # origin/<base>...HEAD and GitDiffCheck needs the parent of every
+          # commit in the range. (On stacked PRs GITHUB_BASE_REF is the
+          # trunk, so the range covers the whole stack.)
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
       - name: Set up West and Zephyr SDK
         uses: urob/zmk-actions/setup-sdk@v12.0.0
         with:
@@ -123,6 +130,6 @@ jobs:
           # columns), which conflicts with this repository's clang-format
           # style. Kconfig and devicetree correctness are already gated by
           # the firmware build.
-          python zephyr/scripts/ci/check_compliance.py -c "$range" \
+          python "$ZEPHYR_BASE/scripts/ci/check_compliance.py" -c "$range" \
             -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
             -m GitDiffCheck -m TextEncoding -m BinaryFiles
