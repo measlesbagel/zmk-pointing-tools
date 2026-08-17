@@ -35,11 +35,9 @@ static int cursor_quantizer_stage_process(struct zpt_stage *stage, const struct 
         ZPT_CPI_TO_FIXED_PER_MILLIMETER(signal->metadata.resolution_cpi);
 
     int64_t units_x = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.x, units_per_millimeter),
-        state->remainder_x);
+        zpt_fixed_multiply(signal->data.fixed_vector.x, units_per_millimeter), state->remainder_x);
     int64_t units_y = zpt_fixed_saturating_add(
-        zpt_fixed_multiply(signal->data.fixed_vector.y, units_per_millimeter),
-        state->remainder_y);
+        zpt_fixed_multiply(signal->data.fixed_vector.y, units_per_millimeter), state->remainder_y);
     /* Defer only the fractional part of the truncated value; whole units
      * beyond the signed 16-bit HID movement range are dropped by the clamp,
      * so a clamped frame cannot poison the next frame's remainder. */

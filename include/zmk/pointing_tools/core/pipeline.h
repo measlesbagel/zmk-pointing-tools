@@ -144,8 +144,7 @@ bool zpt_pipeline_next_deadline(const struct zpt_pipeline *pipeline, uint32_t no
 int zpt_stage_emit(struct zpt_stage_context *context, const struct zpt_signal *signal);
 
 /* Notify the stage's observer of a decision; a no-op without an observer. */
-void zpt_stage_notify(struct zpt_stage_context *context, enum zpt_stage_event event,
-                      int64_t value);
+void zpt_stage_notify(struct zpt_stage_context *context, enum zpt_stage_event event, int64_t value);
 int zpt_stage_schedule_flush(struct zpt_stage_context *context, uint32_t deadline_ms);
 void zpt_stage_cancel_flush(struct zpt_stage_context *context);
 uint32_t zpt_stage_now_ms(const struct zpt_stage_context *context);
