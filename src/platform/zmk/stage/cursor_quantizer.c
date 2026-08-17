@@ -14,7 +14,6 @@
 
 struct zpt_cursor_quantizer_provider_config {
     const char *stable_id;
-    struct zpt_cursor_quantizer_config stage;
 };
 
 struct zpt_cursor_quantizer_provider_data {
@@ -22,19 +21,13 @@ struct zpt_cursor_quantizer_provider_data {
     struct zpt_cursor_quantizer_state state;
 };
 
-ZPT_STAGE_PROVIDER_INIT_SIMPLE(cursor_quantizer, &zpt_cursor_quantizer_stage_api, &config->stage,
+ZPT_STAGE_PROVIDER_INIT_SIMPLE(cursor_quantizer, &zpt_cursor_quantizer_stage_api, NULL,
                                &data->state)
 #define ZPT_CURSOR_QUANTIZER_PROVIDER_DEFINE(inst)                                                 \
-    BUILD_ASSERT(DT_INST_PROP(inst, units_per_meter) > 0, "units-per-meter must be positive");     \
     static struct zpt_cursor_quantizer_provider_data zpt_cursor_quantizer_provider_data_##inst;    \
     static const struct zpt_cursor_quantizer_provider_config                                       \
         zpt_cursor_quantizer_provider_config_##inst = {                                            \
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
-            .stage =                                                                               \
-                {                                                                                  \
-                    .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(                 \
-                        DT_INST_PROP(inst, units_per_meter)),                                      \
-                },                                                                                 \
     };                                                                                             \
     ZPT_STAGE_PROVIDER_DEVICE_DEFINE(inst, cursor_quantizer)
 

@@ -29,8 +29,8 @@ static const struct zpt_sink_api capture_api = {
 };
 
 struct cursor_fixture {
+    uint16_t cpi;
     struct zpt_cursor_transfer_config transfer_config;
-    struct zpt_cursor_quantizer_config quantizer_config;
     struct zpt_cursor_quantizer_state quantizer_state;
     struct zpt_stage transfer_stage;
     struct zpt_stage quantizer_stage;
@@ -41,14 +41,12 @@ struct cursor_fixture {
 };
 
 static void cursor_fixture_init(struct cursor_fixture *fixture, uint16_t multiplier,
-                                uint16_t divisor, int64_t units_per_meter) {
+                                uint16_t divisor, uint16_t cpi) {
     *fixture = (struct cursor_fixture){0};
+    fixture->cpi = cpi;
     fixture->transfer_config = (struct zpt_cursor_transfer_config){
         .scale_multiplier = multiplier,
         .scale_divisor = divisor,
-    };
-    fixture->quantizer_config = (struct zpt_cursor_quantizer_config){
-        .units_per_millimeter = units_per_meter,
     };
     fixture->transfer_stage = (struct zpt_stage){
         .stable_id = "cursor-transfer",
@@ -58,7 +56,6 @@ static void cursor_fixture_init(struct cursor_fixture *fixture, uint16_t multipl
     fixture->quantizer_stage = (struct zpt_stage){
         .stable_id = "cursor-quantizer",
         .api = &zpt_cursor_quantizer_stage_api,
-        .config = &fixture->quantizer_config,
         .state = &fixture->quantizer_state,
     };
     fixture->stages[0] = &fixture->transfer_stage;
@@ -81,10 +78,10 @@ static void cursor_fixture_init(struct cursor_fixture *fixture, uint16_t multipl
 }
 
 static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_result *result,
-                           uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y) {
+                           uint32_t timestamp, zpt_fixed_t x, zpt_fixed_t y, uint16_t cpi) {
     struct zpt_signal signal = {
         .kind = ZPT_SIGNAL_NORMALIZED_MOTION,
-        .metadata = {.observed_at_ms = timestamp},
+        .metadata = {.observed_at_ms = timestamp, .resolution_cpi = cpi},
         .data.fixed_vector = {.x = x, .y = y},
     };
     return zpt_pipeline_push(pipeline, &signal, result);
@@ -92,15 +89,16 @@ static int push_normalized(struct zpt_pipeline *pipeline, struct zpt_pipeline_re
 
 static void test_transfer_applies_gain_and_flags_clipping(void) {
     struct cursor_fixture fixture;
-    cursor_fixture_init(&fixture, 2, 1, ZPT_FIXED_ONE);
+    /* CPI 254 derives a 10 units/mm factor, so 1 mm of motion == 10 units. */
+    cursor_fixture_init(&fixture, 2, 1, 254);
 
     struct zpt_pipeline_result result;
     assert(push_normalized(&fixture.pipeline, &result, 0, ZPT_FIXED_ONE + ZPT_FIXED_ONE / 2,
-                           -ZPT_FIXED_ONE) == 0);
+                           -ZPT_FIXED_ONE, fixture.cpi) == 0);
     assert(fixture.capture.outputs == 1);
-    /* 1.5 mm doubled is 3 mm; the quantizer with 1 unit/m truncates to 3. */
-    assert(fixture.capture.signal.data.delta.x == 3);
-    assert(fixture.capture.signal.data.delta.y == -2);
+    /* 1.5 mm doubled is 3 mm; at 10 units/mm that is 30 units (y: -2 mm -> -20). */
+    assert(fixture.capture.signal.data.delta.x == 30);
+    assert(fixture.capture.signal.data.delta.y == -20);
 }
 
 static void test_transfer_saturates_with_clipped_flag(void) {
@@ -138,36 +136,42 @@ static void test_transfer_saturates_with_clipped_flag(void) {
 
 static void test_quantizer_accumulates_sub_pixel_remainders(void) {
     struct cursor_fixture fixture;
-    /* 1000 units per metre: one unit per millimetre. */
-    cursor_fixture_init(&fixture, 1, 1, ZPT_FIXED_ONE);
+    /* CPI 254 derives a 10 units/mm factor, so 0.1 mm is one unit. 0.05 mm
+     * (ZPT_FIXED_ONE/20) is sub-unit and accumulates across frames. */
+    cursor_fixture_init(&fixture, 1, 1, 254);
 
     struct zpt_pipeline_result result;
-    /* Half a millimetre twice accumulates to one unit. */
-    assert(push_normalized(&fixture.pipeline, &result, 0, ZPT_FIXED_ONE / 2, 0) == 0);
+    /* Three sub-unit frames accumulate to one output unit. */
+    assert(push_normalized(&fixture.pipeline, &result, 0, ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
     assert(fixture.capture.signal.data.delta.x == 0);
-    assert(push_normalized(&fixture.pipeline, &result, 8, ZPT_FIXED_ONE / 2, 0) == 0);
+    assert(fixture.quantizer_state.remainder_x == 32760);
+    assert(push_normalized(&fixture.pipeline, &result, 8, ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(fixture.capture.signal.data.delta.x == 0);
+    assert(fixture.quantizer_state.remainder_x == 65520);
+    assert(push_normalized(&fixture.pipeline, &result, 16, ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
     assert(fixture.capture.signal.data.delta.x == 1);
-    assert(fixture.quantizer_state.remainder_x == 0);
+    assert(fixture.quantizer_state.remainder_x == 32744);
 
-    /* Negative sub-pixel motion carries the sign correctly. */
-    assert(push_normalized(&fixture.pipeline, &result, 16, -ZPT_FIXED_ONE / 2, 0) == 0);
+    /* Negative sub-pixel motion carries the sign correctly (fresh state). */
+    cursor_fixture_init(&fixture, 1, 1, 254);
+    assert(push_normalized(&fixture.pipeline, &result, 24, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
     assert(fixture.capture.signal.data.delta.x == 0);
-    assert(push_normalized(&fixture.pipeline, &result, 24, -ZPT_FIXED_ONE / 2, 0) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 32, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(fixture.capture.signal.data.delta.x == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 40, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
     assert(fixture.capture.signal.data.delta.x == -1);
-    assert(fixture.quantizer_state.remainder_x == 0);
+    assert(fixture.quantizer_state.remainder_x == -32744);
 }
 
 static void test_identity_round_trip_through_normalization(void) {
     /* Full composed path: counts -> Q16 mm -> gain -> units, with the
-     * units-per-meter factor restoring the count domain at 700 CPI. */
+     * quantizer deriving a 1:1 factor from the 700 CPI to restore the count
+     * domain (no explicit units-per-meter). */
     struct zpt_stage normalize_stage = {
         .stable_id = "resolution-normalize",
         .api = &zpt_resolution_normalize_stage_api,
     };
     struct zpt_cursor_transfer_config transfer_config = {.scale_multiplier = 1, .scale_divisor = 1};
-    struct zpt_cursor_quantizer_config quantizer_config = {
-        .units_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(27559),
-    };
     struct zpt_cursor_quantizer_state quantizer_state = {0};
     struct zpt_stage transfer_stage = {
         .stable_id = "cursor-transfer",
@@ -177,7 +181,6 @@ static void test_identity_round_trip_through_normalization(void) {
     struct zpt_stage quantizer_stage = {
         .stable_id = "cursor-quantizer",
         .api = &zpt_cursor_quantizer_stage_api,
-        .config = &quantizer_config,
         .state = &quantizer_state,
     };
     struct zpt_stage *stages[3] = {&normalize_stage, &transfer_stage, &quantizer_stage};

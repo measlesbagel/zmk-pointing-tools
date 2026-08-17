@@ -33,7 +33,7 @@ export function validateFixture(fixture, path = "fixture") {
     }
     if (!(fixture.processor.policy in POLICIES)) throw new Error(`${path}: unknown axis policy`);
   } else if (fixture.processor.kind === "cursor-pipeline") {
-    for (const key of ["cpi", "scaleMultiplier", "scaleDivisor", "unitsPerMeter"]) {
+    for (const key of ["cpi", "scaleMultiplier", "scaleDivisor"]) {
       requireInteger(settings?.[key], `${path}: settings.${key}`, 1);
     }
   } else if (fixture.processor.kind === "composed-text") {
@@ -97,8 +97,7 @@ export function encodeRunnerInput(fixture) {
         Number(settings.discardUnclassified), settings.horizontalThresholdMicrometers,
         settings.verticalThresholdMicrometers, settings.mapperIdleTimeoutMs]
       : fixture.processor.kind === "cursor-pipeline"
-        ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor,
-          settings.unitsPerMeter]
+        ? ["C", settings.cpi, settings.scaleMultiplier, settings.scaleDivisor]
         : ["C", Number(settings.enabled), settings.cpi, settings.activationDistanceMicrometers,
           settings.coherencePercent, settings.qualificationTimeoutMs, settings.idleTimeoutMs,
           settings.suppressAfterKeypressMs];
