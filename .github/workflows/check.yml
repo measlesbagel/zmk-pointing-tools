@@ -55,10 +55,15 @@ jobs:
         run: run-clang-tidy -q -p build/host-tidy
       - name: Run cppcheck
         run: |
+          # Expand the suppression baseline into --suppress arguments so the
+          # command works on both the runner's apt cppcheck and newer local
+          # versions (--suppressions-list needs cppcheck 2.14+).
+          suppressions=$(grep -vE '^[[:space:]]*(#|$)' .cppcheck-suppressions | sed 's/^/--suppress=/' | tr '\n' ' ')
+          # shellcheck disable=SC2086
           cppcheck --enable=warning,performance,portability --std=c11 \
             -I include --include=tooling/cppcheck/preinclude.h \
             --inline-suppr --suppress=missingIncludeSystem \
-            --suppressions-list .cppcheck-suppressions \
+            $suppressions \
             --error-exitcode=1 src include host
 
   host-sanitizers:

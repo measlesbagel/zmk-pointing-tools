@@ -53,7 +53,14 @@ in
 
     "c:cppcheck:check" = {
       description = "Run cppcheck over C sources";
-      exec = """cppcheck --enable=warning,performance,portability --std=c11 -I include --include=tooling/cppcheck/preinclude.h --inline-suppr --suppress=missingIncludeSystem --suppressions-list .cppcheck-suppressions --error-exitcode=1 src include host""";
+      exec = ''
+        suppressions=$(grep -vE '^[[:space:]]*(#|$)' .cppcheck-suppressions | sed 's/^/--suppress=/' | tr '\n' ' ')
+        cppcheck --enable=warning,performance,portability --std=c11 \
+          -I include --include=tooling/cppcheck/preinclude.h \
+          --inline-suppr --suppress=missingIncludeSystem \
+          $suppressions \
+          --error-exitcode=1 src include host
+      '';
     };
 
     "javascript:check" = {

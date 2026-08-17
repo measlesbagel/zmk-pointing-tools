@@ -13,7 +13,9 @@
 #   cppcheck --enable=warning,performance,portability --std=c11
 #   -I include --include=tooling/cppcheck/preinclude.h
 #   --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1
-# with zero findings.
+# with zero findings. The CI and devenv commands expand this file into
+# --suppress arguments (one per non-comment line) so they work on both old
+# and new cppcheck versions.
 #
 # Note: CI installs cppcheck from the runner's apt repository, so the
 # effective version can drift from the one used locally. If a version
