@@ -76,3 +76,46 @@ jobs:
         run: cmake --build build/host-san
       - name: Run host tests under sanitizers
         run: ctest --test-dir build/host-san --output-on-failure
+
+  zephyr-compliance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up West and Zephyr SDK
+        uses: urob/zmk-actions/setup-sdk@v12.0.0
+        with:
+          toolchain: zephyr
+      - name: Pull in ZMK and Zephyr modules
+        uses: urob/zmk-actions/setup-zmk@v12.0.0
+        id: setup-zmk
+        with:
+          config: config
+          always-update-west: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install compliance dependencies
+        run: |
+          # west (the Python package) is imported by check_compliance.py even
+          # though the west CLI comes from setup-sdk.
+          python -m pip install --quiet west -r zephyr/scripts/requirements-compliance.txt
+      - name: Run Zephyr compliance checks
+        working-directory: ${{ steps.setup-zmk.outputs.workspace }}
+        run: |
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch origin "$GITHUB_BASE_REF"
+            range="origin/$GITHUB_BASE_REF...HEAD"
+          else
+            range="HEAD~1..HEAD"
+          fi
+          # Module-safe subset of check_compliance.py (see docs/quality.md):
+          # the Kconfig parse family assumes the Zephyr tree (a git grep of
+          # SB_CONFIG_ symbols exits 1 on no-match, which the script treats
+          # as fatal), and Checkpatch enforces kernel style (tabs, 80
+          # columns), which conflicts with this repository's clang-format
+          # style. Kconfig and devicetree correctness are already gated by
+          # the firmware build.
+          python zephyr/scripts/ci/check_compliance.py -c "$range" \
+            -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+            -m GitDiffCheck -m TextEncoding -m BinaryFiles
