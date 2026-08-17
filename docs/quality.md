@@ -134,6 +134,16 @@ Running the same subset locally requires the west workspace (`zephyr/`,
       -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
       -m GitDiffCheck -m TextEncoding -m BinaryFiles
 
+The CI gate is diff-scoped, so it only polices files a PR touches. To audit
+the *entire* tree at once (e.g. when first adopting the gate), diff against
+git's empty tree instead of a commit range. `GitDiffCheck` is per-commit and
+is left out of this form:
+
+    python3 zephyr/scripts/ci/check_compliance.py \
+      -c "4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD" \
+      -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+      -m TextEncoding -m BinaryFiles
+
 ## Planned (tracked in #76)
 
 - Firmware clang-tidy via `west build -t compile_commands` (PR-only job)
