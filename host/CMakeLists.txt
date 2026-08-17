@@ -6,6 +6,20 @@ include(CTest)
 
 set(ZPT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+option(ZPT_ENABLE_SANITIZERS
+  "Build host targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(ZPT_ENABLE_SANITIZERS)
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer
+                        -fno-sanitize-recover=all)
+    add_link_options(-fsanitize=address,undefined)
+  else()
+    message(WARNING "ZPT_ENABLE_SANITIZERS requires GCC or Clang; ignoring")
+  endif()
+endif()
+
 add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/core/pipeline.c"
   "${ZPT_ROOT}/src/core/router.c"

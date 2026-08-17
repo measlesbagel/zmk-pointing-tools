@@ -117,46 +117,73 @@ void zpt_stage_notify(struct zpt_stage_context *context, enum zpt_stage_event ev
     }
 }
 
-static int validate_structure(const struct zpt_pipeline *pipeline) {
+static int validate_pipeline_identity(const struct zpt_pipeline *pipeline) {
     if (pipeline == NULL || pipeline->stable_id == NULL || pipeline->stable_id[0] == '\0' ||
-        !zpt_signal_kind_valid(pipeline->input_kind) || pipeline->sink == NULL ||
-        pipeline->sink->stable_id == NULL || pipeline->sink->api == NULL ||
-        pipeline->sink->api->type_id == NULL || pipeline->sink->api->type_id[0] == '\0' ||
-        pipeline->sink->api->emit == NULL || pipeline->dispatch_budget == 0U ||
+        !zpt_signal_kind_valid(pipeline->input_kind) || pipeline->dispatch_budget == 0U ||
         (pipeline->stage_count > 0U && pipeline->stages == NULL)) {
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int validate_pipeline_sink(const struct zpt_pipeline *pipeline) {
+    if (pipeline->sink == NULL || pipeline->sink->stable_id == NULL ||
+        pipeline->sink->api == NULL || pipeline->sink->api->type_id == NULL ||
+        pipeline->sink->api->type_id[0] == '\0' || pipeline->sink->api->emit == NULL) {
         return -EINVAL;
     }
     if (pipeline->sink->owner != NULL && pipeline->sink->owner != pipeline) {
         return -EBUSY;
     }
+    return 0;
+}
+
+static int validate_stage_link(const struct zpt_pipeline *pipeline, size_t index,
+                               enum zpt_signal_kind current_kind) {
+    const struct zpt_stage *stage = pipeline->stages[index];
+    if (stage == NULL || stage->stable_id == NULL || stage->stable_id[0] == '\0' ||
+        stage->api == NULL || stage->api->strategy_id == NULL ||
+        stage->api->strategy_id[0] == '\0' || stage->api->process == NULL ||
+        !zpt_signal_kind_valid(stage->api->output_kind) ||
+        !kind_accepted(stage->api->accepted_kinds, current_kind)) {
+        return -EINVAL;
+    }
+    if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U && stage->state == NULL) {
+        return -EINVAL;
+    }
+    if (stage->owner != NULL && stage->owner != pipeline) {
+        return -EBUSY;
+    }
+    for (size_t previous = 0; previous < index; previous++) {
+        const struct zpt_stage *previous_stage = pipeline->stages[previous];
+        if (strcmp(previous_stage->stable_id, stage->stable_id) == 0) {
+            return -EEXIST;
+        }
+        if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U &&
+            previous_stage->state == stage->state) {
+            return -EBUSY;
+        }
+    }
+    return 0;
+}
+
+static int validate_structure(const struct zpt_pipeline *pipeline) {
+    int ret = validate_pipeline_identity(pipeline);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = validate_pipeline_sink(pipeline);
+    if (ret < 0) {
+        return ret;
+    }
 
     enum zpt_signal_kind current_kind = pipeline->input_kind;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
-        const struct zpt_stage *stage = pipeline->stages[index];
-        if (stage == NULL || stage->stable_id == NULL || stage->stable_id[0] == '\0' ||
-            stage->api == NULL || stage->api->strategy_id == NULL ||
-            stage->api->strategy_id[0] == '\0' || stage->api->process == NULL ||
-            !zpt_signal_kind_valid(stage->api->output_kind) ||
-            !kind_accepted(stage->api->accepted_kinds, current_kind)) {
-            return -EINVAL;
+        ret = validate_stage_link(pipeline, index, current_kind);
+        if (ret < 0) {
+            return ret;
         }
-        if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U && stage->state == NULL) {
-            return -EINVAL;
-        }
-        if (stage->owner != NULL && stage->owner != pipeline) {
-            return -EBUSY;
-        }
-        for (size_t previous = 0; previous < index; previous++) {
-            const struct zpt_stage *previous_stage = pipeline->stages[previous];
-            if (strcmp(previous_stage->stable_id, stage->stable_id) == 0) {
-                return -EEXIST;
-            }
-            if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U &&
-                previous_stage->state == stage->state) {
-                return -EBUSY;
-            }
-        }
-        current_kind = stage->api->output_kind;
+        current_kind = pipeline->stages[index]->api->output_kind;
     }
 
     if (!kind_accepted(pipeline->sink->api->accepted_kinds, current_kind)) {
