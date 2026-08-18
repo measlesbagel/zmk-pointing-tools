@@ -156,7 +156,7 @@ in
     };
 
     "zephyr:tests" = {
-      description = "Run the module's ztest suites on native_posix via west twister";
+      description = "Run the module's ztest suites on native_posix via twister";
       exec = ''
         # native_posix builds with the host gcc; the variant env var keeps
         # twister's toolchain verification from requiring the Zephyr SDK
@@ -165,13 +165,16 @@ in
         # (twister's cmake configure has no option to pass arbitrary -D
         # args; the REMAINDER after -- would reach the test binary, not
         # CMake).
+        #
+        # Twister is invoked as a plain python script rather than through
+        # west: west only registers the twister command once the manifest
+        # import chain (config/west.yml -> zmk/app/west.yml) resolves, so
+        # the zmk project must be checked out. The script derives
+        # ZEPHYR_BASE from its own location and has no west dependency.
+        # Its imports come from twisterPython (ordered first in packages).
         export ZEPHYR_TOOLCHAIN_VARIANT=host
-        # West discovers the twister command from the workspace manifest
-        # (config/west.yml); initialize the workspace if the developer
-        # has not run `west init -l config` yet.
-        [ -f .west/config ] || west -q init -l config
         export EXTRA_ZEPHYR_MODULES="$PWD"
-        west twister -p native_posix/native/64 -T tests
+        python3 "$PWD/zephyr/scripts/twister" -p native_posix/native/64 -T tests
       '';
     };
 

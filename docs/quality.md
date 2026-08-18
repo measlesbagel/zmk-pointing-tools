@@ -22,7 +22,7 @@ binaries:
   range.
 - **`zephyr-tests` job** — fetches the same pinned Zephyr tree into
   `zephyr/` and runs the `zephyr:tests` task (the module's ztest firmware
-  unit tests on `native_posix/native/64` via west twister; see the
+  unit tests on `native_posix/native/64` via twister; see the
   firmware unit tests section below).
 - The **firmware build** in `build.yml` (ZMK action) is unchanged and
   remains the firmware typecheck on every PR.
@@ -303,6 +303,14 @@ The test app loads the module through `EXTRA_ZEPHYR_MODULES` (its real
 Kconfig, CMake, devicetree bindings, and library path — twister's cmake
 configure has no option to pass arbitrary `-D` args) and runs with the host
 gcc (`ZEPHYR_TOOLCHAIN_VARIANT=host`), so no Zephyr SDK is needed.
+
+Twister runs as a plain python script
+(`zephyr/scripts/twister -p native_posix/native/64 -T tests`) rather than
+through west: west registers the twister command only after resolving the
+manifest import chain (`config/west.yml` → `zmk/app/west.yml`), which
+requires the `zmk` project checkout, while the script derives
+`ZEPHYR_BASE` from its own location and has no west dependency. CI relies
+on this, since the `zephyr-tests` job fetches only the zephyr tree.
 
 - Check: `devenv tasks run zephyr:tests`
 - CI: the `zephyr-tests` job in `.github/workflows/check.yml` runs the same

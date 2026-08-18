@@ -80,8 +80,7 @@ jobs:
             devenv tasks run zephyr:compliance:check --no-tui
 
   # Firmware unit tests: the module's ztest suites (tests/unit) run on
-  # native_posix through west twister, as the local zephyr:tests dev task
-  # does. Twister needs the full Zephyr tree (boards, scripts, ztest), not
+  # native_posix through twister, as the local zephyr:tests dev task does. Twister needs the full Zephyr tree (boards, scripts, ztest), not
   # just the compliance script, so this job fetches the pinned rev into
   # zephyr/ -- replacing the checkout's zephyr/module.yml, which is not
   # needed here (the module itself is loaded from the repo root through
@@ -98,10 +97,12 @@ jobs:
           name: devenv
       - name: Install Devenv
         run: nix profile add github:cachix/devenv/v2.2#devenv
-      # The same fetch as the zephyr-compliance job, into zephyr/ (the
-      # west workspace's [zephyr] base in .west/config). The dev task
-      # initializes the workspace itself (west -q init -l config) when
-      # .west/ is absent, as on a CI checkout.
+      # The same fetch as the zephyr-compliance job, into zephyr/.
+      # Twister is invoked as a plain python script by the dev task (it
+      # derives ZEPHYR_BASE from its own location), so no west workspace
+      # is needed: west would only register the twister command after
+      # resolving the manifest import chain, which requires the zmk
+      # project checkout this job deliberately does not fetch.
       - name: Fetch pinned Zephyr tree
         run: |
           rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
