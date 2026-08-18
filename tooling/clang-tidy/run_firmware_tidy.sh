@@ -28,7 +28,11 @@ if [ ! -f .west/config ]; then
     if [ -f zephyr/module.yml ]; then
         saved_module_yml="$(mktemp -d)/module.yml"
         cp zephyr/module.yml "$saved_module_yml"
-        trap 'cp "$saved_module_yml" zephyr/module.yml' EXIT
+        # Failure-path restore: if west init/update aborts before zephyr/
+        # exists, a bare cp would fail too and its error could obscure the
+        # original west failure, so mkdir first. (On success the trap is
+        # cleared below after an immediate restore.)
+        trap 'mkdir -p zephyr && cp "$saved_module_yml" zephyr/module.yml' EXIT
         rm -rf zephyr
     fi
     west -q init -l config
