@@ -17,7 +17,7 @@
 # --suppress arguments (one per non-comment line) so they work on both old
 # and new cppcheck versions.
 #
-# Note: CI installs cppcheck from the runner's apt repository, so the
-# effective version can drift from the one used locally. If a version
-# bump introduces new findings, triage them (fix or justify a
-# suppression here) before re-freezing.
+# Note: CI and the local devenv run the same cppcheck (nixpkgs, pinned
+# by devenv.lock), so there is no version drift between them. If a
+# devenv.lock bump introduces new findings, triage them (fix or justify
+# a suppression here) before merging the bump.
