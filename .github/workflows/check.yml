@@ -54,14 +54,16 @@ jobs:
       # Fetch the Zephyr tree at the rev pinned in devenv.lock (the same
       # rev the local west workspace uses). Only the zephyr project is
       # needed: the module-safe check subset (see docs/quality.md) never
-      # touches ZMK, and the Kconfig checks are excluded.
+      # touches ZMK, and the Kconfig checks are excluded. The clone target
+      # is zephyr-tree/ because the repo itself tracks zephyr/module.yml,
+      # so zephyr/ already exists in the checkout.
       - name: Fetch pinned Zephyr tree
         run: |
           rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
           git clone --filter=blob:none --no-checkout --quiet \
-            https://github.com/zmkfirmware/zephyr zephyr
-          git -C zephyr fetch --depth 1 --quiet origin "$rev"
-          git -C zephyr checkout --quiet "$rev"
+            https://github.com/zmkfirmware/zephyr zephyr-tree
+          git -C zephyr-tree fetch --depth 1 --quiet origin "$rev"
+          git -C zephyr-tree checkout --quiet "$rev"
       # The same script and check subset as the local
       # zephyr:compliance:check task, over the PR range.
       - name: Run Zephyr compliance checks
@@ -72,5 +74,5 @@ jobs:
           else
             range="HEAD~1..HEAD"
           fi
-          ZEPHYR_BASE="$PWD/zephyr" COMPLIANCE_RANGE="$range" \
+          ZEPHYR_BASE="$PWD/zephyr-tree" COMPLIANCE_RANGE="$range" \
             devenv tasks run zephyr:compliance:check --no-tui
