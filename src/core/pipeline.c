@@ -138,22 +138,17 @@ static int validate_pipeline_sink(const struct zpt_pipeline *pipeline) {
     return 0;
 }
 
-static int validate_stage_link(const struct zpt_pipeline *pipeline, size_t index,
-                               enum zpt_signal_kind current_kind) {
-    const struct zpt_stage *stage = pipeline->stages[index];
-    if (stage == NULL || stage->stable_id == NULL || stage->stable_id[0] == '\0' ||
-        stage->api == NULL || stage->api->strategy_id == NULL ||
-        stage->api->strategy_id[0] == '\0' || stage->api->process == NULL ||
-        !zpt_signal_kind_valid(stage->api->output_kind) ||
-        !kind_accepted(stage->api->accepted_kinds, current_kind)) {
+static int validate_stage_api(const struct zpt_stage_api *api, enum zpt_signal_kind current_kind) {
+    if (api == NULL || api->strategy_id == NULL || api->strategy_id[0] == '\0' ||
+        api->process == NULL || !zpt_signal_kind_valid(api->output_kind) ||
+        !kind_accepted(api->accepted_kinds, current_kind)) {
         return -EINVAL;
     }
-    if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U && stage->state == NULL) {
-        return -EINVAL;
-    }
-    if (stage->owner != NULL && stage->owner != pipeline) {
-        return -EBUSY;
-    }
+    return 0;
+}
+
+static int find_stage_link_conflict(const struct zpt_pipeline *pipeline, size_t index,
+                                    const struct zpt_stage *stage) {
     for (size_t previous = 0; previous < index; previous++) {
         const struct zpt_stage *previous_stage = pipeline->stages[previous];
         if (strcmp(previous_stage->stable_id, stage->stable_id) == 0) {
@@ -165,6 +160,25 @@ static int validate_stage_link(const struct zpt_pipeline *pipeline, size_t index
         }
     }
     return 0;
+}
+
+static int validate_stage_link(const struct zpt_pipeline *pipeline, size_t index,
+                               enum zpt_signal_kind current_kind) {
+    const struct zpt_stage *stage = pipeline->stages[index];
+    if (stage == NULL || stage->stable_id == NULL || stage->stable_id[0] == '\0') {
+        return -EINVAL;
+    }
+    int ret = validate_stage_api(stage->api, current_kind);
+    if (ret < 0) {
+        return ret;
+    }
+    if ((stage->api->flags & ZPT_STAGE_STATEFUL) != 0U && stage->state == NULL) {
+        return -EINVAL;
+    }
+    if (stage->owner != NULL && stage->owner != pipeline) {
+        return -EBUSY;
+    }
+    return find_stage_link_conflict(pipeline, index, stage);
 }
 
 static int validate_structure(const struct zpt_pipeline *pipeline) {

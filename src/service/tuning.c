@@ -11,14 +11,7 @@ static const struct zpt_tuning_target
     *zpt_tuning_targets[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 static size_t zpt_tuning_targets_count;
 
-int zpt_tuning_register(const struct zpt_tuning_target *target) {
-    if (target == NULL || target->stable_id == NULL || target->label == NULL ||
-        target->devicetree_path == NULL || target->parameters == NULL ||
-        target->parameter_count == 0 || target->get == NULL || target->set_many == NULL ||
-        target->reset == NULL) {
-        return -EINVAL;
-    }
-
+static int validate_target_parameters(const struct zpt_tuning_target *target) {
     for (size_t i = 0; i < target->parameter_count; i++) {
         if (target->parameters[i].key == NULL ||
             target->parameters[i].devicetree_property == NULL ||
@@ -33,7 +26,20 @@ int zpt_tuning_register(const struct zpt_tuning_target *target) {
             }
         }
     }
+    return 0;
+}
 
+static int validate_target(const struct zpt_tuning_target *target) {
+    if (target == NULL || target->stable_id == NULL || target->label == NULL ||
+        target->devicetree_path == NULL || target->parameters == NULL ||
+        target->parameter_count == 0 || target->get == NULL || target->set_many == NULL ||
+        target->reset == NULL) {
+        return -EINVAL;
+    }
+    return validate_target_parameters(target);
+}
+
+static int find_registered_target(const struct zpt_tuning_target *target) {
     for (size_t i = 0; i < zpt_tuning_targets_count; i++) {
         if (zpt_tuning_targets[i] == target) {
             return (int)i;
@@ -41,6 +47,19 @@ int zpt_tuning_register(const struct zpt_tuning_target *target) {
         if (strcmp(zpt_tuning_targets[i]->stable_id, target->stable_id) == 0) {
             return -EEXIST;
         }
+    }
+    return -ENOENT;
+}
+
+int zpt_tuning_register(const struct zpt_tuning_target *target) {
+    int ret = validate_target(target);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = find_registered_target(target);
+    if (ret != -ENOENT) {
+        return ret;
     }
 
     if (zpt_tuning_targets_count >= ARRAY_SIZE(zpt_tuning_targets)) {
@@ -93,6 +112,29 @@ int zpt_tuning_set(uint8_t target_id, uint8_t parameter_id, int32_t value) {
     return zpt_tuning_set_many(target_id, &update, 1, NULL);
 }
 
+static int validate_value_update(const struct zpt_tuning_target *target,
+                                 const struct zpt_tuning_value *values, size_t index) {
+    const struct zpt_tuning_value *value = &values[index];
+    const struct zpt_tuning_parameter *parameter =
+        zpt_tuning_parameter_get(target, value->parameter_id);
+    if (parameter == NULL) {
+        return -ENOENT;
+    }
+    if (value->value < parameter->minimum || value->value > parameter->maximum ||
+        (parameter->step > 1 && (value->value - parameter->minimum) % parameter->step != 0)) {
+        return -ERANGE;
+    }
+    if (parameter->type == ZPT_TUNING_VALUE_BOOLEAN && value->value != 0 && value->value != 1) {
+        return -ERANGE;
+    }
+    for (size_t j = 0; j < index; j++) {
+        if (values[j].parameter_id == value->parameter_id) {
+            return -EEXIST;
+        }
+    }
+    return 0;
+}
+
 int zpt_tuning_set_many(uint8_t target_id, const struct zpt_tuning_value *values,
                         size_t value_count, uint8_t *failed_parameter_id) {
     const struct zpt_tuning_target *target = zpt_tuning_target_get(target_id);
@@ -104,27 +146,12 @@ int zpt_tuning_set_many(uint8_t target_id, const struct zpt_tuning_value *values
     }
 
     for (size_t i = 0; i < value_count; i++) {
-        const struct zpt_tuning_parameter *parameter =
-            zpt_tuning_parameter_get(target, values[i].parameter_id);
         if (failed_parameter_id != NULL) {
             *failed_parameter_id = values[i].parameter_id;
         }
-        if (parameter == NULL) {
-            return -ENOENT;
-        }
-        if (values[i].value < parameter->minimum || values[i].value > parameter->maximum ||
-            (parameter->step > 1 &&
-             (values[i].value - parameter->minimum) % parameter->step != 0)) {
-            return -ERANGE;
-        }
-        if (parameter->type == ZPT_TUNING_VALUE_BOOLEAN && values[i].value != 0 &&
-            values[i].value != 1) {
-            return -ERANGE;
-        }
-        for (size_t j = 0; j < i; j++) {
-            if (values[j].parameter_id == values[i].parameter_id) {
-                return -EEXIST;
-            }
+        int ret = validate_value_update(target, values, i);
+        if (ret < 0) {
+            return ret;
         }
     }
 

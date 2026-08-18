@@ -38,8 +38,8 @@ jobs:
         run: |
           # Ratcheted thresholds (see docs/quality.md, issue #76):
           # firmware code at 30, test/runner harness at 40.
-          lizard -l c -C 30 -w src include
-          lizard -l c -C 40 -w host
+          lizard -l c -C 15 -w src include
+          lizard -l c -C 15 -w host
 
   c-analysis:
     runs-on: ubuntu-latest

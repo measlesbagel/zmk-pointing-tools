@@ -28,13 +28,16 @@ its output, re-run the fix task and commit the result.
 
 `lizard` gates function cyclomatic complexity (CCN) without a build:
 
-- `src/` and `include/` (firmware): CCN 30
-- `host/` (test and runner harness): CCN 40
+- `src/` and `include/` (firmware): CCN 15
+- `host/` (test and runner harness): CCN 15
 
-The thresholds are ratchets: they sit above the current worst function so
-new code cannot exceed the existing peak, and they should be lowered in
-follow-up work (tracked in #76) as functions are decomposed. CI pins
-`lizard==1.23.0`; `lizard` is part of the default devenv package set.
+The ceiling is a flat 15 for both scopes: every function in the tree was
+verified against it (the former worst offenders — `coherent_stage_process`
+at 26 and the replay-runner `main`s at 31/26/19 — were decomposed into
+small helpers, tracked in #76). `lizard` measures source-level branching and
+does not expand macros, so the values are stable and comparable between
+firmware and host code. CI pins `lizard==1.23.0`; `lizard` is part of the
+default devenv package set.
 
 - Check: `devenv task c:complexity:check`
 - CI: `c-style` job in `.github/workflows/check.yml`.
@@ -66,7 +69,14 @@ Two static analyzers cover the C sources:
   `host/` use `host/.clang-tidy`, the same checks with a higher cognitive
   threshold (100) because test functions are long sequential verify lists.
   Both thresholds are ratchets, lowered over time as code is decomposed
-  (#76).
+  (#76). Note that clang-tidy measures cognitive complexity on macro-
+  *expanded* code, so Zephyr's logging macros (`LOG_WRN` and friends expand
+  to several level-checking `if`s, each with nesting penalties) inflate the
+  values of service-layer functions that use them heavily — e.g.
+  `zpt_uart_callback` measures ~49 while its source-level branching is
+  trivial. The lizard CCN gate above is the macro-free ceiling; the
+  cognitive thresholds apply where a real AST is available (host compile
+  database).
 - **cppcheck** (`--enable=warning,performance,portability --std=c11`) runs
   over `src/`, `include/`, and `host/` without a build. Zephyr build-system
   macros that cannot be resolved outside the west build are stubbed in

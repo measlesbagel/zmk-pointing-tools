@@ -47,6 +47,19 @@ static bool suppression_active(const struct zpt_axis_intent_stage_config *config
            config->suppression->is_suppressed(config->suppression->context, signal, now);
 }
 
+static void reset_estimator_if_stale(struct zpt_axis_intent_stage_state *state,
+                                     struct zpt_stage_context *context, bool suppressed,
+                                     bool have_last_frame, uint32_t idle_timeout_ms,
+                                     uint32_t elapsed) {
+    if (suppressed || !have_last_frame || (idle_timeout_ms != 0U && elapsed >= idle_timeout_ms)) {
+        zpt_axis_intent_reset(&state->estimator);
+        if (!suppressed && state->last_notified_intent != ZPT_AXIS_INTENT_UNDECIDED) {
+            zpt_stage_notify(context, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_UNDECIDED);
+        }
+        state->last_notified_intent = ZPT_AXIS_INTENT_UNDECIDED;
+    }
+}
+
 static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                      struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
@@ -60,14 +73,8 @@ static int axis_intent_stage_process(struct zpt_stage *stage, const struct zpt_s
     uint32_t elapsed = state->have_last_frame ? now - state->last_frame_ms : 0U;
 
     bool suppressed = suppression_active(config, signal, now);
-    if (suppressed || !state->have_last_frame ||
-        (config->idle_timeout_ms != 0U && elapsed >= config->idle_timeout_ms)) {
-        zpt_axis_intent_reset(&state->estimator);
-        if (!suppressed && state->last_notified_intent != ZPT_AXIS_INTENT_UNDECIDED) {
-            zpt_stage_notify(context, ZPT_STAGE_EVENT_INTENT_CHANGED, ZPT_AXIS_INTENT_UNDECIDED);
-        }
-        state->last_notified_intent = ZPT_AXIS_INTENT_UNDECIDED;
-    }
+    reset_estimator_if_stale(state, context, suppressed, state->have_last_frame,
+                             config->idle_timeout_ms, elapsed);
     state->last_frame_ms = now;
     state->have_last_frame = true;
     if (suppressed) {

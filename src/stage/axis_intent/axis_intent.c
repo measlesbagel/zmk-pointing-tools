@@ -33,6 +33,38 @@ void zpt_axis_intent_reset(struct zpt_axis_intent_state *state) {
     }
 }
 
+static enum zpt_axis_intent update_adaptive_intent(struct zpt_axis_intent_state *state,
+                                                   const struct zpt_axis_intent_settings *settings,
+                                                   bool horizontal_engaged, bool vertical_engaged) {
+    switch (state->intent) {
+    case ZPT_AXIS_INTENT_HORIZONTAL:
+        if (zpt_fixed_ratio_dominates(state->horizontal_energy, state->vertical_energy,
+                                      settings->release_ratio_percent)) {
+            break;
+        }
+        state->intent = vertical_engaged ? ZPT_AXIS_INTENT_VERTICAL : ZPT_AXIS_INTENT_FREE;
+        break;
+    case ZPT_AXIS_INTENT_VERTICAL:
+        if (zpt_fixed_ratio_dominates(state->vertical_energy, state->horizontal_energy,
+                                      settings->release_ratio_percent)) {
+            break;
+        }
+        state->intent = horizontal_engaged ? ZPT_AXIS_INTENT_HORIZONTAL : ZPT_AXIS_INTENT_FREE;
+        break;
+    case ZPT_AXIS_INTENT_UNDECIDED:
+    case ZPT_AXIS_INTENT_FREE:
+        if (horizontal_engaged) {
+            state->intent = ZPT_AXIS_INTENT_HORIZONTAL;
+        } else if (vertical_engaged) {
+            state->intent = ZPT_AXIS_INTENT_VERTICAL;
+        } else {
+            state->intent = ZPT_AXIS_INTENT_FREE;
+        }
+        break;
+    }
+    return state->intent;
+}
+
 enum zpt_axis_intent zpt_axis_intent_estimate(struct zpt_axis_intent_state *state,
                                               const struct zpt_axis_intent_settings *settings,
                                               enum zpt_axis_policy policy, int64_t x, int64_t y,
@@ -72,35 +104,7 @@ enum zpt_axis_intent zpt_axis_intent_estimate(struct zpt_axis_intent_state *stat
         state->horizontal_energy, state->vertical_energy, settings->engage_ratio_percent);
     bool vertical_engaged = zpt_fixed_ratio_dominates(
         state->vertical_energy, state->horizontal_energy, settings->engage_ratio_percent);
-
-    switch (state->intent) {
-    case ZPT_AXIS_INTENT_HORIZONTAL:
-        if (zpt_fixed_ratio_dominates(state->horizontal_energy, state->vertical_energy,
-                                      settings->release_ratio_percent)) {
-            break;
-        }
-        state->intent = vertical_engaged ? ZPT_AXIS_INTENT_VERTICAL : ZPT_AXIS_INTENT_FREE;
-        break;
-    case ZPT_AXIS_INTENT_VERTICAL:
-        if (zpt_fixed_ratio_dominates(state->vertical_energy, state->horizontal_energy,
-                                      settings->release_ratio_percent)) {
-            break;
-        }
-        state->intent = horizontal_engaged ? ZPT_AXIS_INTENT_HORIZONTAL : ZPT_AXIS_INTENT_FREE;
-        break;
-    case ZPT_AXIS_INTENT_UNDECIDED:
-    case ZPT_AXIS_INTENT_FREE:
-        if (horizontal_engaged) {
-            state->intent = ZPT_AXIS_INTENT_HORIZONTAL;
-        } else if (vertical_engaged) {
-            state->intent = ZPT_AXIS_INTENT_VERTICAL;
-        } else {
-            state->intent = ZPT_AXIS_INTENT_FREE;
-        }
-        break;
-    }
-
-    return state->intent;
+    return update_adaptive_intent(state, settings, horizontal_engaged, vertical_engaged);
 }
 
 uint16_t zpt_axis_intent_confidence(const struct zpt_axis_intent_state *state) {
