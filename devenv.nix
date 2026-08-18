@@ -51,13 +51,11 @@ let
   ]);
 
   # The tidy gates (c:tidy:check, c:firmware:tidy) are tuned against the
-  # clang-tidy 22 series (the generation the firmware baseline was
-  # verified with). Macro-generated Zephyr/ZMK symbols that newer versions
-  # flag as misc-use-internal-linkage carry documented NOLINTs, so the
-  # gate also passes on the 21 series (the floating fallback). If a
+  # clang-tidy 22 series. Macro-generated Zephyr/ZMK symbols that newer
+  # versions flag as misc-use-internal-linkage carry documented NOLINTs, so
+  # the gate also passes on the 21 series (the floating fallback). If a
   # future nixpkgs float introduces new findings on a clean tree: triage
-  # (fix, NOLINT with a reason, or baseline), and re-freeze
-  # firmware_baseline.txt if the tool generation changes — see
+  # them (fix, or a documented NOLINT / check exclusion) — see
   # docs/quality.md.
   clangTidyPinned =
     if pkgs ? llvmPackages_22 then pkgs.llvmPackages_22.clang-tools
@@ -125,13 +123,12 @@ in
     };
 
     # Runs the root .clang-tidy check set over the real firmware compile
-    # database (tooling/clang-tidy/), gated against the frozen baseline
-    # (file::function::check entries). Local-only gate by decision — run
-    # it before pushing any PR that touches src/ or include/ (see
-    # docs/quality.md). Needs the firmware profile for west and the
-    # Zephyr SDK: `devenv shell -P firmware`.
+    # database (tooling/clang-tidy/); any first-party finding fails. Local-
+    # only gate by decision — run it before pushing any PR that touches
+    # src/ or include/ (see docs/quality.md). Needs the firmware profile
+    # for west and the Zephyr SDK: `devenv shell -P firmware`.
     "c:firmware:tidy" = {
-      description = "Run the baseline-gated firmware clang-tidy gate (local; run before pushing PRs that touch src/ or include/); requires the firmware profile";
+      description = "Run the firmware clang-tidy gate (local; run before pushing PRs that touch src/ or include/); requires the firmware profile";
       exec = ''
         set -euo pipefail
         build_dir="build"

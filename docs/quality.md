@@ -89,20 +89,19 @@ Two static analyzers cover the C sources:
   project compiles: `src/core`, `src/stage`, `src/source`, `include/`, and
   `host/`. The check set (see `.clang-tidy`) favors correctness —
   `bugprone-*`, `clang-analyzer-*`, `misc-*`, `performance-*`,
-  `portability-*` — over style, which clang-format owns, plus
-  `readability-function-cognitive-complexity` (threshold 25) as the
-  cognitive-complexity counterpart to the lizard cyclomatic gate. Files under
-  `host/` use `host/.clang-tidy`, the same checks with a higher cognitive
-  threshold (100) because test functions are long sequential verify lists.
-  Both thresholds are ratchets, lowered over time as code is decomposed
-  (#76). Note that clang-tidy measures cognitive complexity on macro-
-  *expanded* code, so Zephyr's logging macros (`LOG_WRN` and friends expand
-  to several level-checking `if`s, each with nesting penalties) inflate the
-  values of service-layer functions that use them heavily — e.g.
-  `zpt_uart_callback` measures ~49 while its source-level branching is
-  trivial. The lizard CCN gate above is the macro-free ceiling; the
-  cognitive thresholds apply where a real AST is available (host compile
-  database).
+  `portability-*` — over style, which clang-format owns. Files under
+  `host/` use `host/.clang-tidy`, the same checks plus host-only exclusions
+  (see its comment block).
+
+  The check set deliberately omits
+  `readability-function-cognitive-complexity`: the check scores the macro-
+  *expanded* AST and offers no option to exclude macro-derived increments,
+  so in a Zephyr module it mostly measures Zephyr's own macro machinery
+  (each `LOG_*` call adds ~20–40 points to the enclosing function, a single
+  `K_MSEC(variable)` adds ~93). Every finding the check produced in this
+  tree was such an artifact — e.g. `router_init` measured 291 while its
+  source-level cyclomatic complexity is 13 — and the source-level
+  complexity intent is covered by the macro-free lizard CCN gate above.
 - **cppcheck** (`--enable=warning,performance,portability --std=c11`) runs
   over `src/`, `include/`, and `host/` without a build. Zephyr build-system
   macros that cannot be resolved outside the west build are stubbed in
@@ -125,7 +124,7 @@ justify a suppression) before re-freezing the baselines.
 - Check: `devenv tasks run c:tidy:check`, `devenv tasks run c:cppcheck:check`
 - CI: the `checks` job in `.github/workflows/check.yml` runs both tasks.
 
-## Firmware clang-tidy (baseline-gated)
+## Firmware clang-tidy
 
 The host compile database cannot see `src/platform/zmk` or `src/service`
 (zephyr/zmk headers and devicetree macros are unresolvable natively), so
@@ -142,20 +141,10 @@ against that compile database:
    `<sysroot>/include` alone does not satisfy `<limits.h>`), and keeps
    only first-party `src/` and `include/` entries.
 3. `tooling/clang-tidy/check_firmware_tidy.py` runs clang-tidy per file
-   (parallel), filters findings to first-party paths, and gates them
-   against `tooling/clang-tidy/firmware_baseline.txt` — a frozen
-   `file::function::check` baseline in the spirit of
-   `.cppcheck-suppressions`. The gate **fails on any new finding** and
-   **warns on stale entries**, so recorded debt can only shrink: fix a
-   baselined function, then delete its line. Findings outside first-party
-   paths (e.g. `misc-header-include-cycle` edges inside Zephyr's own
-   headers) are ignored by design.
-
-The current baseline is 13 `readability-function-cognitive-complexity`
-entries (threshold 25) in platform/service glue. Their values are inflated
-by Zephyr's logging-macro expansion (see the note in the static-analysis
-section above), so they are ratcheted down over time rather than
-restructured for the metric.
+   (parallel), filters findings to first-party paths, and **fails on any
+   first-party finding**. Findings outside first-party paths (e.g.
+   `misc-header-include-cycle` edges inside Zephyr's own headers) are
+   ignored by design.
 
 **Version handling.** Both tidy gates are tuned against the clang-tidy
 **22** generation (the dev shell pins `llvmPackages_22.clang-tools`,
@@ -179,11 +168,10 @@ series). The check set is kept version-robust where possible:
   positives that newer versions report on system glibc (e.g.
   `bugprone-macro-parentheses` in cdefs.h) do not affect it.
 
-The frozen firmware baseline is still only meaningful against the tool
-generation that produced it — to bump past 22: change the pin, run
-both gates on a clean tree, triage the new findings (fix, NOLINT with
-a reason, or baseline), and re-freeze `firmware_baseline.txt` if the
-debt changed.
+The gates are only meaningful against the tool generation they were
+triaged on — to bump past 22: change the pin, run both gates on a clean
+tree, and triage the new findings (fix, or a documented NOLINT / check
+exclusion).
 
 **Local-only by decision.** This gate is deliberately not a CI job:
 the dev task is full-fidelity (same real firmware compile database,
