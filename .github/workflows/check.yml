@@ -98,14 +98,10 @@ jobs:
           name: devenv
       - name: Install Devenv
         run: nix profile add github:cachix/devenv/v2.2#devenv
-      # West discovers the twister command from the workspace manifest
-      # (config/west.yml), and .west/ is not tracked. This is the same
-      # initialization a developer runs locally; west update is skipped
-      # because the zephyr project is fetched below at the pinned rev.
-      - name: Initialize west workspace
-        run: west -q init -l config
       # The same fetch as the zephyr-compliance job, into zephyr/ (the
-      # west workspace's [zephyr] base in .west/config).
+      # west workspace's [zephyr] base in .west/config). The dev task
+      # initializes the workspace itself (west -q init -l config) when
+      # .west/ is absent, as on a CI checkout.
       - name: Fetch pinned Zephyr tree
         run: |
           rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
