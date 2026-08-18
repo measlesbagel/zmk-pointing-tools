@@ -211,9 +211,10 @@ build only runs when it matters (it also runs on `devenv.lock` bumps —
 the tool-float case). Locally, run the gate before pushing any PR that
 touches `src/` or `include/` for fast feedback.
 
-- Check: `devenv shell -P firmware && devenv tasks run c:firmware:tidy`
-  (builds the firmware first if `build/compile_commands.json` is
-  missing; re-run `west build` or `rm -rf build` to refresh a stale one)
+- Check: `devenv tasks run -P firmware c:firmware:tidy` — the same
+  command the CI job runs (builds the firmware first if
+  `build/compile_commands.json` is missing; re-run `west build` or
+  `rm -rf build` to refresh a stale one)
 - CI: the `firmware-tidy` job in
   `.github/workflows/firmware-tidy.yml` (paths-filtered; manual runs via
   workflow dispatch)

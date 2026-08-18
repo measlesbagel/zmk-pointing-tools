@@ -56,9 +56,10 @@ jobs:
           name: devenv
       - name: Install Devenv
         run: nix profile add github:cachix/devenv/v2.2#devenv
-      # The firmware profile provides west and the Zephyr SDK; the script
-      # bootstraps the west workspace (preserving the tracked
+      # Same local task as 'devenv tasks run c:firmware:tidy' (the
+      # firmware profile provides west and the Zephyr SDK); the task's
+      # script bootstraps the west workspace (preserving the tracked
       # zephyr/module.yml), builds the smoke firmware if no compile
       # database exists, sanitizes the database, and runs the gate.
       - name: Run the firmware clang-tidy gate
-        run: devenv shell -P firmware --no-tui --quiet -- bash tooling/clang-tidy/run_firmware_tidy.sh
+        run: devenv tasks run -P firmware c:firmware:tidy --no-tui
