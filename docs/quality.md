@@ -24,13 +24,20 @@ binaries:
   `zephyr/` and runs the `zephyr:tests` task (the module's ztest firmware
   unit tests on `native_posix/native/64` via twister; see the
   firmware unit tests section below).
+- **`firmware-tidy` job** (`.github/workflows/firmware-tidy.yml`) — runs
+  the same script as the `c:firmware:tidy` task
+  (`tooling/clang-tidy/run_firmware_tidy.sh`) under the firmware profile.
+  A `paths` filter limits it to PRs that can change the gate's result
+  (firmware sources, module build config, workspace pins, toolchain pin),
+  so docs-only and host-only PRs skip the ~20 minute firmware build.
 - The **firmware build** in `build.yml` (ZMK action) is unchanged and
   remains the firmware typecheck on every PR.
 
 The toolchain is pinned by `devenv.lock` (nixpkgs revision included), so CI
 analyzes with exactly the tools of the local dev shell; bumping the lock
-moves local and CI together. The firmware clang-tidy gate stays local-only
-by decision (see its section).
+moves local and CI together (and the paths filter re-runs the
+firmware-tidy job on the lock-bump PR, which is when tool-float findings
+would appear).
 
 ## Formatting (clang-format)
 
@@ -193,21 +200,23 @@ triaged on — to bump past 22: change the pin, run both gates on a clean
 tree, and triage the new findings (fix, or a documented NOLINT / check
 exclusion).
 
-**Local-only by decision.** This gate is deliberately not a CI job:
-the dev task is full-fidelity (same real firmware compile database,
-same scripts, same pinned tool), the repo has a single maintainer, and
-the dedicated build job already typechecks the firmware on every PR. A
-CI job would cost ~15-25 minutes of CI per PR (west update +
-firmware build + tidy over 41 translation units) to enforce a check
-that runs locally anyway. The standing rule: run the gate before
-pushing any PR that touches `src/` or `include/`. If enforcement is
-ever wanted (e.g. a second contributor), the cheap option is a
-diff-scoped CI job that tidies only the PR-changed files — sound under
-a pinned tool, since unchanged files cannot produce new findings.
+**CI and local run the same script.** Both the dev task and the
+`firmware-tidy` CI job run `tooling/clang-tidy/run_firmware_tidy.sh`
+under the firmware profile: the script bootstraps the west workspace if
+missing (preserving the tracked `zephyr/module.yml`), builds the smoke
+firmware if `build/compile_commands.json` is missing, and runs the gate
+over the sanitized database. The CI job is paths-filtered to PRs that
+can change the gate's result, so the ~20 minute west update + firmware
+build only runs when it matters (it also runs on `devenv.lock` bumps —
+the tool-float case). Locally, run the gate before pushing any PR that
+touches `src/` or `include/` for fast feedback.
 
 - Check: `devenv shell -P firmware && devenv tasks run c:firmware:tidy`
   (builds the firmware first if `build/compile_commands.json` is
   missing; re-run `west build` or `rm -rf build` to refresh a stale one)
+- CI: the `firmware-tidy` job in
+  `.github/workflows/firmware-tidy.yml` (paths-filtered; manual runs via
+  workflow dispatch)
 
 ## Editor support (clangd)
 

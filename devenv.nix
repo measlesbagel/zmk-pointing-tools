@@ -123,33 +123,14 @@ in
     };
 
     # Runs the root .clang-tidy check set over the real firmware compile
-    # database (tooling/clang-tidy/); any first-party finding fails. Local-
-    # only gate by decision — run it before pushing any PR that touches
-    # src/ or include/ (see docs/quality.md). Needs the firmware profile
-    # for west and the Zephyr SDK: `devenv shell -P firmware`.
+    # database (tooling/clang-tidy/); any first-party finding fails. The
+    # script is the shared entry point with the CI firmware-tidy job
+    # (.github/workflows/firmware-tidy.yml), which runs it under the same
+    # firmware profile. Needs the firmware profile for west and the Zephyr
+    # SDK: `devenv shell -P firmware`.
     "c:firmware:tidy" = {
-      description = "Run the firmware clang-tidy gate (local; run before pushing PRs that touch src/ or include/); requires the firmware profile";
-      exec = ''
-        set -euo pipefail
-        build_dir="build"
-        if [ ! -f "$build_dir/compile_commands.json" ]; then
-          echo "No firmware compile database; building first (west build) ..."
-          west build -s zmk/app -d "$build_dir" -b nice_nano//zmk -- \
-            -DZMK_CONFIG="$PWD/config" \
-            -DSHIELD=corne_left \
-            -DZMK_EXTRA_MODULES="$PWD"
-        fi
-        sanitized="$build_dir/clang-ccdb"
-        mkdir -p "$sanitized"
-        python3 tooling/clang-tidy/sanitize_compile_db.py \
-          "$build_dir/compile_commands.json" \
-          "$sanitized/compile_commands.json" \
-          "$PWD"
-        python3 tooling/clang-tidy/check_firmware_tidy.py \
-          --db-dir "$sanitized" \
-          --repo "$PWD" \
-          --clang-tidy "$(command -v clang-tidy)"
-      '';
+      description = "Run the firmware clang-tidy gate (shared with the CI firmware-tidy job); requires the firmware profile";
+      exec = "bash tooling/clang-tidy/run_firmware_tidy.sh";
     };
 
     "zephyr:tests" = {
