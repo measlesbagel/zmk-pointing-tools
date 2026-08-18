@@ -217,8 +217,10 @@ base..head on a pull request, `HEAD~1..HEAD` on a push to `main`). The job
 fetches only the Zephyr project — at the exact rev pinned in `devenv.lock`,
 the same rev the local west workspace uses — into `zephyr-tree/` (the repo
 itself tracks `zephyr/module.yml`, so `zephyr/` is already occupied) and
-points the task at it via `ZEPHYR_BASE`; the module-safe check subset never touches
-ZMK, so no full west workspace is needed. The checks are:
+points the task at it via `ZEPHYR_BASE` plus the `COMPLIANCE_SCRIPT` and
+`COMPLIANCE_RANGE` overrides (all default to the local behavior, so an
+unmodified local run is unchanged); the module-safe check subset never
+touches ZMK, so no full west workspace is needed. The checks are:
 
 - **ClangFormat** — `clang-format-diff.py` over changed C lines.
 - **DevicetreeBindings** — flags redundant `required: false` in changed

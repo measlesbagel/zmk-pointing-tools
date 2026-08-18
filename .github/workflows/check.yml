@@ -74,5 +74,7 @@ jobs:
           else
             range="HEAD~1..HEAD"
           fi
-          ZEPHYR_BASE="$PWD/zephyr-tree" COMPLIANCE_RANGE="$range" \
+          ZEPHYR_BASE="$PWD/zephyr-tree" \
+          COMPLIANCE_SCRIPT=zephyr-tree/scripts/ci/check_compliance.py \
+          COMPLIANCE_RANGE="$range" \
             devenv tasks run zephyr:compliance:check --no-tui
