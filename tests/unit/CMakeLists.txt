@@ -7,7 +7,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zpt_unit_tests C)
 
 # The module under test is provided to the app as a Zephyr module via
-# the EXTRA_ZEPHYR_MODULES environment variable (see the zephyr:tests
+# the ZEPHYR_MODULES environment variable (see the zephyr:tests
 # devenv task and docs/quality.md); its Kconfig-guarded sources are then
 # built exactly as in the firmware.
 #
