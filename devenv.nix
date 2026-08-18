@@ -31,6 +31,25 @@ let
     ln -s ${pkgs.clang-tools}/bin/clang-format-diff "$out/bin/clang-format-diff.py"
   '';
 
+  # Python environment for running the module's ztest suites through west
+  # twister (the subset of zephyr/scripts/requirements*.txt that the twister
+  # core imports unconditionally; see docs/quality.md).
+  twisterPython = pkgs.python3.withPackages (ps: with ps; [
+    west
+    pyyaml
+    pykwalify
+    pyelftools
+    junitparser
+    lxml
+    natsort
+    psutil
+    colorama
+    ply
+    packaging
+    anytree
+    pytest
+  ]);
+
   # The tidy gates (c:tidy:check, c:firmware:tidy) are tuned against the
   # clang-tidy 22 series (the generation the firmware baseline was
   # verified with). Macro-generated Zephyr/ZMK symbols that newer versions
@@ -55,6 +74,10 @@ in
     clangTidyPinned
     pkgs.cppcheck
     pkgs.python3Packages.lizard
+    # twisterPython before compliancePython: `west twister` imports the
+    # twister script into the west process itself, so the west binary must
+    # come from the environment that carries twister's python deps.
+    twisterPython
     compliancePython
     clangFormatDiffPy
   ];
@@ -129,6 +152,22 @@ in
           --db-dir "$sanitized" \
           --repo "$PWD" \
           --clang-tidy "$(command -v clang-tidy)"
+      '';
+    };
+
+    "zephyr:tests" = {
+      description = "Run the module's ztest suites on native_posix via west twister";
+      exec = ''
+        # native_posix builds with the host gcc; the variant env var keeps
+        # twister's toolchain verification from requiring the Zephyr SDK
+        # (which this profile deliberately does not install). The module is
+        # not in the west manifest, so it is loaded through the env var
+        # (twister's cmake configure has no option to pass arbitrary -D
+        # args; the REMAINDER after -- would reach the test binary, not
+        # CMake).
+        export ZEPHYR_TOOLCHAIN_VARIANT=host
+        export EXTRA_ZEPHYR_MODULES="$PWD"
+        west twister -p native_posix/native/64 -T tests
       '';
     };
 

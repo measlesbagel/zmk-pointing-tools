@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: MIT */
+
+/* Devicetree for the unit tests: the telemetry service node, a virtual
+ * UART (vnd,serial, see zephyr/drivers/serial/serial_test.c) as its
+ * serial port, and the chosen node the service requires. */
+
+/ {
+	zpt_telemetry: zpt-telemetry {
+		compatible = "measlesbagel,zpt-telemetry";
+	};
+
+	zpt_test_uart: serial-test {
+		compatible = "vnd,serial";
+		buffer-size = <4096>;
+	};
+
+	chosen {
+		measlesbagel,zpt-telemetry-uart = &zpt_test_uart;
+	};
+};

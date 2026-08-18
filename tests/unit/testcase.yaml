@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+
+tests:
+  zpt.unit:
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="overlay-zpt.dts"
+    tags:
+      - zmk_pointing_tools
+      - unit
+    harness: ztest
+    platform_allow:
+      # native/64 variant: the plain native_posix build is 32-bit i686 and
+      # needs a 32-bit libc the host toolchain does not provide.
+      - native_posix/native/64
+      - native_sim
