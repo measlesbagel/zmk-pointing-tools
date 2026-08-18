@@ -79,6 +79,7 @@ static struct zpt_sink *action_sink_get(const struct device *dev) {
 }
 
 static int action_sink_bind_output(const struct device *dev, const struct device *output_device) {
+    (void)dev;
     (void)output_device;
     return 0;
 }

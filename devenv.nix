@@ -30,6 +30,19 @@ let
     mkdir -p "$out/bin"
     ln -s ${pkgs.clang-tools}/bin/clang-format-diff "$out/bin/clang-format-diff.py"
   '';
+
+  # The tidy gates (c:tidy:check, c:firmware:tidy) are tuned against the
+  # clang-tidy 22 series (the generation the firmware baseline was
+  # verified with). Macro-generated Zephyr/ZMK symbols that newer versions
+  # flag as misc-use-internal-linkage carry documented NOLINTs, so the
+  # gate also passes on the 21 series (the floating fallback). If a
+  # future nixpkgs float introduces new findings on a clean tree: triage
+  # (fix, NOLINT with a reason, or baseline), and re-freeze
+  # firmware_baseline.txt if the tool generation changes — see
+  # docs/quality.md.
+  clangTidyPinned =
+    if pkgs ? llvmPackages_22 then pkgs.llvmPackages_22.clang-tools
+    else pkgs.clang-tools;
 in
 {
   packages = [
@@ -39,7 +52,7 @@ in
     pkgs.gcc
     pkgs.cmake
     pkgs.ninja
-    pkgs.clang-tools
+    clangTidyPinned
     pkgs.cppcheck
     pkgs.python3Packages.lizard
     compliancePython
@@ -70,8 +83,10 @@ in
     };
 
     "c:tidy:check" = {
-      description = "Run clang-tidy over the host compile database";
-      exec = "cmake -S host -B build/host -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/host && run-clang-tidy -p build/host";
+      description = "Run the pinned clang-tidy over the host compile database (any finding fails)";
+      exec = "cmake -S host -B build/host -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
+        + "&& cmake --build build/host "
+        + "&& python3 tooling/clang-tidy/check_host_tidy.py --db-dir build/host --repo . --clang-tidy \"$(command -v clang-tidy)\"";
     };
 
     "c:cppcheck:check" = {
@@ -83,6 +98,37 @@ in
           --inline-suppr --suppress=missingIncludeSystem \
           $suppressions \
           --error-exitcode=1 src include host
+      '';
+    };
+
+    # Runs the root .clang-tidy check set over the real firmware compile
+    # database (tooling/clang-tidy/), gated against the frozen baseline
+    # (file::function::check entries). Local-only gate by decision — run
+    # it before pushing any PR that touches src/ or include/ (see
+    # docs/quality.md). Needs the firmware profile for west and the
+    # Zephyr SDK: `devenv shell -P firmware`.
+    "c:firmware:tidy" = {
+      description = "Run the baseline-gated firmware clang-tidy gate (local; run before pushing PRs that touch src/ or include/); requires the firmware profile";
+      exec = ''
+        set -euo pipefail
+        build_dir="build"
+        if [ ! -f "$build_dir/compile_commands.json" ]; then
+          echo "No firmware compile database; building first (west build) ..."
+          west build -s zmk/app -d "$build_dir" -b nice_nano//zmk -- \
+            -DZMK_CONFIG="$PWD/config" \
+            -DSHIELD=corne_left \
+            -DZMK_EXTRA_MODULES="$PWD"
+        fi
+        sanitized="$build_dir/clang-ccdb"
+        mkdir -p "$sanitized"
+        python3 tooling/clang-tidy/sanitize_compile_db.py \
+          "$build_dir/compile_commands.json" \
+          "$sanitized/compile_commands.json" \
+          "$PWD"
+        python3 tooling/clang-tidy/check_firmware_tidy.py \
+          --db-dir "$sanitized" \
+          --repo "$PWD" \
+          --clang-tidy "$(command -v clang-tidy)"
       '';
     };
 

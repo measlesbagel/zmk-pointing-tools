@@ -21,21 +21,33 @@
 #   bounded alternatives (sscanf_s & co.) do not exist on the Zephyr/newlib
 #   target, and the only affected code parses trusted local input read into
 #   bounded buffers by fgets().
+# - clang-analyzer-optin.*: opt-in analyzers are enabled explicitly, not
+#   pulled in by the clang-analyzer-* wildcard. Newer tool versions extend
+#   the opt-in set (the 22 series flags e.g. optin.performance.Padding on
+#   struct zpt_route_override), which would fail a clean tree on a tool
+#   bump; enable a specific opt-in analyzer deliberately if wanted.
 # - misc-include-cleaner: churn-only for a codebase with stable includes.
 # - misc-non-private-member-variables-in-classes: C++-only.
 # - performance-enum-size: enums are used as typed constants; resizing them
 #   would change ABI without benefit.
+# - portability-avoid-pragma-once: the repository's standard header guard is
+#   #pragma once (every include/ and host/ header uses it); converting to
+#   include guards is churn with no correctness benefit. Recent clang-tidy
+#   versions (22+) flag pragma once in included headers aggressively, which
+#   would fail a clean tree depending on the toolchain version in use.
 Checks: >
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   clang-analyzer-*,
   -clang-analyzer-security.insecureAPI.*,
+  -clang-analyzer-optin.*,
   misc-*,
   -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
   performance-*,
   -performance-enum-size,
   portability-*,
+  -portability-avoid-pragma-once,
   readability-function-cognitive-complexity
 WarningsAsErrors: '*'
 CheckOptions:

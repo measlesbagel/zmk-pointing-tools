@@ -81,7 +81,10 @@ enum zpt_tuning_status {
 #define ZPT_UART_NODE DT_CHOSEN(measlesbagel_zpt_telemetry_uart)
 static const struct device *const zpt_uart = DEVICE_DT_GET(ZPT_UART_NODE);
 
-RING_BUF_DECLARE(zpt_rx_ring, 128);
+/* The ring buffer handle is documented as `extern struct ring_buf
+ * <name>` (the storage is already static); the one-line macro has no
+ * static variant. */
+RING_BUF_DECLARE(zpt_rx_ring, 128); // NOLINT(misc-use-internal-linkage)
 
 enum zpt_record_kind {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -98,9 +101,12 @@ struct zpt_telemetry_record {
 #endif
 };
 
+/* K_MSGQ_DEFINE / K_SEM_DEFINE records are collected by the kernel from
+ * their linker sections at boot; both macros have no static variant. */
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 K_MSGQ_DEFINE(zpt_record_queue, sizeof(struct zpt_telemetry_record),
               CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE, 4);
-K_SEM_DEFINE(zpt_wake, 0, 1);
+K_SEM_DEFINE(zpt_wake, 0, 1); // NOLINT(misc-use-internal-linkage)
 
 static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
@@ -224,6 +230,9 @@ static void zpt_send_state_status(void) {
         payload[offset++] = atomic_get(&zpt_state_levels[i]);
         payload[offset++] = label_length;
         if (label_length > 0) {
+            /* Binary protocol payload: the buffer is not a string, so a
+             * trailing NUL is neither guaranteed nor needed. */
+            // NOLINTNEXTLINE(bugprone-not-null-terminated-result)
             memcpy(&payload[offset], label, label_length);
             offset += label_length;
         }
@@ -321,7 +330,9 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         if (ret == 0) {
             ret = zpt_tuning_get(target_id, parameter->id, false, &current);
         }
-        if (ret < 0) {
+        /* Target getters contractually return 0 or a negative errno; any
+         * other value leaves 'current' unread, so treat it as failure. */
+        if (ret != 0) {
             zpt_send_tuning_result(ZPT_REQ_TUNING_DESCRIBE, ret, target_id, parameter->id, 0);
             return;
         }
@@ -331,6 +342,11 @@ static void zpt_send_tuning_description(uint8_t target_id) {
             break;
         }
 
+        /* The bounds check above reserves exactly encoded_length =
+         * 24 + label_length + unit_length bytes, which is everything the
+         * block writes below; the static analyzer cannot see through the
+         * symbolic lengths and flags the first write anyway. */
+        // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
         payload[offset++] = parameter->id;
         payload[offset++] = parameter->type;
         sys_put_le32((uint32_t)parameter->minimum, &payload[offset]);
@@ -345,8 +361,10 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         offset += 4;
         payload[offset++] = label_length;
         payload[offset++] = unit_length;
+        // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
         memcpy(&payload[offset], parameter->label, label_length);
         offset += label_length;
+        // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
         memcpy(&payload[offset], parameter->unit, unit_length);
         offset += unit_length;
     }
@@ -557,26 +575,33 @@ static bool zpt_is_tuning_request(uint8_t type) {
 }
 #endif
 
+/* k_uptime_get_32() is uint32_t and atomic_val_t is signed; the explicit
+ * cast documents the intended bit-exact round trip (readers cast back with
+ * (uint32_t)atomic_get) and keeps bugprone-narrowing-conversions quiet. */
+static void zpt_note_contact(void) {
+    atomic_set(&zpt_last_contact, (atomic_val_t)k_uptime_get_32());
+}
+
 static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     if (zpt_is_tuning_request(type)) {
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_note_contact();
         zpt_dispatch_tuning(type, payload, length);
         return;
     }
 #endif
     switch (type) {
     case ZPT_REQ_DESCRIBE:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_note_contact();
         zpt_send_describe();
         break;
     case ZPT_REQ_PING:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_note_contact();
         zpt_send_ack();
         break;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
     case ZPT_REQ_STATE_CONTROL:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_note_contact();
         zpt_handle_state_control(payload, length);
         break;
 #endif
@@ -681,6 +706,13 @@ static void zpt_thread(void) {
     }
 }
 
+/* K_THREAD_DEFINE expands to a conditional operator with identical
+ * branches, a const-qualified typedef (k_tid_t), and non-static globals:
+ * the thread record is collected by the kernel from the
+ * _static_thread_data linker section at boot, and the handle is
+ * documented as `extern const k_tid_t <name>`, so static linkage is
+ * impossible. All of it is Zephyr macro artifact, not code in this file. */
+// NOLINTNEXTLINE(bugprone-branch-clone,misc-misplaced-const,misc-use-internal-linkage)
 K_THREAD_DEFINE(zpt_thread_id, CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_THREAD_STACK_SIZE, zpt_thread,
                 NULL, NULL, NULL, K_PRIO_PREEMPT(10), 0, 0);
 
