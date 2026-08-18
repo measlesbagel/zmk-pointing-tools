@@ -78,3 +78,35 @@ jobs:
           COMPLIANCE_SCRIPT=zephyr-tree/scripts/ci/check_compliance.py \
           COMPLIANCE_RANGE="$range" \
             devenv tasks run zephyr:compliance:check --no-tui
+
+  # Firmware unit tests: the module's ztest suites (tests/unit) run on
+  # native_posix through west twister, as the local zephyr:tests dev task
+  # does. Twister needs the full Zephyr tree (boards, scripts, ztest), not
+  # just the compliance script, so this job fetches the pinned rev into
+  # zephyr/ -- replacing the checkout's zephyr/module.yml, which is not
+  # needed here (the module itself is loaded from the repo root through
+  # EXTRA_ZEPHYR_MODULES, as the dev task sets it).
+  zephyr-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Configure the Devenv binary cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: devenv
+      - name: Install Devenv
+        run: nix profile add github:cachix/devenv/v2.2#devenv
+      # The same fetch as the zephyr-compliance job, into zephyr/ (the
+      # west workspace's [zephyr] base in .west/config).
+      - name: Fetch pinned Zephyr tree
+        run: |
+          rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
+          rm -rf zephyr
+          git clone --filter=blob:none --no-checkout --quiet \
+            https://github.com/zmkfirmware/zephyr zephyr
+          git -C zephyr fetch --depth 1 --quiet origin "$rev"
+          git -C zephyr checkout --quiet "$rev"
+      - name: Run firmware unit tests (ztest via twister)
+        run: devenv tasks run zephyr:tests --no-tui
