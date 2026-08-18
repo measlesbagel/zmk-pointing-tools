@@ -62,6 +62,7 @@ endfunction()
 
 zpt_host_executable(axis_intent_stage_test tests/axis_intent_stage_test.c)
 zpt_host_executable(compact_split_codec_test tests/compact_split_codec_test.c)
+zpt_host_executable(compact_split_codec_soak_test tests/compact_split_codec_soak_test.c)
 zpt_host_executable(frame_assembler_test tests/frame_assembler_test.c)
 zpt_host_executable(motion_gate_test tests/motion_gate_test.c)
 zpt_host_executable(pipeline_test tests/pipeline_test.c)
@@ -78,6 +79,7 @@ zpt_host_executable(zpt_text_nav_pipeline_replay runners/text_nav_pipeline_repla
 
 add_test(NAME axis_intent_stage COMMAND axis_intent_stage_test)
 add_test(NAME compact_split_codec COMMAND compact_split_codec_test)
+add_test(NAME compact_split_codec_soak COMMAND compact_split_codec_soak_test)
 add_test(NAME frame_assembler COMMAND frame_assembler_test)
 add_test(NAME motion_gate COMMAND motion_gate_test)
 add_test(NAME motion_pipeline COMMAND pipeline_test)

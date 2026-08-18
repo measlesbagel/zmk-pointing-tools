@@ -68,6 +68,22 @@ set; CI runs the same task with the same toolchain.
 - CI: the `checks` job in `.github/workflows/check.yml` runs the task on
   every pull request and push to `main`.
 
+## Host test suite
+
+The host CMake project (`host/CMakeLists.txt`) builds the firmware's
+board-independent sources plus a CTest suite in `host/tests/`: hand-written
+unit tests per module, a Node.js trace-replay harness, and a deterministic
+soak test for the compact split codec (`compact_split_codec_soak`). The
+soak test pushes 2^24 random bit patterns through the decoder against an
+independent model of the sequence state machine, then round-trips 2^22
+encoded packets — well past the decoder's 2^16 expanded-sequence wrap —
+guarding the wire-facing parser against memory and undefined behavior at a
+cost of ~0.3 s. It runs in the regular and sanitizer builds.
+
+- Local: `devenv tasks run host:test` (or `host:test:asan`)
+- CI: the `checks` job runs the suite under sanitizers on every PR and push
+  to `main`.
+
 ## Sanitizers (host test build)
 
 The host CMake project accepts `-DZPT_ENABLE_SANITIZERS=ON`, which builds all
