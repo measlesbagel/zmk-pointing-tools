@@ -161,10 +161,14 @@ in
         # native_posix builds with the host gcc; the variant env var keeps
         # twister's toolchain verification from requiring the Zephyr SDK
         # (which this profile deliberately does not install). The module is
-        # not in the west manifest, so it is loaded through the env var
-        # (twister's cmake configure has no option to pass arbitrary -D
-        # args; the REMAINDER after -- would reach the test binary, not
-        # CMake).
+        # loaded through the ZEPHYR_MODULES env var (read by zephyr_get
+        # from the ENV scope; twister's cmake configure has no option to
+        # pass arbitrary -D args, and the REMAINDER after -- would reach
+        # the test binary, not CMake). Zephyr only runs its module
+        # registration script when WEST or ZEPHYR_MODULES is set, and WEST
+        # is WEST-NOTFOUND without a west workspace (west topdir is looked
+        # up from ZEPHYR_BASE), so the env var also covers CI, where the
+        # zephyr tree is fetched without a workspace.
         #
         # Twister is invoked as a plain python script rather than through
         # west: west only registers the twister command once the manifest
@@ -173,7 +177,7 @@ in
         # ZEPHYR_BASE from its own location and has no west dependency.
         # Its imports come from twisterPython (ordered first in packages).
         export ZEPHYR_TOOLCHAIN_VARIANT=host
-        export EXTRA_ZEPHYR_MODULES="$PWD"
+        export ZEPHYR_MODULES="$PWD"
         python3 "$PWD/zephyr/scripts/twister" -p native_posix/native/64 -T tests
       '';
     };

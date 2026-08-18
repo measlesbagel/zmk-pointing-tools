@@ -85,7 +85,7 @@ jobs:
   # the compliance script, so this job fetches the pinned rev into zephyr/
   # (preserving the checkout's zephyr/module.yml, which is this module's
   # own descriptor: the module root is the repo root, loaded through
-  # EXTRA_ZEPHYR_MODULES as the dev task sets it).
+  # ZEPHYR_MODULES as the dev task sets it).
   zephyr-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -109,7 +109,7 @@ jobs:
           rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
           # zephyr/module.yml in the checkout is this module's own
           # descriptor (the module root is the repo root, loaded via
-          # EXTRA_ZEPHYR_MODULES); preserve it across the re-clone.
+          # ZEPHYR_MODULES); preserve it across the re-clone.
           cp zephyr/module.yml "$RUNNER_TEMP/zpt-module.yml"
           rm -rf zephyr
           git clone --filter=blob:none --no-checkout --quiet \

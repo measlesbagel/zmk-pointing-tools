@@ -299,10 +299,15 @@ used — `native_posix` is the fast local/CI baseline.
   (the tests ping after submitting, mirroring production where the host
   keeps the link alive).
 
-The test app loads the module through `EXTRA_ZEPHYR_MODULES` (its real
+The test app loads the module through the `ZEPHYR_MODULES` env var (its real
 Kconfig, CMake, devicetree bindings, and library path — twister's cmake
-configure has no option to pass arbitrary `-D` args) and runs with the host
-gcc (`ZEPHYR_TOOLCHAIN_VARIANT=host`), so no Zephyr SDK is needed.
+configure has no option to pass arbitrary `-D` args). It is set rather than
+relying on the west workspace because Zephyr only runs its module
+registration script when `WEST` or `ZEPHYR_MODULES` is set, and the `WEST`
+cmake variable is `WEST-NOTFOUND` when no `.west/` workspace is found above
+`ZEPHYR_BASE` — the situation in CI, where the zephyr tree is fetched
+without a workspace. It runs with the host gcc
+(`ZEPHYR_TOOLCHAIN_VARIANT=host`), so no Zephyr SDK is needed.
 
 Twister runs as a plain python script
 (`zephyr/scripts/twister -p native_posix/native/64 -T tests`) rather than
