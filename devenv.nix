@@ -133,10 +133,11 @@ in
     };
 
     "zephyr:compliance:check" = {
-      description = "Run the module-safe Zephyr compliance checks over HEAD~1..HEAD (see docs/quality.md)";
+      description = "Run the module-safe Zephyr compliance checks over HEAD~1..HEAD (COMPLIANCE_RANGE overrides the range); see docs/quality.md";
       exec = ''
+        range="''${COMPLIANCE_RANGE:-HEAD~1..HEAD}"
         ${compliancePython}/bin/python3 zephyr/scripts/ci/check_compliance.py \
-          -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+          -c "$range" -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
           -m GitDiffCheck -m TextEncoding -m BinaryFiles
       '';
     };
