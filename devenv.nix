@@ -166,6 +166,10 @@ in
         # args; the REMAINDER after -- would reach the test binary, not
         # CMake).
         export ZEPHYR_TOOLCHAIN_VARIANT=host
+        # West discovers the twister command from the workspace manifest
+        # (config/west.yml); initialize the workspace if the developer
+        # has not run `west init -l config` yet.
+        [ -f .west/config ] || west -q init -l config
         export EXTRA_ZEPHYR_MODULES="$PWD"
         west twister -p native_posix/native/64 -T tests
       '';
