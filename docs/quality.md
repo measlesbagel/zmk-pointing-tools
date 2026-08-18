@@ -13,10 +13,10 @@ The repository style is defined by the root `.clang-format` file
 sources under `src/`, `include/`, and `host/`; vendored trees (`zephyr/`,
 `zmk/`, `modules/`, `optional/`, `build/`) are never touched.
 
-- Check: `devenv task c:format:check`
+- Check: `devenv tasks run c:format:check`
   (equivalent:
   `find src include host -type f \( -name '*.c' -o -name '*.h' \) -print0 | xargs -0 clang-format --dry-run --Werror`)
-- Fix: `devenv task c:format`
+- Fix: `devenv tasks run c:format`
 - CI: the `c-style` job in `.github/workflows/check.yml` runs the check on
   every pull request and push to `main`.
 
@@ -39,7 +39,7 @@ does not expand macros, so the values are stable and comparable between
 firmware and host code. CI pins `lizard==1.23.0`; `lizard` is part of the
 default devenv package set.
 
-- Check: `devenv task c:complexity:check`
+- Check: `devenv tasks run c:complexity:check`
 - CI: `c-style` job in `.github/workflows/check.yml`.
 
 ## Sanitizers (host test build)
@@ -49,7 +49,7 @@ host test targets and replay runners with AddressSanitizer and
 UndefinedBehaviorSanitizer (`-fno-sanitize-recover=all`, so any undefined
 behavior fails the test instead of printing a note).
 
-- Local: `devenv task host:test:asan`
+- Local: `devenv tasks run host:test:asan`
 - CI: `host-sanitizers` job in `.github/workflows/check.yml` runs the full
   CTest suite (including the Node.js trace-replay harness) under
   sanitizers on every PR and push to `main`.
@@ -86,16 +86,17 @@ Two static analyzers cover the C sources:
 
 The `src/platform/zmk` and `src/service` layers are covered by the
 firmware clang-tidy gate below (full compile-database coverage) and by
-cppcheck with stubbed devicetree macros. The dev task runs the pinned
-nix clang-tidy per file via `tooling/clang-tidy/check_host_tidy.py`
-(any finding fails; `run-clang-tidy` is no longer shipped by recent
-LLVM releases, so the gate does not depend on it). Note that the CI
-host job uses the runner's default clang-tools and apt cppcheck
-(version-drifting binaries); when a tool update introduces new
-findings, triage them (fix or justify a suppression) before
-re-freezing the baselines.
+cppcheck with stubbed devicetree macros. `c:tidy:check` configures and
+builds the host tree with the nix gcc and runs the pinned clang-tidy per
+file via `tooling/clang-tidy/check_host_tidy.py` (any finding fails;
+`run-clang-tidy` is no longer shipped by recent LLVM releases, so the
+gate does not depend on it). CI runs the very same dev tasks through
+devenv (`devenv tasks run`), with the toolchain pinned by
+`devenv.lock`, so local and CI results cannot drift; when that lock is
+bumped and a tool update introduces new findings, triage them (fix or
+justify a suppression) before re-freezing the baselines.
 
-- Check: `devenv task c:tidy:check`, `devenv task c:cppcheck:check`
+- Check: `devenv tasks run c:tidy:check`, `devenv tasks run c:cppcheck:check`
 - CI: `c-analysis` job in `.github/workflows/check.yml`.
 
 ## Firmware clang-tidy (baseline-gated)
@@ -170,7 +171,7 @@ ever wanted (e.g. a second contributor), the cheap option is a
 diff-scoped CI job that tidies only the PR-changed files — sound under
 a pinned tool, since unchanged files cannot produce new findings.
 
-- Check: `devenv shell -P firmware && devenv task c:firmware:tidy`
+- Check: `devenv shell -P firmware && devenv tasks run c:firmware:tidy`
   (builds the firmware first if `build/compile_commands.json` is
   missing; re-run `west build` or `rm -rf build` to refresh a stale one)
 
@@ -179,9 +180,9 @@ a pinned tool, since unchanged files cannot produce new findings.
 `.clangd` points editors at the host compile database, so the host-compilable
 sources get full semantic analysis plus the same clang-tidy checks that run
 in CI (clangd loads the nearest `.clang-tidy` automatically). Generate the
-database with `devenv task c:tidy:check` (or the commands in `.clangd`).
+database with `devenv tasks run c:tidy:check` (or the commands in `.clangd`).
 `src/platform/zmk` and `src/service` files get real semantics from the
-sanitized firmware database instead: `devenv task c:firmware:tidy`
+sanitized firmware database instead: `devenv tasks run c:firmware:tidy`
 (firmware profile) writes it to `build/clang-ccdb/compile_commands.json` —
 point clangd at that directory (e.g. `clangd --compile-commands-dir=
 build/clang-ccdb`) to analyze the platform layer.

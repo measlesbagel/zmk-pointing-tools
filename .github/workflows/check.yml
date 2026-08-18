@@ -42,29 +42,27 @@ jobs:
           lizard -l c -C 15 -w host
 
   c-analysis:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Install cppcheck
-        run: sudo apt-get update && sudo apt-get install -y cppcheck
-      - name: Configure host build with compile database
-        run: cmake -S host -B build/host-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-      - name: Build host targets
-        run: cmake --build build/host-tidy
-      - name: Run clang-tidy over the host compile database
-        run: run-clang-tidy -q -p build/host-tidy
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Configure the Devenv binary cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: devenv
+      - name: Install Devenv
+        run: nix profile add github:cachix/devenv/v2.2#devenv
+      # Run the local dev tasks (devenv.nix) so CI analyzes with the same
+      # toolchain as the dev shell: nixpkgs and every tool are pinned by
+      # devenv.lock, so results cannot drift from a local run. c:tidy:check
+      # configures/builds the host tree with the nix gcc and runs
+      # tooling/clang-tidy/check_host_tidy.py with the pinned clang-tidy;
+      # c:cppcheck:check runs the cppcheck baseline.
+      - name: Run host clang-tidy gate
+        run: devenv tasks run c:tidy:check --no-tui
       - name: Run cppcheck
-        run: |
-          # Expand the suppression baseline into --suppress arguments so the
-          # command works on both the runner's apt cppcheck and newer local
-          # versions (--suppressions-list needs cppcheck 2.14+).
-          suppressions=$(grep -vE '^[[:space:]]*(#|$)' .cppcheck-suppressions | sed 's/^/--suppress=/' | tr '\n' ' ')
-          # shellcheck disable=SC2086
-          cppcheck --enable=warning,performance,portability --std=c11 \
-            -I include --include=tooling/cppcheck/preinclude.h \
-            --inline-suppr --suppress=missingIncludeSystem \
-            $suppressions \
-            --error-exitcode=1 src include host
+        run: devenv tasks run c:cppcheck:check --no-tui
 
   host-sanitizers:
     runs-on: ubuntu-latest
