@@ -12,7 +12,7 @@
 # docs/quality.md and issue #76) and point CompilationDatabase at it.
 #
 # clangd picks up the nearest .clang-tidy file automatically, so the same
-# check set that runs in CI (bugprone, clang-analyzer, cognitive
-# complexity) is available in-editor.
+# check set that runs in CI (bugprone, clang-analyzer, misc, performance,
+# portability — see .clang-tidy for the exclusions) is available in-editor.
 CompileFlags:
   CompilationDatabase: build/host
