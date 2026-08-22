@@ -1,0 +1,65 @@
+name: Firmware clang-tidy gate
+
+# The gate analyzes the firmware's real compile database, so its result can
+# only change when the checked code, the module's build configuration, the
+# workspace pins, or the analyzer toolchain changes. The paths filter keeps
+# docs-only, web-only, and host-only PRs off the ~20 minute west update +
+# firmware build. The job runs tooling/clang-tidy/run_firmware_tidy.sh —
+# the same entry point as the local c:firmware:tidy dev task — under
+# devenv's firmware profile (west + Zephyr SDK), so CI and local analyze
+# with the identical toolchain pinned by devenv.lock.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "include/**"
+      - "Kconfig"
+      - "CMakeLists.txt"
+      - "dts/**"
+      - "config/**"
+      - "zephyr/module.yml"
+      - ".clang-tidy"
+      - "tooling/clang-tidy/**"
+      - "devenv.nix"
+      - "devenv.lock"
+      - ".github/workflows/firmware-tidy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "Kconfig"
+      - "CMakeLists.txt"
+      - "dts/**"
+      - "config/**"
+      - "zephyr/module.yml"
+      - ".clang-tidy"
+      - "tooling/clang-tidy/**"
+      - "devenv.nix"
+      - "devenv.lock"
+      - ".github/workflows/firmware-tidy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware-tidy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Configure the Devenv binary cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: devenv
+      - name: Install Devenv
+        run: nix profile add github:cachix/devenv/v2.2#devenv
+      # Same local task as 'devenv tasks run c:firmware:tidy' (the
+      # firmware profile provides west and the Zephyr SDK); the task's
+      # script bootstraps the west workspace (preserving the tracked
+      # zephyr/module.yml), builds the smoke firmware if no compile
+      # database exists, sanitizes the database, and runs the gate.
+      - name: Run the firmware clang-tidy gate
+        run: devenv tasks run -P firmware c:firmware:tidy --no-tui
