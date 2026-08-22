@@ -73,6 +73,47 @@ static void coherent_stage_reset(struct zpt_stage *stage, enum zpt_reset_reason 
     clear_pending_evidence(state);
 }
 
+static bool suppression_active(const struct zpt_coherent_displacement_stage_config *config,
+                               const struct zpt_signal *signal, uint32_t now) {
+    return config->suppression != NULL && config->suppression->is_suppressed != NULL &&
+           config->suppression->is_suppressed(config->suppression->context, signal, now);
+}
+
+static void observe_result(struct zpt_coherent_displacement_stage_state *state,
+                           struct zpt_stage_context *context, const struct zpt_signal *signal,
+                           const struct zpt_coherent_displacement_result *result,
+                           bool had_pending) {
+    if (result->suppressed || result->phase == ZPT_MOTION_GATE_BYPASS || result->reset_for_idle ||
+        result->reset_for_timeout || !had_pending) {
+        clear_pending_evidence(state);
+    }
+    if (result->suppressed) {
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
+    } else if (result->discarded && (result->reset_for_idle || result->reset_for_timeout)) {
+        zpt_stage_notify(context, ZPT_STAGE_EVENT_DISCARDED, 0);
+    }
+    if (result->phase == ZPT_MOTION_GATE_PENDING || result->qualified) {
+        accumulate_pending_evidence(state, signal);
+    }
+}
+
+static int emit_qualified(struct zpt_coherent_displacement_stage_state *state,
+                          struct zpt_stage_context *context,
+                          const struct zpt_coherent_displacement_result *result, bool had_pending) {
+    struct zpt_signal output = state->pending_evidence;
+    output.data.fixed_vector.x = result->x;
+    output.data.fixed_vector.y = result->y;
+    if (result->clipped) {
+        output.metadata.flags |= ZPT_SIGNAL_FLAG_CLIPPED;
+    }
+    if (had_pending) {
+        output.metadata.flags |= ZPT_SIGNAL_FLAG_COALESCED;
+    }
+    clear_pending_evidence(state);
+    zpt_stage_notify(context, ZPT_STAGE_EVENT_QUALIFIED, 0);
+    return zpt_stage_emit(context, &output);
+}
+
 static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                   struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
@@ -82,27 +123,13 @@ static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_sign
 
     const struct zpt_coherent_displacement_stage_config *config = stage->config;
     struct zpt_coherent_displacement_stage_state *state = stage->state;
+    uint32_t now = zpt_stage_now_ms(context);
     bool had_pending = has_pending(&state->strategy);
-    bool suppress = config->suppression != NULL && config->suppression->is_suppressed != NULL &&
-                    config->suppression->is_suppressed(config->suppression->context, signal,
-                                                       zpt_stage_now_ms(context));
     struct zpt_coherent_displacement_result result = zpt_coherent_displacement_update(
         &state->strategy, &config->settings, signal->data.fixed_vector.x,
-        signal->data.fixed_vector.y, zpt_stage_now_ms(context), suppress);
+        signal->data.fixed_vector.y, now, suppression_active(config, signal, now));
 
-    if (result.suppressed || result.phase == ZPT_MOTION_GATE_BYPASS || result.reset_for_idle ||
-        result.reset_for_timeout || !had_pending) {
-        clear_pending_evidence(state);
-    }
-    if (result.suppressed) {
-        zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
-    } else if (result.discarded && (result.reset_for_idle || result.reset_for_timeout)) {
-        zpt_stage_notify(context, ZPT_STAGE_EVENT_DISCARDED, 0);
-    }
-
-    if (result.phase == ZPT_MOTION_GATE_PENDING || result.qualified) {
-        accumulate_pending_evidence(state, signal);
-    }
+    observe_result(state, context, signal, &result, had_pending);
 
     int ret = schedule_next_deadline(context, &config->settings, &state->strategy);
     if (ret < 0) {
@@ -113,18 +140,7 @@ static int coherent_stage_process(struct zpt_stage *stage, const struct zpt_sign
         return zpt_stage_emit(context, signal);
     }
     if (result.qualified) {
-        struct zpt_signal output = state->pending_evidence;
-        output.data.fixed_vector.x = result.x;
-        output.data.fixed_vector.y = result.y;
-        if (result.clipped) {
-            output.metadata.flags |= ZPT_SIGNAL_FLAG_CLIPPED;
-        }
-        if (had_pending) {
-            output.metadata.flags |= ZPT_SIGNAL_FLAG_COALESCED;
-        }
-        clear_pending_evidence(state);
-        zpt_stage_notify(context, ZPT_STAGE_EVENT_QUALIFIED, 0);
-        return zpt_stage_emit(context, &output);
+        return emit_qualified(state, context, &result, had_pending);
     }
     if (result.phase == ZPT_MOTION_GATE_ACTIVE) {
         return zpt_stage_emit(context, signal);

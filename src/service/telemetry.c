@@ -490,7 +490,81 @@ static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) 
 
 #endif /* CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING */
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+static void zpt_dispatch_tuning(uint8_t type, const uint8_t *payload, uint16_t length) {
+    switch (type) {
+    case ZPT_REQ_TUNING_TARGETS:
+        zpt_send_tuning_targets();
+        break;
+    case ZPT_REQ_TUNING_DESCRIBE:
+        if (length == 1) {
+            zpt_send_tuning_description(payload[0]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_SET:
+        zpt_handle_tuning_set(payload, length);
+        break;
+    case ZPT_REQ_TUNING_RESET:
+        zpt_handle_tuning_reset(payload, length);
+        break;
+    case ZPT_REQ_TUNING_HELP:
+        if (length == 2) {
+            zpt_send_tuning_help(payload[0], payload[1]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_TARGET_METADATA:
+        if (length == 1) {
+            zpt_send_tuning_target_metadata(payload[0]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_PARAMETER_METADATA:
+        if (length == 2) {
+            zpt_send_tuning_parameter_metadata(payload[0], payload[1]);
+        } else {
+            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        }
+        break;
+    case ZPT_REQ_TUNING_SET_MANY:
+        zpt_handle_tuning_set_many(payload, length);
+        break;
+    default:
+        break;
+    }
+}
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+static bool zpt_is_tuning_request(uint8_t type) {
+    switch (type) {
+    case ZPT_REQ_TUNING_TARGETS:
+    case ZPT_REQ_TUNING_DESCRIBE:
+    case ZPT_REQ_TUNING_SET:
+    case ZPT_REQ_TUNING_RESET:
+    case ZPT_REQ_TUNING_HELP:
+    case ZPT_REQ_TUNING_TARGET_METADATA:
+    case ZPT_REQ_TUNING_PARAMETER_METADATA:
+    case ZPT_REQ_TUNING_SET_MANY:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
 static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) {
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    if (zpt_is_tuning_request(type)) {
+        atomic_set(&zpt_last_contact, k_uptime_get_32());
+        zpt_dispatch_tuning(type, payload, length);
+        return;
+    }
+#endif
     switch (type) {
     case ZPT_REQ_DESCRIBE:
         atomic_set(&zpt_last_contact, k_uptime_get_32());
@@ -500,56 +574,6 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         atomic_set(&zpt_last_contact, k_uptime_get_32());
         zpt_send_ack();
         break;
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
-    case ZPT_REQ_TUNING_TARGETS:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        zpt_send_tuning_targets();
-        break;
-    case ZPT_REQ_TUNING_DESCRIBE:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        if (length == 1) {
-            zpt_send_tuning_description(payload[0]);
-        } else {
-            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
-        }
-        break;
-    case ZPT_REQ_TUNING_SET:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        zpt_handle_tuning_set(payload, length);
-        break;
-    case ZPT_REQ_TUNING_RESET:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        zpt_handle_tuning_reset(payload, length);
-        break;
-    case ZPT_REQ_TUNING_HELP:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        if (length == 2) {
-            zpt_send_tuning_help(payload[0], payload[1]);
-        } else {
-            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
-        }
-        break;
-    case ZPT_REQ_TUNING_TARGET_METADATA:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        if (length == 1) {
-            zpt_send_tuning_target_metadata(payload[0]);
-        } else {
-            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
-        }
-        break;
-    case ZPT_REQ_TUNING_PARAMETER_METADATA:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        if (length == 2) {
-            zpt_send_tuning_parameter_metadata(payload[0], payload[1]);
-        } else {
-            zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
-        }
-        break;
-    case ZPT_REQ_TUNING_SET_MANY:
-        atomic_set(&zpt_last_contact, k_uptime_get_32());
-        zpt_handle_tuning_set_many(payload, length);
-        break;
-#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
     case ZPT_REQ_STATE_CONTROL:
         atomic_set(&zpt_last_contact, k_uptime_get_32());

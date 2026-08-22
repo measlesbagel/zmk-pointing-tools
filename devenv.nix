@@ -61,7 +61,7 @@ in
 
     "c:complexity:check" = {
       description = "Check C cyclomatic complexity gates";
-      exec = "lizard -l c -C 30 -w src include && lizard -l c -C 40 -w host";
+      exec = "lizard -l c -C 15 -w src include && lizard -l c -C 15 -w host";
     };
 
     "host:test:asan" = {

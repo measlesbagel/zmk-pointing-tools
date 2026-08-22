@@ -51,6 +51,31 @@ static void schedule_undecided_expiry(struct zpt_axis_constraint_state *state,
     }
 }
 
+static int emit_zeroed_frame(struct zpt_stage_context *context, const struct zpt_signal *signal) {
+    struct zpt_signal output = *signal;
+    output.data.fixed_vector.x = 0;
+    output.data.fixed_vector.y = 0;
+    return zpt_stage_emit(context, &output);
+}
+
+static void fold_undecided_motion(struct zpt_axis_constraint_state *state,
+                                  const struct zpt_axis_constraint_config *config,
+                                  struct zpt_stage_context *context, uint32_t now, uint8_t intent,
+                                  int64_t *output_x, int64_t *output_y) {
+    if (state->previous_intent != ZPT_AXIS_INTENT_UNDECIDED || !state->have_undecided) {
+        return;
+    }
+    /* Fold buffered unclassified motion, filtered by the new intent. */
+    if (intent != ZPT_AXIS_INTENT_VERTICAL) {
+        *output_x = zpt_fixed_saturating_add(*output_x, state->undecided_x);
+    }
+    if (intent != ZPT_AXIS_INTENT_HORIZONTAL) {
+        *output_y = zpt_fixed_saturating_add(*output_y, state->undecided_y);
+    }
+    clear_undecided(state);
+    schedule_undecided_expiry(state, config, context, now);
+}
+
 static int axis_constraint_stage_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                                          struct zpt_stage_context *context) {
     if (stage == NULL || signal == NULL || context == NULL || stage->config == NULL ||
@@ -62,18 +87,17 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     struct zpt_axis_constraint_state *state = stage->state;
     uint32_t now = zpt_stage_now_ms(context);
     uint32_t elapsed = state->have_last_frame ? now - state->last_frame_ms : 0U;
+    int64_t x = signal->data.fixed_vector.x;
+    int64_t y = signal->data.fixed_vector.y;
+    uint8_t intent = signal->annotations.axis_intent;
 
-    bool suppressed = suppression_active(config, signal, now);
-    if (suppressed) {
+    if (suppression_active(config, signal, now)) {
         clear_undecided(state);
         zpt_stage_notify(context, ZPT_STAGE_EVENT_SUPPRESSED, 0);
         /* Emit a zero-valued frame so downstream stages observe the same
          * suppression and clear their buffered state without ever seeing
          * suppressed motion values. */
-        struct zpt_signal output = *signal;
-        output.data.fixed_vector.x = 0;
-        output.data.fixed_vector.y = 0;
-        return zpt_stage_emit(context, &output);
+        return emit_zeroed_frame(context, signal);
     }
     if (!state->have_last_frame ||
         (config->idle_timeout_ms != 0U && elapsed >= config->idle_timeout_ms)) {
@@ -83,10 +107,6 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
     state->last_frame_ms = now;
     state->have_last_frame = true;
 
-    int64_t x = signal->data.fixed_vector.x;
-    int64_t y = signal->data.fixed_vector.y;
-    uint8_t intent = signal->annotations.axis_intent;
-
     if (intent == ZPT_AXIS_INTENT_UNDECIDED) {
         state->undecided_x = zpt_fixed_saturating_add(state->undecided_x, x);
         state->undecided_y = zpt_fixed_saturating_add(state->undecided_y, y);
@@ -94,25 +114,12 @@ static int axis_constraint_stage_process(struct zpt_stage *stage, const struct z
         schedule_undecided_expiry(state, config, context, now);
         /* Emit a zeroed frame so downstream stages observe the frame and arm
          * their report deadlines. */
-        struct zpt_signal output = *signal;
-        output.data.fixed_vector.x = 0;
-        output.data.fixed_vector.y = 0;
-        return zpt_stage_emit(context, &output);
+        return emit_zeroed_frame(context, signal);
     }
 
     int64_t output_x = 0;
     int64_t output_y = 0;
-    if (state->previous_intent == ZPT_AXIS_INTENT_UNDECIDED && state->have_undecided) {
-        /* Fold buffered unclassified motion, filtered by the new intent. */
-        if (intent != ZPT_AXIS_INTENT_VERTICAL) {
-            output_x = zpt_fixed_saturating_add(output_x, state->undecided_x);
-        }
-        if (intent != ZPT_AXIS_INTENT_HORIZONTAL) {
-            output_y = zpt_fixed_saturating_add(output_y, state->undecided_y);
-        }
-        clear_undecided(state);
-        schedule_undecided_expiry(state, config, context, now);
-    }
+    fold_undecided_motion(state, config, context, now, intent, &output_x, &output_y);
     if (intent != ZPT_AXIS_INTENT_VERTICAL) {
         output_x = zpt_fixed_saturating_add(output_x, x);
     }

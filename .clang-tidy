@@ -8,7 +8,11 @@
 #
 # The check set favors correctness (bugprone, clang-analyzer, misc,
 # portability) over style; style is enforced by clang-format instead.
-# Cognitive complexity complements the lizard cyclomatic gate.
+# Cognitive complexity complements the lizard cyclomatic gate; the threshold
+# is a ratchet set above the worst host-compiled firmware function. Service-
+# layer functions (src/service, src/platform) are not in the host compile
+# database, and their cognitive values are inflated by Zephyr's logging-macro
+# expansion (see docs/quality.md).
 #
 # Excluded:
 # - bugprone-easily-swappable-parameters: pure noise for this codebase

@@ -11,6 +11,23 @@ static void clear_result(struct zpt_pipeline_result *result) {
     }
 }
 
+static int validate_router_pipeline(const struct zpt_router *router, size_t index) {
+    const struct zpt_pipeline *pipeline = router->pipelines[index];
+    if (pipeline == NULL || pipeline->stable_id == NULL || pipeline->stable_id[0] == '\0' ||
+        pipeline->input_kind != router->input_kind) {
+        return -EINVAL;
+    }
+    if (pipeline->validated) {
+        return -EBUSY;
+    }
+    for (size_t previous = 0; previous < index; previous++) {
+        if (strcmp(router->pipelines[previous]->stable_id, pipeline->stable_id) == 0) {
+            return -EEXIST;
+        }
+    }
+    return 0;
+}
+
 static int validate_structure(const struct zpt_router *router) {
     if (router == NULL || router->stable_id == NULL || router->stable_id[0] == '\0' ||
         !zpt_signal_kind_valid(router->input_kind) || router->pipelines == NULL ||
@@ -19,18 +36,9 @@ static int validate_structure(const struct zpt_router *router) {
     }
 
     for (size_t index = 0; index < router->pipeline_count; index++) {
-        const struct zpt_pipeline *pipeline = router->pipelines[index];
-        if (pipeline == NULL || pipeline->stable_id == NULL || pipeline->stable_id[0] == '\0' ||
-            pipeline->input_kind != router->input_kind) {
-            return -EINVAL;
-        }
-        if (pipeline->validated) {
-            return -EBUSY;
-        }
-        for (size_t previous = 0; previous < index; previous++) {
-            if (strcmp(router->pipelines[previous]->stable_id, pipeline->stable_id) == 0) {
-                return -EEXIST;
-            }
+        int ret = validate_router_pipeline(router, index);
+        if (ret < 0) {
+            return ret;
         }
     }
     return 0;
