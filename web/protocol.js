@@ -13,6 +13,9 @@ export const MESSAGE = Object.freeze({
   DEVICE_LIST_REQUEST: 0x0d,
   DEVICE_DESCRIBE_REQUEST: 0x0e,
   DEVICE_PREVIEW_REQUEST: 0x0f,
+  DEVICE_LIST_REQUEST: 0x0d,
+  DEVICE_DESCRIBE_REQUEST: 0x0e,
+  DEVICE_PREVIEW_REQUEST: 0x0f,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -22,6 +25,8 @@ export const MESSAGE = Object.freeze({
   TUNING_TARGET_METADATA_RESPONSE: 0x87,
   TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
   STATE_STATUS_RESPONSE: 0x89,
+  DEVICE_LIST_RESPONSE: 0x8a,
+  DEVICE_DESCRIPTION_RESPONSE: 0x8b,
   DEVICE_LIST_RESPONSE: 0x8a,
   DEVICE_DESCRIPTION_RESPONSE: 0x8b,
   STATE_SAMPLE: 0x91,
@@ -42,6 +47,12 @@ export const TUNING = Object.freeze({
   INTEGER: 0,
   BOOLEAN: 1,
   STATUS_OK: 0,
+});
+
+export const DEVICE = Object.freeze({
+  LOCATION_LOCAL: 0,
+  FLAG_LOCAL_CONNECTED: 0x01,
+  FLAG_SETTABLE: 0x02,
 });
 
 export const STATE = Object.freeze({
@@ -291,4 +302,82 @@ export function encodeTuningSetMany(targetId, values) {
     offset += 4;
   }
   return encodeFrame(MESSAGE.TUNING_SET_MANY_REQUEST, payload);
+}
+
+/* --- Pointing devices (protocol v7) ---------------------------------- */
+
+export function parseDeviceList(payload) {
+  requireBytes(payload, 0, 1, "device list");
+  const decoder = new TextDecoder();
+  const count = payload[0];
+  const devices = [];
+  let offset = 1;
+  for (let index = 0; index < count; index += 1) {
+    requireBytes(payload, offset, 4, "device list entry");
+    const id = payload[offset++];
+    const location = payload[offset++];
+    const flags = payload[offset++];
+    const labelLength = payload[offset++];
+    requireBytes(payload, offset, labelLength, "device label");
+    const label = decoder.decode(payload.slice(offset, offset + labelLength));
+    offset += labelLength;
+    devices.push({
+      id,
+      location,
+      connected: Boolean(flags & DEVICE.FLAG_LOCAL_CONNECTED),
+      settable: Boolean(flags & DEVICE.FLAG_SETTABLE),
+      label,
+    });
+  }
+  return devices;
+}
+
+export function parseDeviceDescription(payload) {
+  requireBytes(payload, 0, 1, "device description");
+  const decoder = new TextDecoder();
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const stableIdLength = payload[0];
+  let offset = 1;
+  requireBytes(payload, offset, stableIdLength, "device stable id");
+  const stableId = decoder.decode(payload.slice(offset, offset + stableIdLength));
+  offset += stableIdLength;
+  requireBytes(payload, offset, 2, "device devicetree path length");
+  const pathLength = view.getUint16(offset, true);
+  offset += 2;
+  requireBytes(payload, offset, pathLength, "device devicetree path");
+  const devicetreePath = decoder.decode(payload.slice(offset, offset + pathLength));
+  offset += pathLength;
+  requireBytes(payload, offset, 5, "device resolution fields");
+  const currentCpi = view.getUint16(offset, true);
+  offset += 2;
+  const defaultCpi = view.getUint16(offset, true);
+  offset += 2;
+  const settable = payload[offset++] !== 0;
+
+  if (!settable) {
+    return { stableId, devicetreePath, currentCpi, defaultCpi, settable };
+  }
+
+  requireBytes(payload, offset, 1, "device capability count");
+  const valueCount = payload[offset++];
+  if (valueCount > 0) {
+    requireBytes(payload, offset, valueCount * 2, "device supported values");
+    const values = [];
+    for (let index = 0; index < valueCount; index += 1) {
+      values.push(view.getUint16(offset, true));
+      offset += 2;
+    }
+    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, discrete: true, values };
+  }
+  requireBytes(payload, offset, 6, "device capability range");
+  const range = {
+    min: view.getUint16(offset, true),
+    max: view.getUint16(offset + 2, true),
+    step: view.getUint16(offset + 4, true),
+  };
+  return { stableId, devicetreePath, currentCpi, defaultCpi, settable, discrete: false, range };
+}
+
+export function encodeDevicePreview(deviceId, cpi) {
+  return encodeFrame(MESSAGE.DEVICE_PREVIEW_REQUEST, Uint8Array.of(deviceId, cpi & 0xff, (cpi >> 8) & 0xff));
 }

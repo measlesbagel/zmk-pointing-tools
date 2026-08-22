@@ -4,12 +4,15 @@ import assert from "node:assert/strict";
 import {
   FrameDecoder,
   MESSAGE,
+  encodeDevicePreview,
   encodeStateControl,
   encodeTuningSet,
   encodeTuningSetMany,
   encodeFrame,
   parseAck,
   parseDescribe,
+  parseDeviceDescription,
+  parseDeviceList,
   parseStateSample,
   parseStateStatus,
   parseTuningDescription,
@@ -199,4 +202,72 @@ test("encodes atomic tuning batches", () => {
   assert.equal(view.getInt32(8, true), 300);
   assert.equal(frame[12], 8);
   assert.equal(view.getInt32(13, true), 180);
+});
+
+test("parses pointing device lists", () => {
+  const label = new TextEncoder().encode("test-local-trackball");
+  const payload = Uint8Array.of(
+    1,
+    0,
+    0, // local
+    DEVICE_FLAGS_SETTABLE_AND_CONNECTED,
+    label.length,
+    ...label,
+  );
+  assert.deepEqual(parseDeviceList(payload), [
+    { id: 0, location: 0, connected: true, settable: true, label: "test-local-trackball" },
+  ]);
+
+  assert.throws(() => parseDeviceList(Uint8Array.of(2, 0)), /Truncated device list entry/);
+});
+
+const DEVICE_FLAGS_SETTABLE_AND_CONNECTED = 0x03;
+
+test("parses pointing device descriptions in every capability form", () => {
+  const stableId = new TextEncoder().encode("test-local-trackball");
+  const path = new TextEncoder().encode("/trackball-local");
+  const head = [
+    stableId.length, ...stableId,
+    path.length, 0, ...path,
+    0x20, 0x03, // current 800
+    0x20, 0x03, // default 800
+    1,          // settable
+  ];
+  const discrete = Uint8Array.of(...head, 4, 200 & 0xff, 200 >> 8, 400 & 0xff, 400 >> 8, 800 & 0xff, 800 >> 8, 1600 & 0xff, 1600 >> 8);
+  assert.deepEqual(parseDeviceDescription(discrete), {
+    stableId: "test-local-trackball",
+    devicetreePath: "/trackball-local",
+    currentCpi: 800,
+    defaultCpi: 800,
+    settable: true,
+    discrete: true,
+    values: [200, 400, 800, 1600],
+  });
+
+  const range = Uint8Array.of(...head, 0, 100 & 0xff, 100 >> 8, 0xb0, 0x04, 100 & 0xff, 100 >> 8);
+  assert.deepEqual(parseDeviceDescription(range), {
+    stableId: "test-local-trackball",
+    devicetreePath: "/trackball-local",
+    currentCpi: 800,
+    defaultCpi: 800,
+    settable: true,
+    discrete: false,
+    range: { min: 100, max: 1200, step: 100 },
+  });
+
+  const readOnly = Uint8Array.of(stableId.length, ...stableId, path.length, 0, ...path, 0xb0, 0x04, 0xb0, 0x04, 0);
+  assert.deepEqual(parseDeviceDescription(readOnly), {
+    stableId: "test-local-trackball",
+    devicetreePath: "/trackball-local",
+    currentCpi: 1200,
+    defaultCpi: 1200,
+    settable: false,
+  });
+
+  assert.throws(() => parseDeviceDescription(Uint8Array.of(3, ...stableId.slice(0, 2))), /Truncated device stable id/);
+});
+
+test("encodes device previews little-endian", () => {
+  const frame = encodeDevicePreview(1, 800);
+  assert.deepEqual([...frame.slice(0, 8)], [0x5a, 0x50, MESSAGE.DEVICE_PREVIEW_REQUEST, 3, 0, 1, 0x20, 0x03]);
 });
