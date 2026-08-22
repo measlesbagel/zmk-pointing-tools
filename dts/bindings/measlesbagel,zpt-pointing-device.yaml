@@ -48,5 +48,9 @@ properties:
 
   cpi-step:
     type: int
-    default: 1
-    description: Lattice step above cpi-min; requires cpi-min and cpi-max
+    description: >
+      Lattice step above cpi-min; requires cpi-min and cpi-max. No binding
+      default on purpose: a defaulted property materializes as existing for
+      every entry (DT_NODE_HAS_PROP becomes true), which would defeat the
+      build-time form checks. The firmware falls back to 1 via
+      DT_INST_PROP_OR.
