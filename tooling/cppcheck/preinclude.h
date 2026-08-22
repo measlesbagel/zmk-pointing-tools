@@ -29,18 +29,4 @@
 #define DT_HAS_CHOSEN(node) 1
 #endif
 
-/* Instance-node indirection and property-presence predicate, used together
- * in preprocessor conditions by the device table. Conditional directives are
- * evaluated while reading the file even inside macro bodies cppcheck never
- * expands, so both must resolve here; every instance is then analyzed in its
- * first declared capability form. The firmware build and unit tests cover
- * every form. */
-#ifndef DT_DRV_INST
-#define DT_DRV_INST(inst) inst
-#endif
-
-#ifndef DT_NODE_HAS_PROP
-#define DT_NODE_HAS_PROP(node, prop) 1
-#endif
-
 #endif
