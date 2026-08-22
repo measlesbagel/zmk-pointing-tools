@@ -24,10 +24,35 @@ sources under `src/`, `include/`, and `host/`; vendored trees (`zephyr/`,
 `clang-format` preinstalled on the runner image; if a runner update changes
 its output, re-run the fix task and commit the result.
 
+## Cyclomatic complexity (lizard)
+
+`lizard` gates function cyclomatic complexity (CCN) without a build:
+
+- `src/` and `include/` (firmware): CCN 30
+- `host/` (test and runner harness): CCN 40
+
+The thresholds are ratchets: they sit above the current worst function so
+new code cannot exceed the existing peak, and they should be lowered in
+follow-up work (tracked in #76) as functions are decomposed. CI pins
+`lizard==1.23.0`; `lizard` is part of the default devenv package set.
+
+- Check: `devenv task c:complexity:check`
+- CI: `c-style` job in `.github/workflows/check.yml`.
+
+## Sanitizers (host test build)
+
+The host CMake project accepts `-DZPT_ENABLE_SANITIZERS=ON`, which builds all
+host test targets and replay runners with AddressSanitizer and
+UndefinedBehaviorSanitizer (`-fno-sanitize-recover=all`, so any undefined
+behavior fails the test instead of printing a note).
+
+- Local: `devenv task host:test:asan`
+- CI: `host-sanitizers` job in `.github/workflows/check.yml` runs the full
+  CTest suite (including the Node.js trace-replay harness) under
+  sanitizers on every PR and push to `main`.
+
 ## Planned (tracked in #76)
 
-- Sanitizers (ASan/UBSan) for the host test build and a cyclomatic
-  complexity gate (lizard)
 - clang-tidy (including cognitive complexity) and cppcheck with a frozen
   suppression baseline; clangd for editors
 - Zephyr compliance checks (checkpatch, devicetree bindings, Kconfig)

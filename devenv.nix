@@ -19,6 +19,7 @@ in
     pkgs.cmake
     pkgs.ninja
     pkgs.clang-tools
+    pkgs.python3Packages.lizard
   ];
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
@@ -32,6 +33,16 @@ in
     "c:format:check" = {
       description = "Check C source formatting";
       exec = "find src include host -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format --dry-run --Werror";
+    };
+
+    "c:complexity:check" = {
+      description = "Check C cyclomatic complexity gates";
+      exec = "lizard -l c -C 30 -w src include && lizard -l c -C 40 -w host";
+    };
+
+    "host:test:asan" = {
+      description = "Build and run host tests with ASan/UBSan";
+      exec = "cmake -S host -B build/host-asan -G Ninja -DZPT_ENABLE_SANITIZERS=ON && cmake --build build/host-asan && ctest --test-dir build/host-asan --output-on-failure";
     };
 
     "javascript:check" = {
@@ -63,7 +74,13 @@ in
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
-      after = [ "c:format:check" "javascript:check" "javascript:test" "host:test" ];
+      after = [
+        "c:format:check"
+        "c:complexity:check"
+        "javascript:check"
+        "javascript:test"
+        "host:test"
+      ];
       before = [ "devenv:enterTest" ];
     };
   };
