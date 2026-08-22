@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include <zmk/pointing_tools/source/device_caps.h>
+#include <zmk/pointing_tools/source/sensor_control_wire.h>
 
 static void test_null_and_unsettable_are_rejected(void) {
     uint16_t effective = 0;
@@ -150,6 +151,29 @@ static void test_single_point_range_is_always_exact(void) {
     assert(effective == 800);
 }
 
+static void test_sensor_control_wire_round_trip(void) {
+    /* Request parameter layout. */
+    const uint32_t param1 = zpt_scw_param1(9, ZPT_SCW_OPCODE_SET_CPI, 200);
+    assert(zpt_scw_param_seq(param1) == 9);
+    assert(zpt_scw_param_opcode(param1) == ZPT_SCW_OPCODE_SET_CPI);
+    assert(zpt_scw_param_device_id(param1) == 200);
+
+    /* Response frame round trip, including an error status. */
+    const uint32_t frame = zpt_scw_encode(38, 4, 800); /* -ENOSYS */
+    uint8_t status = 0;
+    uint8_t seq = 0;
+    uint16_t value = 0;
+    const bool decoded = zpt_scw_decode(frame, &status, &seq, &value);
+    assert(decoded);
+    assert(status == 38 && seq == 4 && value == 800);
+
+    /* Foreign events never decode. */
+    const bool all_ones = zpt_scw_decode((uint32_t)(int32_t)-1, &status, &seq, &value);
+    assert(!all_ones);
+    const bool wrong_tag = zpt_scw_decode(0x2ABC0000u, &status, &seq, &value);
+    assert(!wrong_tag);
+}
+
 int main(void) {
     test_null_and_unsettable_are_rejected();
     test_malformed_capabilities_are_rejected();
@@ -158,6 +182,7 @@ int main(void) {
     test_range_exact_matches_on_lattice_points();
     test_range_clamps_and_snaps_off_lattice_requests();
     test_single_point_range_is_always_exact();
+    test_sensor_control_wire_round_trip();
     puts("device capability tests passed");
     return 0;
 }

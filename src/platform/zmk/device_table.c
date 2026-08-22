@@ -86,7 +86,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
                  "resolution-cpi must fit in a u16");                                              \
     ZPT_DEVICE_FORM(inst)                                                                          \
     static const struct zpt_pointing_device zpt_device_##inst = {                                  \
-        .id = (uint8_t)inst,                                                                       \
+        .id = (uint8_t)(inst),                                                                     \
         .location = (uint8_t)DT_INST_PROP_OR(inst, location, 0),                                   \
         .default_cpi = (uint16_t)DT_INST_PROP(inst, resolution_cpi),                               \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
