@@ -17,7 +17,7 @@ properties:
 
   fold-interval-ms:
     type: int
-    description: Report cadence at which buffered undecided motion is folded or discarded; absent uses idle-timeout-ms
+    description: Cadence for folding or discarding buffered undecided motion; else idle-timeout-ms
 
   suppression:
     type: phandle

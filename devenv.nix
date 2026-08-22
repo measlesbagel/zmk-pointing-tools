@@ -9,6 +9,27 @@ let
     mkdir -p "$out/lib"
     cp -d ${pkgs.stdenv.cc.cc.lib}/lib/libatomic.so* "$out/lib/"
   '';
+
+  # Python environment for Zephyr's compliance script. check_compliance.py
+  # imports these at the top level even when only a subset of checks runs;
+  # junitparser's JUnitXml support additionally needs lxml. See
+  # docs/quality.md for the check subset and why it is limited.
+  compliancePython = pkgs.python3.withPackages (ps: with ps; [
+    unidiff
+    yamllint
+    junitparser
+    lxml
+    python-magic
+    west
+  ]);
+
+  # check_compliance.py hardcodes "clang-format-diff.py" on PATH; the nix
+  # clang-tools package ships the same script as "clang-format-diff". Expose
+  # the name the script expects.
+  clangFormatDiffPy = pkgs.runCommand "clang-format-diff-py" { } ''
+    mkdir -p "$out/bin"
+    ln -s ${pkgs.clang-tools}/bin/clang-format-diff "$out/bin/clang-format-diff.py"
+  '';
 in
 {
   packages = [
@@ -21,6 +42,8 @@ in
     pkgs.clang-tools
     pkgs.cppcheck
     pkgs.python3Packages.lizard
+    compliancePython
+    clangFormatDiffPy
   ];
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
@@ -60,6 +83,15 @@ in
           --inline-suppr --suppress=missingIncludeSystem \
           $suppressions \
           --error-exitcode=1 src include host
+      '';
+    };
+
+    "zephyr:compliance:check" = {
+      description = "Run the module-safe Zephyr compliance checks over HEAD~1..HEAD (see docs/quality.md)";
+      exec = ''
+        ${compliancePython}/bin/python3 zephyr/scripts/ci/check_compliance.py \
+          -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+          -m GitDiffCheck -m TextEncoding -m BinaryFiles
       '';
     };
 

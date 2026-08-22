@@ -94,8 +94,57 @@ database with `devenv task c:tidy:check` (or the commands in `.clangd`).
 `src/platform/zmk` files fall back to clangd's heuristics until the firmware
 compile database workflow lands (#76).
 
+## Zephyr compliance (check_compliance.py)
+
+The `zephyr-compliance` job in `.github/workflows/check.yml` runs the
+module-safe subset of Zephyr's own `scripts/ci/check_compliance.py` over the
+diff range (the PR's base..head on a pull request, `HEAD~1..HEAD` on a push
+to `main`):
+
+- **ClangFormat** — `clang-format-diff.py` over changed C lines.
+- **DevicetreeBindings** — flags redundant `required: false` in changed
+  `dts/bindings/*.yaml`.
+- **Nits** — small style nits in changed files (redundant Zephyr sources,
+  devicetree separators, …).
+- **YAMLLint** — the Zephyr `.yamllint` config over changed YAML (with the
+  relaxed rules it applies to `.github/` workflows).
+- **GitDiffCheck** — `git diff --check` for whitespace errors and conflict
+  markers.
+- **TextEncoding** / **BinaryFiles** — encoding sanity and no unintended
+  binary files.
+
+Two of the script's checks are deliberately **not** run for a module repo:
+
+- **Checkpatch** — it enforces the Linux-kernel style (tab indentation,
+  80-column lines), which directly contradicts this repository's
+  clang-format style (4-space, 100-column). Every formatted line would be
+  flagged, so the gate is left to the `c-style` job instead.
+- **The Kconfig parse family** (`Kconfig*`, `SysbuildKconfig*`) — the script
+  runs `git grep` for `SB_CONFIG_*` symbols from the top-level repo; on a
+  module repo that grep exits 1 (no match) and the script treats that as a
+  fatal error. Kconfig and devicetree *correctness* is already gated by the
+  firmware build, which configures Kconfig and compiles the devicetree for
+  real boards.
+
+Running the same subset locally requires the west workspace (`zephyr/`,
+`zmk/`, …) plus a Python environment with the script's imports
+(`unidiff`, `yamllint`, `junitparser`, `lxml`, `python-magic`, `west`):
+
+    python3 zephyr/scripts/ci/check_compliance.py -c "origin/main...HEAD" \
+      -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+      -m GitDiffCheck -m TextEncoding -m BinaryFiles
+
+The CI gate is diff-scoped, so it only polices files a PR touches. To audit
+the *entire* tree at once (e.g. when first adopting the gate), diff against
+git's empty tree instead of a commit range. `GitDiffCheck` is per-commit and
+is left out of this form:
+
+    python3 zephyr/scripts/ci/check_compliance.py \
+      -c "4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD" \
+      -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
+      -m TextEncoding -m BinaryFiles
+
 ## Planned (tracked in #76)
 
-- Zephyr compliance checks (checkpatch, devicetree bindings, Kconfig)
 - Firmware clang-tidy via `west build -t compile_commands` (PR-only job)
 - BSim/ztest firmware unit tests
