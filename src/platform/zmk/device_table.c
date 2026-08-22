@@ -24,7 +24,7 @@
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
              "device ids are assigned in devicetree order and must fit in a u8");
 
-#define ZPT_DEVICE_VALUE_ELEM(node_id, idx) DT_PROP_BY_IDX(node_id, cpi_values, idx),
+#define ZPT_DEVICE_VALUE_ELEM(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
 
 /* Discrete list form: ascending values, no duplicates, each fitting a u16. */
 #define ZPT_DEVICE_LIST_FORM(inst)                                                                 \
