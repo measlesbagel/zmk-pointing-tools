@@ -245,29 +245,41 @@ ZTEST(zpt_unit, zz_device_describe_unknown_id_fails_cleanly) {
 }
 
 ZTEST(zpt_unit, zz_device_preview_snaps_and_persists) {
+    const struct zpt_pointing_device *local;
     const struct zpt_pointing_device *remote;
     uint8_t request[3];
     uint8_t expected[8];
 
+    local = zpt_device_table_find("test-local-trackball");
     remote = zpt_device_table_find("test-remote-trackball");
+    zassert_not_null(local);
     zassert_not_null(remote);
 
-    /* Off-lattice requests snap and report the effective value with an OK
-     * status; the host compares requested against effective. */
-    memcpy(request, (uint8_t[]){1, 0xb9, 0x02}, 3); /* 697 -> snaps to 700 */
-    zpt_device_control_reset(remote);
+    /* Local device, off-list request: snaps and reports the effective value
+     * with an OK status; the host compares requested against effective. */
+    memcpy(request, (uint8_t[]){0, 0xe8, 0x03}, 3); /* 1000 -> snaps to 800 */
     tx_frame(ZPT_TEST_REQ_DEVICE_PREVIEW, request, sizeof(request));
-    memcpy(expected, (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 0, UINT8_MAX, 1, 0xbc, 0x02, 0, 0},
-           sizeof(expected)); /* status ok, value 700 */
+    memcpy(expected, (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 0, UINT8_MAX, 0, 0x20, 0x03, 0, 0},
+           sizeof(expected)); /* status ok, value 800 */
     expect_frame(ZPT_RESP_TUNING_RESULT, expected, sizeof(expected));
 
     /* The preview persists in the store until reset or reboot. */
     uint16_t cpi = 0;
+    zassert_ok(zpt_device_control_get(local, &cpi));
+    zassert_equal(cpi, 800);
+
+    /* Remote-owned entries need the sensor-control tunnel, which this
+     * plain-Zephyr build does not compile: rejected as not applicable. */
+    memcpy(request, (uint8_t[]){1, 0xb9, 0x02}, 3); /* 697 */
+    tx_frame(ZPT_TEST_REQ_DEVICE_PREVIEW, request, sizeof(request));
+    memcpy(expected, (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 3, UINT8_MAX, 1, 0, 0, 0, 0},
+           sizeof(expected)); /* status invalid value, value 0 */
+    expect_frame(ZPT_RESP_TUNING_RESULT, expected, sizeof(expected));
     zassert_ok(zpt_device_control_get(remote, &cpi));
-    zassert_equal(cpi, 700);
+    zassert_equal(cpi, 400);
 
     /* Restore the compiled value so suite order stays irrelevant. */
-    zassert_ok(zpt_device_control_reset(remote));
+    zassert_ok(zpt_device_control_reset(local));
 }
 
 ZTEST(zpt_unit, ping) {

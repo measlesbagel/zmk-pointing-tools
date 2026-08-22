@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+
+description: >
+  Central-side decoder for split sensor-control responses. Place it first in
+  an endpoint's input-processor chain so packed control frames are consumed
+  before anything else observes them.
+
+compatible: "measlesbagel,zpt-input-processor-sensor-control-proxy"
+
+include: ip_zero_param.yaml
+
+properties:
+  agent:
+    type: phandle
+    required: true
+    description: Sensor-control behavior device relaying requests on this split

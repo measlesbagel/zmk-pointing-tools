@@ -20,6 +20,9 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+#include <zmk/pointing_tools/platform/zmk/sensor_control_proxy.h>
+#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 #include <zmk/pointing_tools/observer/state.h>
 #endif
@@ -657,6 +660,16 @@ static void zpt_send_device_description(uint8_t device_id) {
         return;
     }
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+    if (device->location != 0) {
+        /* Live read through the tunnel; degrade to the stored value when
+         * the half cannot be reached. */
+        uint16_t live = current;
+        zpt_sensor_control_get_remote(device, &live);
+        current = live;
+    }
+#endif
+
     uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
     size_t offset = 0;
     payload[offset++] = (uint8_t)stable_id_length;
@@ -700,13 +713,31 @@ static void zpt_handle_device_preview(const uint8_t *payload, uint16_t length) {
         return;
     }
 
+    const uint16_t requested = (uint16_t)(payload[1] | (uint16_t)payload[2] << 8);
     const struct zpt_pointing_device *device = zpt_device_table_at(payload[0]);
     if (device == NULL) {
         zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, -ENODEV, payload[0], 0);
         return;
     }
 
-    const uint16_t requested = (uint16_t)(payload[1] | (uint16_t)payload[2] << 8);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+    if (device->location != 0) {
+        uint16_t effective = 0;
+        int tunnel_ret = zpt_sensor_control_preview_remote(device, requested, &effective);
+        /* Snapped successes report as plain OK alongside their effective
+         * value, matching the local path. */
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, tunnel_ret < 0 ? tunnel_ret : 0, payload[0],
+                               effective);
+        return;
+    }
+#else
+    if (device->location != 0) {
+        /* Peripheral routing requires the sensor-control tunnel. */
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, -ENOSYS, payload[0], 0);
+        return;
+    }
+#endif
+
     uint16_t effective = 0;
     int ret = zpt_device_control_preview(device, requested, &effective);
     /* Snapped successes report as plain OK alongside their effective value;

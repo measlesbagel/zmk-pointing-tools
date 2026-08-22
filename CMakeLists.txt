@@ -17,6 +17,11 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE src/source/device_caps.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE
     src/platform/zmk/device_table.c)
+  # Split-routed sensor control: peripheral agent + central proxy.
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL
+    src/platform/zmk/sensor_control_agent.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL
+    src/platform/zmk/sensor_control_proxy.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     src/source/transport/compact_split_codec.c)
   # Core stage implementations (host-replayable algorithms).
