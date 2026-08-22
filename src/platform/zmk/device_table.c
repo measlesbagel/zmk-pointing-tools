@@ -11,6 +11,7 @@
 #include <zephyr/sys/util.h>
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/source/device_caps.h>
+#include <zmk/pointing_tools/source/sensor_control.h>
 
 /* Devicetree-declared physical pointing devices. The table is fully const:
  * ids, capabilities, and defaults are fixed at build time so both halves of
@@ -86,10 +87,11 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
                  "resolution-cpi must fit in a u16");                                              \
     ZPT_DEVICE_FORM(inst)                                                                          \
     static const struct zpt_pointing_device zpt_device_##inst = {                                  \
-        .id = (uint8_t)inst,                                                                       \
+        .id = (uint8_t)(inst),                                                                     \
         .location = (uint8_t)DT_INST_PROP_OR(inst, location, 0),                                   \
         .default_cpi = (uint16_t)DT_INST_PROP(inst, resolution_cpi),                               \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
         .sensor = DEVICE_DT_GET(DT_INST_PHANDLE(inst, sensor)),                                    \
         .caps = ZPT_DEVICE_INIT_CAPS(inst)};
 
@@ -123,8 +125,12 @@ int zpt_device_control_get(const struct zpt_pointing_device *device, uint16_t *c
     if (device == NULL || cpi == NULL || zpt_device_valid(device, &current) == NULL) {
         return -EINVAL;
     }
-    /* Native sensor facets read through here once they exist; the RAM value
-     * tracks the compiled default until a preview changes it. */
+    /* Native facets report live sensor state; the RAM value tracks the
+     * compiled default until a preview changes it. */
+    const struct zpt_sensor_control_api *api = zpt_sensor_control(device->sensor);
+    if (api != NULL && api->get_cpi != NULL) {
+        return api->get_cpi(device->sensor, cpi);
+    }
     *cpi = *current;
     return 0;
 }
@@ -147,7 +153,16 @@ int zpt_device_control_preview(const struct zpt_pointing_device *device, uint16_
     if (ret < 0) {
         return ret;
     }
-    /* Native sensor facets dispatch here before the store lands. */
+    /* Native facets receive the already-snapped value and write volatile
+     * registers; the store mirrors the applied value so fallback reads stay
+     * consistent when a driver has no read-back op. */
+    const struct zpt_sensor_control_api *api = zpt_sensor_control(device->sensor);
+    if (api != NULL && api->set_cpi != NULL) {
+        ret = api->set_cpi(device->sensor, *effective);
+        if (ret < 0) {
+            return ret;
+        }
+    }
     *current = *effective;
     return ret;
 }
@@ -161,8 +176,50 @@ int zpt_device_control_reset(const struct zpt_pointing_device *device) {
     if (!device->caps.settable) {
         return -ENOSYS;
     }
+    const struct zpt_sensor_control_api *api = zpt_sensor_control(device->sensor);
+    if (api != NULL && api->set_cpi != NULL) {
+        const int ret = api->set_cpi(device->sensor, device->default_cpi);
+        if (ret < 0) {
+            return ret;
+        }
+    }
     *current = device->default_cpi;
     return 0;
+}
+
+/* --- Native sensor facet registry ------------------------------------- */
+
+#define ZPT_SENSOR_CONTROL_MAX_BINDINGS 4
+
+static const struct zpt_sensor_control_api
+    *zpt_sensor_control_bindings[ZPT_SENSOR_CONTROL_MAX_BINDINGS];
+static const struct device *zpt_sensor_control_sensors[ZPT_SENSOR_CONTROL_MAX_BINDINGS];
+
+int zpt_sensor_control_register(const struct device *sensor,
+                                const struct zpt_sensor_control_api *api) {
+    if (sensor == NULL || api == NULL) {
+        return -EINVAL;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(zpt_sensor_control_sensors); i++) {
+        if (zpt_sensor_control_sensors[i] == NULL || zpt_sensor_control_sensors[i] == sensor) {
+            zpt_sensor_control_sensors[i] = sensor;
+            zpt_sensor_control_bindings[i] = api;
+            return 0;
+        }
+    }
+    return -ENOMEM;
+}
+
+const struct zpt_sensor_control_api *zpt_sensor_control(const struct device *sensor) {
+    if (sensor == NULL) {
+        return NULL;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(zpt_sensor_control_sensors); i++) {
+        if (zpt_sensor_control_sensors[i] == sensor) {
+            return zpt_sensor_control_bindings[i];
+        }
+    }
+    return NULL;
 }
 
 size_t zpt_device_table_count(void) { return ARRAY_SIZE(zpt_device_entries); }

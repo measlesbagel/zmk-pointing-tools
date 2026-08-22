@@ -1,15 +1,19 @@
 import {
   FrameDecoder,
+  DEVICE,
   MESSAGE,
   PROTOCOL_VERSION,
   STATE,
   TUNING,
+  encodeDevicePreview,
   encodeFrame,
   encodeStateControl,
   encodeTuningSet,
   encodeTuningSetMany,
   parseAck,
   parseDescribe,
+  parseDeviceDescription,
+  parseDeviceList,
   parseStateSample,
   parseStateStatus,
   parseTuningDescription,
@@ -35,7 +39,7 @@ const STAGE_EVENT_LABELS = ["suppressed", "discarded", "qualified", "intent-chan
 const STAGE_EVENT_INTENT_CHANGED = 3;
 
 const elements = Object.fromEntries(
-  ["status", "connect", "simulate", "clear", "notice", "tuning", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
+  ["status", "connect", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -48,6 +52,7 @@ let protocolReady = false;
 let simulator;
 let heartbeat;
 let tuningTargets = new Map();
+let devices = new Map();
 let stateEvents = [];
 let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
 let stateDirty = true;
@@ -264,6 +269,68 @@ function setTuningParameterMetadata(metadata) {
   renderTuning();
 }
 
+function setDevices(list) {
+  devices = new Map(list.map((device) => [device.id, { ...device, description: undefined }]));
+  renderDevices();
+  for (const device of devices.values()) {
+    if (device.settable) {
+      queueTuningRequest(MESSAGE.DEVICE_DESCRIBE_REQUEST, Uint8Array.of(device.id));
+    }
+  }
+}
+
+/* Device descriptions echo their stable identity instead of a numeric id,
+ * and labels are the stable ids today. */
+function setDeviceDescription(description) {
+  const device = [...devices.values()].find((candidate) => candidate.label === description.stableId);
+  if (!device) return;
+  device.description = description;
+  renderDevices();
+}
+
+function locationLabel(location) {
+  return location === DEVICE.LOCATION_LOCAL ? "this half" : `peripheral ${location}`;
+}
+
+function renderDevices() {
+  const supported = protocolReady || simulator;
+  if (!supported || devices.size === 0) {
+    elements.devices.innerHTML = supported
+      ? '<p class="muted">No pointing devices declared in the active configuration.</p>'
+      : '<p class="muted">Connect current firmware to discover pointing devices.</p>';
+    return;
+  }
+
+  elements.devices.innerHTML = [...devices.values()].map((device) => {
+    const described = device.description;
+    const remote = device.location !== DEVICE.LOCATION_LOCAL;
+    const badge = `${escapeHtml(locationLabel(device.location))}${remote && !device.connected ? " · not connected" : ""}`;
+    let body = '<p class="muted">Read-only sensor; resolution is fixed by configuration.</p>';
+    if (device.settable && !described) {
+      body = '<p class="muted">Loading capabilities…</p>';
+    } else if (described) {
+      const modified = described.currentCpi !== described.defaultCpi;
+      const control = described.discrete
+        ? `<select data-device-value>
+            ${described.values.map((value) => `<option value="${value}" ${value === described.currentCpi ? "selected" : ""}>${value} CPI</option>`).join("")}
+          </select>`
+        : `<input type="number" data-device-value value="${described.currentCpi}" min="${described.range.min}" max="${described.range.max}" step="${described.range.step}">`;
+      body = `<div class="parameter ${modified ? "changed" : ""}" data-device="${device.id}">
+        <label><span>Sensor resolution <small>(CPI)</small></span></label>
+        <div class="parameter-control">${control}<button data-device-preview>Preview</button></div>
+        <small>Compiled: ${described.defaultCpi} CPI${modified ? " · modified" : ""}</small>
+      </div>`;
+    }
+    return `<article class="tuning-target">
+      <div class="tuning-target-heading">
+        <div><h3>${escapeHtml(device.label)}</h3><span>${badge}</span></div>
+        <button data-device-reset ${device.settable ? "" : "disabled"}>Reset default</button>
+      </div>
+      ${body}
+    </article>`;
+  }).join("");
+}
+
 
 function renderLoop() {
   renderDiagnostics();
@@ -312,6 +379,7 @@ function handleFrame(frame) {
     const description = parseDescribe(frame.payload);
     setDescription(description);
     queueTuningRequest(MESSAGE.TUNING_TARGETS_REQUEST);
+    queueTuningRequest(MESSAGE.DEVICE_LIST_REQUEST);
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
@@ -339,9 +407,29 @@ function handleFrame(frame) {
   } else if (frame.type === MESSAGE.STATE_STATUS_RESPONSE) {
     tuningRequests.complete(MESSAGE.STATE_CONTROL_REQUEST);
     setStateStatus(parseStateStatus(frame.payload));
+  } else if (frame.type === MESSAGE.DEVICE_LIST_RESPONSE) {
+    tuningRequests.complete(MESSAGE.DEVICE_LIST_REQUEST);
+    setDevices(parseDeviceList(frame.payload));
+  } else if (frame.type === MESSAGE.DEVICE_DESCRIPTION_RESPONSE) {
+    tuningRequests.complete(MESSAGE.DEVICE_DESCRIBE_REQUEST);
+    setDeviceDescription(parseDeviceDescription(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
     tuningRequests.complete(result.requestType);
+    if (result.requestType === MESSAGE.DEVICE_PREVIEW_REQUEST) {
+      /* Device ids ride the result's parameter-id byte; target-id is the
+       * all-targets sentinel for device results. */
+      const device = devices.get(result.parameterId);
+      if (result.status !== TUNING.STATUS_OK) {
+        const messages = ["success", "unknown device", "unknown parameter", "not applicable to this device", "internal error"];
+        notice(`Device preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
+      } else if (device) {
+        if (device.description) device.description.currentCpi = result.value;
+        renderDevices();
+        notice(`${device.label} resolution preview updated. Changes remain temporary until reboot.`);
+      }
+      return;
+    }
     const target = tuningTargets.get(result.targetId);
     if (result.status !== TUNING.STATUS_OK) {
       const messages = ["success", "unknown target", "unknown parameter", "invalid value", "internal error"];
@@ -398,6 +486,7 @@ async function disconnect() {
   elements.connect.textContent = "Connect keyboard";
   elements.simulate.disabled = false;
   tuningTargets = new Map();
+  devices = new Map();
   stateEvents = [];
   stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
   stateDirty = true;
@@ -421,6 +510,7 @@ async function connect() {
     elements.connect.textContent = "Disconnect";
     elements.simulate.disabled = true;
     tuningTargets = new Map();
+    devices = new Map();
     stateEvents = [];
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
     stateDirty = true;
@@ -446,6 +536,7 @@ function startSimulator() {
     elements.simulate.textContent = "Simulate";
     setStatus(port ? "Connected" : "Disconnected", Boolean(port));
     tuningTargets = new Map();
+    devices = new Map();
     protocolReady = false;
     stateEvents = [];
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
@@ -585,6 +676,35 @@ elements["reset-all"].addEventListener("click", async () => {
     notice("All simulator defaults restored.");
   } else {
     queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
+  }
+});
+
+elements.devices.addEventListener("click", async (event) => {
+  const preview = event.target.closest("[data-device-preview]");
+  const reset = event.target.closest("[data-device-reset]");
+  const row = event.target.closest("[data-device]");
+  if (!row || (!preview && !reset)) return;
+  const deviceId = Number(row.dataset.device);
+  const device = devices.get(deviceId);
+  if (!device?.description) return;
+
+  /* Device previews reuse the preview message for resets too: sending the
+   * compiled default restores it without a dedicated wire message. */
+  const requested = preview
+    ? Number(row.querySelector("[data-device-value]")?.value ?? device.description.currentCpi)
+    : device.description.defaultCpi;
+  if (!Number.isInteger(requested)) {
+    notice("Enter a whole CPI value.", true);
+    return;
+  }
+
+  if (simulator) {
+    device.description.currentCpi = requested;
+    renderDevices();
+    notice(`${device.label} simulator resolution updated.`);
+  } else if (writer) {
+    tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST,
+      encodeDevicePreview(deviceId, requested));
   }
 });
 

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+
+description: >
+  Split sensor-control agent. On a peripheral half, executes CPI operations
+  relayed by the central through ZMK's split behavior invocation and reports
+  outcomes as packed relative input events.
+
+compatible: "measlesbagel,zpt-sensor-control"
+
+include: zero_param.yaml

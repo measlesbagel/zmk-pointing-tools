@@ -40,3 +40,12 @@ bool zpt_motion_source_take_at_sequence(struct zpt_motion_source_state *state,
                                         uint32_t observed_at_ms, uint32_t sample_span_us,
                                         uint16_t sequence, uint32_t additional_flags,
                                         struct zpt_signal *signal);
+
+/* Stage a new sensor resolution for the next complete frame.
+ *
+ * Returns 0 when the value is armed, -EBUSY while motion is pending in the
+ * frame assembler (the staged change applies once the adapter takes that
+ * frame and re-arms), and -EINVAL on malformed arguments. Arming twice
+ * before a frame boundary simply overwrites the staged value. */
+int zpt_motion_source_set_resolution_cpi(struct zpt_motion_source_state *state,
+                                         uint16_t resolution_cpi);

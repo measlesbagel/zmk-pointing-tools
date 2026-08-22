@@ -17,6 +17,12 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 #include <zmk/pointing_tools/service/tuning.h>
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
+#include <zmk/pointing_tools/platform/zmk/device_table.h>
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+#include <zmk/pointing_tools/platform/zmk/sensor_control_proxy.h>
+#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 #include <zmk/pointing_tools/observer/state.h>
 #endif
@@ -39,7 +45,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #error "measlesbagel,zpt-telemetry-uart chosen node is required"
 #endif
 
-#define ZPT_PROTOCOL_VERSION 6
+#define ZPT_PROTOCOL_VERSION 7
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -54,6 +60,9 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_TUNING_PARAMETER_METADATA 0x0a
 #define ZPT_REQ_TUNING_SET_MANY 0x0b
 #define ZPT_REQ_STATE_CONTROL 0x0c
+#define ZPT_REQ_DEVICE_LIST 0x0d
+#define ZPT_REQ_DEVICE_DESCRIBE 0x0e
+#define ZPT_REQ_DEVICE_PREVIEW 0x0f
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
@@ -63,6 +72,8 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_RESP_TUNING_TARGET_METADATA 0x87
 #define ZPT_RESP_TUNING_PARAMETER_METADATA 0x88
 #define ZPT_RESP_STATE_STATUS 0x89
+#define ZPT_RESP_DEVICE_LIST 0x8a
+#define ZPT_RESP_DEVICE_DESCRIPTION 0x8b
 #define ZPT_EVENT_STATE 0x91
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
@@ -279,6 +290,9 @@ static uint8_t zpt_tuning_status_from_errno(int error) {
     case -EINVAL:
     case -ERANGE:
     case -EEXIST:
+    /* Read-only devices reject previews; the requested change is not
+     * applicable to the addressed device. */
+    case -ENOSYS:
         return ZPT_TUNING_STATUS_INVALID_VALUE;
     default:
         return ZPT_TUNING_STATUS_INTERNAL_ERROR;
@@ -584,6 +598,154 @@ static bool zpt_is_tuning_request(uint8_t type) {
 }
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE) &&                                          \
+    IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+
+/* Device discovery and preview reuse the tuning result message so hosts
+ * keep one error-status mapping; device ids ride the parameter-id byte. */
+static void zpt_send_device_result(uint8_t request_type, int error, uint8_t device_id,
+                                   uint16_t value) {
+    zpt_send_tuning_result(request_type, error, UINT8_MAX, device_id, (int32_t)value);
+}
+
+static void zpt_send_device_list(void) {
+    uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
+    size_t offset = 0;
+    const size_t count = MIN(zpt_device_table_count(), UINT8_MAX);
+
+    payload[offset++] = (uint8_t)count;
+    for (size_t i = 0; i < count; i++) {
+        const struct zpt_pointing_device *device = zpt_device_table_at(i);
+        const size_t label_length = MIN(strlen(device->stable_id), UINT8_MAX);
+        if (offset + 5 + label_length > sizeof(payload)) {
+            LOG_WRN("Device list payload full after %u devices", (unsigned int)i);
+            payload[0] = (uint8_t)i;
+            break;
+        }
+        /* Location 0 is central-local; entries owned by other halves appear
+         * here as not connected until split-routed control lands. */
+        const uint8_t location = device->location;
+        const uint8_t flags =
+            (uint8_t)((location == 0 ? 0x01 : 0x00) | (device->caps.settable ? 0x02 : 0x00));
+        payload[offset++] = device->id;
+        payload[offset++] = location;
+        payload[offset++] = flags;
+        payload[offset++] = (uint8_t)label_length;
+        memcpy(&payload[offset], device->stable_id, label_length);
+        offset += label_length;
+    }
+    zpt_send_frame(ZPT_RESP_DEVICE_LIST, payload, offset);
+}
+
+static void zpt_send_device_description(uint8_t device_id) {
+    const struct zpt_pointing_device *device = zpt_device_table_at(device_id);
+
+    if (device == NULL) {
+        zpt_send_device_result(ZPT_REQ_DEVICE_DESCRIBE, -ENODEV, device_id, 0);
+        return;
+    }
+
+    const size_t stable_id_length = MIN(strlen(device->stable_id), UINT8_MAX);
+    const char *dt_path = device->devicetree_path;
+    const size_t dt_path_length = MIN(strlen(dt_path), UINT16_MAX);
+    if (5 + stable_id_length + 2 + dt_path_length > ZPT_MAX_DESCRIBE_PAYLOAD) {
+        zpt_send_device_result(ZPT_REQ_DEVICE_DESCRIBE, -ENOSPC, device_id, 0);
+        return;
+    }
+
+    uint16_t current = 0;
+    int ret = zpt_device_control_get(device, &current);
+    if (ret < 0) {
+        zpt_send_device_result(ZPT_REQ_DEVICE_DESCRIBE, ret, device_id, 0);
+        return;
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+    if (device->location != 0) {
+        /* Live read through the tunnel; degrade to the stored value when
+         * the half cannot be reached. */
+        uint16_t live = current;
+        zpt_sensor_control_get_remote(device, &live);
+        current = live;
+    }
+#endif
+
+    uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
+    size_t offset = 0;
+    payload[offset++] = (uint8_t)stable_id_length;
+    memcpy(&payload[offset], device->stable_id, stable_id_length);
+    offset += stable_id_length;
+    sys_put_le16((uint16_t)dt_path_length, &payload[offset]);
+    offset += 2;
+    memcpy(&payload[offset], dt_path, dt_path_length);
+    offset += dt_path_length;
+    sys_put_le16(current, &payload[offset]);
+    offset += 2;
+    sys_put_le16(device->default_cpi, &payload[offset]);
+    offset += 2;
+    payload[offset++] = (uint8_t)(device->caps.settable ? 0x01 : 0x00);
+    if (device->caps.settable && device->caps.discrete) {
+        const size_t values = MIN(device->caps.list_count, (sizeof(payload) - offset - 1) / 2U);
+        if (values < device->caps.list_count) {
+            LOG_WRN("Device description truncated after %u values", (unsigned int)values);
+        }
+        payload[offset++] = (uint8_t)values;
+        for (size_t i = 0; i < values; i++) {
+            sys_put_le16(device->caps.list_values[i], &payload[offset]);
+            offset += 2;
+        }
+    } else if (device->caps.settable) {
+        /* Range form: reserved count byte, then min/max/step. */
+        payload[offset++] = 0;
+        sys_put_le16(device->caps.range_min, &payload[offset]);
+        offset += 2;
+        sys_put_le16(device->caps.range_max, &payload[offset]);
+        offset += 2;
+        sys_put_le16(device->caps.range_step, &payload[offset]);
+        offset += 2;
+    }
+    zpt_send_frame(ZPT_RESP_DEVICE_DESCRIPTION, payload, offset);
+}
+
+static void zpt_handle_device_preview(const uint8_t *payload, uint16_t length) {
+    if (length != 3) {
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, -EINVAL, UINT8_MAX, 0);
+        return;
+    }
+
+    const uint16_t requested = (uint16_t)(payload[1] | (uint16_t)payload[2] << 8);
+    const struct zpt_pointing_device *device = zpt_device_table_at(payload[0]);
+    if (device == NULL) {
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, -ENODEV, payload[0], 0);
+        return;
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+    if (device->location != 0) {
+        uint16_t effective = 0;
+        int tunnel_ret = zpt_sensor_control_preview_remote(device, requested, &effective);
+        /* Snapped successes report as plain OK alongside their effective
+         * value, matching the local path. */
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, tunnel_ret < 0 ? tunnel_ret : 0, payload[0],
+                               effective);
+        return;
+    }
+#else
+    if (device->location != 0) {
+        /* Peripheral routing requires the sensor-control tunnel. */
+        zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, -ENOSYS, payload[0], 0);
+        return;
+    }
+#endif
+
+    uint16_t effective = 0;
+    int ret = zpt_device_control_preview(device, requested, &effective);
+    /* Snapped successes report as plain OK alongside their effective value;
+     * hosts compare requested against effective to offer a correction. */
+    zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, ret < 0 ? ret : 0, payload[0], effective);
+}
+#endif
+
 /* k_uptime_get_32() is uint32_t and atomic_val_t is signed; the explicit
  * cast documents the intended bit-exact round trip (readers cast back with
  * (uint32_t)atomic_get) and keeps bugprone-narrowing-conversions quiet. */
@@ -597,6 +759,29 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         zpt_note_contact();
         zpt_dispatch_tuning(type, payload, length);
         return;
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE) &&                                          \
+    IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    switch (type) {
+    case ZPT_REQ_DEVICE_LIST:
+        zpt_note_contact();
+        zpt_send_device_list();
+        return;
+    case ZPT_REQ_DEVICE_DESCRIBE:
+        zpt_note_contact();
+        if (length == 1) {
+            zpt_send_device_description(payload[0]);
+        } else {
+            zpt_send_device_result(type, -EINVAL, UINT8_MAX, 0);
+        }
+        return;
+    case ZPT_REQ_DEVICE_PREVIEW:
+        zpt_note_contact();
+        zpt_handle_device_preview(payload, length);
+        return;
+    default:
+        break;
     }
 #endif
     switch (type) {

@@ -243,6 +243,21 @@
         compatible = "measlesbagel,zpt-telemetry";
     };
 
+    /* Split sensor-control tunnel: the agent behavior executes on the half
+     * that owns a device; the proxy decodes packed responses centrally.
+     * Compiled for build coverage; runtime use needs device-table entries
+     * wired to real sensors. */
+    zpt_cpi: zpt_cpi {
+        compatible = "measlesbagel,zpt-sensor-control";
+        #binding-cells = <0>;
+    };
+
+    zpt_sensor_proxy {
+        compatible = "measlesbagel,zpt-input-processor-sensor-control-proxy";
+        #input-processor-cells = <0>;
+        agent = <&zpt_cpi>;
+    };
+
     zpt_telemetry_pipeline {
         compatible = "measlesbagel,zpt-pipeline-telemetry";
         pipelines = <&zpt_test_cursor_pipeline &zpt_test_scroll_pipeline &zpt_test_text_pipeline>;

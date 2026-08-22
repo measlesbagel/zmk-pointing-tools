@@ -3,7 +3,7 @@
 The first transport is USB CDC-ACM for use through Web Serial. The protocol is
 otherwise transport-independent. All multi-byte integers are little-endian.
 
-The current protocol is version 6. Firmware and host are updated together; the
+The current protocol is version 7. Firmware and host are updated together; the
 tuner rejects every other version instead of carrying compatibility parsers or
 feature gates for older firmware.
 
@@ -37,6 +37,9 @@ requests must not be emitted as an unbounded burst.
 | `0x0a` | host → device | Get parameter metadata | `target-id:u8, parameter-id:u8` |
 | `0x0b` | host → device | Preview parameter batch | described below |
 | `0x0c` | host → device | Processor-state control/status | empty to query, or `target-id:u8, level:u8` |
+| `0x0d` | host → device | List pointing devices | empty |
+| `0x0e` | host → device | Describe pointing device | `device-id:u8` |
+| `0x0f` | host → device | Preview device CPI | `device-id:u8, cpi:u16` |
 | `0x81` | device → host | Describe response | described below |
 | `0x82` | device → host | Acknowledgement | `state-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
@@ -46,6 +49,8 @@ requests must not be emitted as an unbounded burst.
 | `0x87` | device → host | Target metadata | described below |
 | `0x88` | device → host | Parameter metadata | described below |
 | `0x89` | device → host | Processor-state status | described below |
+| `0x8a` | device → host | Pointing devices | described below |
+| `0x8b` | device → host | Pointing device description | described below |
 | `0x91` | device → host | Stage-state sample | described below |
 
 ### Describe response
@@ -182,6 +187,55 @@ number of applied values in its value field. Firmware validates every range,
 duplicate, and processor-level relationship before replacing current settings;
 if any value fails, none of that target's values change. A request contains at
 most 20 values.
+
+## Pointing devices
+
+Physical pointing devices are described independently of tuning targets.
+Entries come from the devicetree device table (`measlesbagel,zpt-pointing-device`);
+numeric ids are dense session ids assigned in devicetree order, while stable
+identities join the two halves of a split keyboard.
+
+### List pointing devices
+
+```text
+device-count:u8
+repeat device-count times:
+  device-id:u8
+  location:u8          /* 0 central-local, otherwise peripheral index */
+  flags:u8             /* bit0 local-connected, bit1 settable */
+  label-length:u8
+  label:utf8[label-length]
+```
+
+The label is the entry's stable id. Entries owned by other halves are listed
+without the local-connected flag until split-routed control reaches them.
+
+### Describe pointing device
+
+```text
+stable-id-length:u8, stable-id:utf8[..]
+devicetree-path-length:u16, devicetree-path:utf8[..]
+current-cpi:u16
+default-cpi:u16       /* compiled devicetree value */
+settable:u8           /* 1 when capabilities follow */
+if settable and discrete:
+  value-count:u8, then value-count × cpi:u16   /* ascending */
+if settable and not discrete:
+  reserved:u8 (zero), min:u16, max:u16, step:u16
+```
+
+Unknown ids fail with an ordinary tuning result carrying request type `0x0e`
+and status unknown target.
+
+### Preview device CPI
+
+The tuning result message carries the outcome with request type `0x0f`, the
+device id in its parameter-id byte, and the effective value on success:
+firmware validates the request against the declared capabilities and snaps to
+the nearest supported value when needed, so a host compares requested against
+effective to offer corrections. Previews are RAM-only and expire on reboot,
+like tuning previews. Read-only devices reject previews with status invalid
+value.
 
 ## Stage-state telemetry
 
