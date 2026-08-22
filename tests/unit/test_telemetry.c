@@ -194,24 +194,10 @@ ZTEST(zpt_unit, zz_device_list_reports_table) {
      * range, and a read-only pad. Flags: bit0 local-connected, bit1 has
      * settable capabilities. */
     uint8_t expected[] = {
-        3,
-        0,
-        0,
-        0x03,
-        20,
-        't', 'e', 's', 't', '-', 'l', 'o', 'c', 'a', 'l', '-', 't', 'r', 'a', 'c', 'k', 'b',
-        'a', 'l', 'l',
-        1,
-        1,
-        0x02,
-        21,
-        't', 'e', 's', 't', '-', 'r', 'e', 'm', 'o', 't', 'e', '-', 't', 'r', 'a', 'c', 'k',
-        'b', 'a', 'l', 'l',
-        2,
-        0,
-        0x01,
-        17,
-        't', 'e', 's', 't', '-', 'f', 'i', 'x', 'e', 'd', '-', 'n', 'u', 'm', 'p', 'a', 'd',
+        3,   0,   0,   0x03, 20,  't', 'e', 's', 't', '-',  'l', 'o', 'c', 'a', 'l', '-', 't',  'r',
+        'a', 'c', 'k', 'b',  'a', 'l', 'l', 1,   1,   0x02, 21,  't', 'e', 's', 't', '-', 'r',  'e',
+        'm', 'o', 't', 'e',  '-', 't', 'r', 'a', 'c', 'k',  'b', 'a', 'l', 'l', 2,   0,   0x01, 17,
+        't', 'e', 's', 't',  '-', 'f', 'i', 'x', 'e', 'd',  '-', 'n', 'u', 'm', 'p', 'a', 'd',
     };
 
     tx_frame(ZPT_TEST_REQ_DEVICE_LIST, NULL, 0);
@@ -271,8 +257,7 @@ ZTEST(zpt_unit, zz_device_preview_snaps_and_persists) {
     memcpy(request, (uint8_t[]){1, 0xb9, 0x02}, 3); /* 697 -> snaps to 700 */
     zpt_device_control_reset(remote);
     tx_frame(ZPT_TEST_REQ_DEVICE_PREVIEW, request, sizeof(request));
-    memcpy(expected,
-           (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 0, UINT8_MAX, 1, 0xbc, 0x02, 0, 0},
+    memcpy(expected, (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 0, UINT8_MAX, 1, 0xbc, 0x02, 0, 0},
            sizeof(expected)); /* status ok, value 700 */
     expect_frame(ZPT_RESP_TUNING_RESULT, expected, sizeof(expected));
 

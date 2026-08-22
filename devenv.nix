@@ -85,12 +85,12 @@ in
   tasks = {
     "c:format" = {
       description = "Apply clang-format to C sources";
-      exec = "find src include host -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format -i";
+      exec = "find src include host tests -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format -i";
     };
 
     "c:format:check" = {
       description = "Check C source formatting";
-      exec = "find src include host -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format --dry-run --Werror";
+      exec = "find src include host tests -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format --dry-run --Werror";
     };
 
     "c:complexity:check" = {

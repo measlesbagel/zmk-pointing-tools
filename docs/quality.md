@@ -43,8 +43,8 @@ would appear).
 
 The repository style is defined by the root `.clang-format` file
 (LLVM-based, 4-space indent, 100-column limit). Formatting applies to all C
-sources under `src/`, `include/`, and `host/`; vendored trees (`zephyr/`,
-`zmk/`, `modules/`, `optional/`, `build/`) are never touched.
+sources under `src/`, `include/`, `host/`, and `tests/`; vendored trees
+(`zephyr/`, `zmk/`, `modules/`, `optional/`, `build/`) are never touched.
 
 - Check: `devenv tasks run c:format:check`
   (equivalent:
