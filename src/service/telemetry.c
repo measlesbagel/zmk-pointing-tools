@@ -651,8 +651,8 @@ static void zpt_thread(void) {
             if (record.kind == ZPT_RECORD_STATE &&
                 zpt_state_telemetry_level(record.sample.state.target_id) != ZPT_STATE_LEVEL_OFF) {
                 zpt_send_state(&record.sample.state);
-#endif
             }
+#endif
         }
     }
 }

@@ -1,0 +1,23 @@
+# cppcheck suppression baseline.
+#
+# This file is the frozen baseline for the cppcheck gate (see
+# docs/quality.md, issue #76). New findings should be fixed, not
+# suppressed; a suppression is acceptable only when the finding is a
+# false positive or not applicable to this codebase, and must carry a
+# one-line justification next to it.
+#
+# Format: [file:]id[:line], e.g.:
+#   src/core/pipeline.c:uninitVariable
+#
+# Current baseline: empty. The codebase passes
+#   cppcheck --enable=warning,performance,portability --std=c11
+#   -I include --include=tooling/cppcheck/preinclude.h
+#   --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1
+# with zero findings. The CI and devenv commands expand this file into
+# --suppress arguments (one per non-comment line) so they work on both old
+# and new cppcheck versions.
+#
+# Note: CI installs cppcheck from the runner's apt repository, so the
+# effective version can drift from the one used locally. If a version
+# bump introduces new findings, triage them (fix or justify a
+# suppression here) before re-freezing.

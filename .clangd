@@ -1,0 +1,18 @@
+---
+# Clangd uses the host compile database, which covers everything the host
+# CMake project compiles: src/core, src/stage, src/source, include/, and
+# host/. Generate it with:
+#
+#   cmake -S host -B build/host -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+#   cmake --build build/host
+#
+# (the c:tidy:check devenv task does both). Files under src/platform/zmk
+# are not in that database; for full firmware coverage, generate the
+# Zephyr compile database (west build -t compile_commands, see
+# docs/quality.md and issue #76) and point CompilationDatabase at it.
+#
+# clangd picks up the nearest .clang-tidy file automatically, so the same
+# check set that runs in CI (bugprone, clang-analyzer, cognitive
+# complexity) is available in-editor.
+CompileFlags:
+  CompilationDatabase: build/host

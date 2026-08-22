@@ -94,13 +94,16 @@ static struct zpt_signal normalized_signal(uint32_t timestamp, zpt_fixed_t x, zp
 }
 
 static void test_fixed_micrometre_conversion(void) {
-    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(0) == 0);
-    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1000) == ZPT_FIXED_ONE);
-    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(500) == ZPT_FIXED_ONE / 2);
+    static_assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(0) == 0, "0 um is zero");
+    static_assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1000) == ZPT_FIXED_ONE,
+                  "1000 um is one millimetre");
+    static_assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(500) == ZPT_FIXED_ONE / 2,
+                  "500 um rounds to one millimetre");
     /* Rounds to the nearest micrometre. */
-    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1) == 66);
+    static_assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(1) == 66, "1 um rounds to 66");
     /* The smoke keymap's 580 um activation distance. */
-    assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(580) == 38011);
+    static_assert(ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(580) == 38011,
+                  "580 um is 38011 fixed units");
 }
 
 static void test_strategy_forced_policies(void) {
