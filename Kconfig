@@ -1,5 +1,6 @@
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_ROUTER := measlesbagel,zpt-router
+DT_COMPAT_ZPT_DEVICE_TABLE := measlesbagel,zpt-pointing-device
 DT_COMPAT_ZPT_ROUTE_BEHAVIOR := measlesbagel,zpt-behavior-route
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
 
@@ -34,6 +35,16 @@ config ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES
     default 4
     range 1 16
     depends on ZMK_POINTING_TOOLS_PIPELINE
+
+config ZMK_POINTING_TOOLS_DEVICE_TABLE
+    bool "Physical pointing device discovery table"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_DEVICE_TABLE))
+    depends on ZMK_POINTING
+    help
+      Describe physical pointing devices independently of pipelines and
+      tuning targets: stable cross-half identities, owning split half, and
+      supported CPI capabilities. Discovery, preview, and split-routed
+      sensor control build on this table.
 
 config ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     bool

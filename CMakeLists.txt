@@ -1,6 +1,7 @@
 if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
    CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC OR
-   CONFIG_ZMK_POINTING_TOOLS_PIPELINE)
+   CONFIG_ZMK_POINTING_TOOLS_PIPELINE OR
+   CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
   zephyr_library()
   zephyr_include_directories(include)
   zephyr_include_directories(${APPLICATION_SOURCE_DIR}/include)
@@ -12,6 +13,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/core/route_override.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/frame_assembler.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_PIPELINE src/source/motion_source.c)
+  # Physical pointing device discovery (both split halves).
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE src/source/device_caps.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE
+    src/platform/zmk/device_table.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     src/source/transport/compact_split_codec.c)
   # Core stage implementations (host-replayable algorithms).
