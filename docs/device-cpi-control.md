@@ -8,6 +8,34 @@ devices, show what the hardware supports, and change sensor resolution on the
 half that owns the sensor — without persisting anything and without assuming
 continuous CPI steps or a specific driver.
 
+## Topology: beyond two halves
+
+Nothing above assumes exactly two units. The device table's location byte
+addresses any half (0 local, 1..n peripherals), tunnel requests carry the
+target half explicitly, and response correlation is by sequence number, so
+it does not matter which chain returns a frame.
+
+A dongle-style setup (USB-powered central such as a Prospector running the
+pipeline and telemetry, both keyboard halves as wireless peripherals) works
+unchanged: sensors stream frames to the central exactly as today, all
+processing stays central-side, and the tuner talks USB CDC to the dongle.
+
+Wiring requirements for three or more units:
+
+- One `zmk,input-split` node per peripheral half, each with a distinct
+  configured `reg` number - ZMK's peripheral identity is this configured
+  reg (stable across boots), and each node carries its own processor chain,
+  so every half gets its own source-ingress instance feeding the central
+  router.
+- Attach the `zpt-sensor-control-proxy` processor to every
+  `zmk,input-split` chain that owns controllable devices. Multi-attach is
+  safe: proxy state is a singleton, and sequence correlation prevents
+  cross-talk between chains.
+- Align the device table's location byte with the half's `zmk,input-split`
+  reg (location = reg + 1). For two-half splits there is exactly one
+  peripheral and the mapping is trivially correct; verify the alignment on
+  the first three-plus-unit build before relying on remote control.
+
 ## Goals and non-goals
 
 Goals:
