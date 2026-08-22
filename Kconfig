@@ -39,12 +39,14 @@ config ZMK_POINTING_TOOLS_ROUTER_MAX_EXPLICIT_ROUTES
 config ZMK_POINTING_TOOLS_DEVICE_TABLE
     bool "Physical pointing device discovery table"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_DEVICE_TABLE))
-    depends on ZMK_POINTING
     help
       Describe physical pointing devices independently of pipelines and
       tuning targets: stable cross-half identities, owning split half, and
       supported CPI capabilities. Discovery, preview, and split-routed
       sensor control build on this table.
+
+      Deliberately free of ZMK dependencies so the unit-test app builds it
+      against plain Zephyr, on both split halves.
 
 config ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     bool
