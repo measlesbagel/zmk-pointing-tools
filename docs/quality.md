@@ -20,6 +20,10 @@ binaries:
 - **`zephyr-compliance` job** — fetches the Zephyr tree at the rev pinned
   in `devenv.lock` and runs the `zephyr:compliance:check` task over the PR
   range.
+- **`zephyr-tests` job** — fetches the same pinned Zephyr tree into
+  `zephyr/` and runs the `zephyr:tests` task (the module's ztest firmware
+  unit tests on `native_posix/native/64` via twister; see the
+  firmware unit tests section below).
 - The **firmware build** in `build.yml` (ZMK action) is unchanged and
   remains the firmware typecheck on every PR.
 
@@ -266,7 +270,57 @@ is left out of this form:
       -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
       -m TextEncoding -m BinaryFiles
 
+## Firmware unit tests (ztest)
+
+The Zephyr-coupled firmware logic — the runtime-tuning service
+(`src/service/tuning.c`) and the telemetry service (`src/service/telemetry.c`)
+— is unit-tested with ztest under the `native_posix/native/64` POSIX target
+(`tests/unit`, suite `zpt.unit`). These are the sources the host replay
+harness cannot reach (they call Zephyr APIs); the pure pipeline/stage logic
+remains covered by the host harness (the `host:test` task), and BSim is not
+used — `native_posix` is the fast local/CI baseline.
+
+- **UART under test** — the telemetry service talks to a `vnd,serial`
+  virtual UART (`zephyr/drivers/serial/serial_test.c`, auto-enabled when a
+  node with that compatible is present): test code injects host frames into
+  its RX queue with `serial_vnd_queue_in_data()` and reads service
+  responses from its TX buffer. The firmware callback tolerates drivers
+  without the `irq_update` UART operation (the mock returns `-ENOSYS`; the
+  production CDC-ACM driver implements it), so the same code runs on both.
+- **One suite, ordered by name** — ztest executes suites *and* cases in
+  name-sorted linker order (not link order), and the tuning registry is a
+  process-wide singleton with no unregister API. All cases therefore live
+  in a single `zpt_unit` suite, and the capacity-fill case is named
+  `z_capacity_fill` so it sorts last. State-target ids are allocated above
+  the tuning targets and are never freed, so cases make no assumption that
+  their id is the highest one.
+- **Wake model** — the telemetry service thread only wakes on UART input;
+  state samples queued from the test thread flush on the next host frame
+  (the tests ping after submitting, mirroring production where the host
+  keeps the link alive).
+
+The test app loads the module through the `ZEPHYR_MODULES` env var (its real
+Kconfig, CMake, devicetree bindings, and library path — twister's cmake
+configure has no option to pass arbitrary `-D` args). It is set rather than
+relying on the west workspace because Zephyr only runs its module
+registration script when `WEST` or `ZEPHYR_MODULES` is set, and the `WEST`
+cmake variable is `WEST-NOTFOUND` when no `.west/` workspace is found above
+`ZEPHYR_BASE` — the situation in CI, where the zephyr tree is fetched
+without a workspace. It runs with the host gcc
+(`ZEPHYR_TOOLCHAIN_VARIANT=host`), so no Zephyr SDK is needed.
+
+Twister runs as a plain python script
+(`zephyr/scripts/twister -p native_posix/native/64 -T tests`) rather than
+through west: west registers the twister command only after resolving the
+manifest import chain (`config/west.yml` → `zmk/app/west.yml`), which
+requires the `zmk` project checkout, while the script derives
+`ZEPHYR_BASE` from its own location and has no west dependency. CI relies
+on this, since the `zephyr-tests` job fetches only the zephyr tree.
+
+- Check: `devenv tasks run zephyr:tests`
+- CI: the `zephyr-tests` job in `.github/workflows/check.yml` runs the same
+  task on every pull request and push to `main`.
+
 ## Planned (tracked in #76)
 
-- BSim/ztest firmware unit tests (`native_posix` first, BSim as an
-  optional heavier extension)
+- BSim as an optional heavier extension of the ztest suites

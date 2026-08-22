@@ -21,7 +21,16 @@
 #include <zmk/pointing_tools/observer/state.h>
 #endif
 
-LOG_MODULE_REGISTER(zpt_telemetry, CONFIG_ZMK_LOG_LEVEL);
+/* ZMK_LOG_LEVEL is an application Kconfig symbol (zmk/app/Kconfig); it is
+ * absent when this module builds against plain Zephyr (e.g. the
+ * native_posix unit-test app), so fall back to INFO there. */
+#ifdef CONFIG_ZMK_LOG_LEVEL
+#define ZPT_TELEMETRY_LOG_LEVEL CONFIG_ZMK_LOG_LEVEL
+#else
+#define ZPT_TELEMETRY_LOG_LEVEL LOG_LEVEL_INF
+#endif
+
+LOG_MODULE_REGISTER(zpt_telemetry, ZPT_TELEMETRY_LOG_LEVEL);
 
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
              "exactly one measlesbagel,zpt-telemetry node is supported");
@@ -659,7 +668,13 @@ static void zpt_parse_byte(uint8_t byte) {
 
 static void zpt_uart_callback(const struct device *dev, void *user_data) {
     ARG_UNUSED(user_data);
-    if (!uart_irq_update(dev)) {
+
+    /* uart_irq_update() re-runs the driver's pending-interrupt state
+     * machine and reports whether work is pending. Drivers without that
+     * operation (e.g. the vnd,serial unit-test mock) return -ENOSYS; for
+     * those, the ready checks below are sufficient. */
+    const int updated = uart_irq_update(dev);
+    if (updated == 0 || (updated < 0 && !uart_irq_rx_ready(dev))) {
         return;
     }
 

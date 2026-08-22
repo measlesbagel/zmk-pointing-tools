@@ -31,6 +31,25 @@ let
     ln -s ${pkgs.clang-tools}/bin/clang-format-diff "$out/bin/clang-format-diff.py"
   '';
 
+  # Python environment for running the module's ztest suites through west
+  # twister (the subset of zephyr/scripts/requirements*.txt that the twister
+  # core imports unconditionally; see docs/quality.md).
+  twisterPython = pkgs.python3.withPackages (ps: with ps; [
+    west
+    pyyaml
+    pykwalify
+    pyelftools
+    junitparser
+    lxml
+    natsort
+    psutil
+    colorama
+    ply
+    packaging
+    anytree
+    pytest
+  ]);
+
   # The tidy gates (c:tidy:check, c:firmware:tidy) are tuned against the
   # clang-tidy 22 series (the generation the firmware baseline was
   # verified with). Macro-generated Zephyr/ZMK symbols that newer versions
@@ -55,6 +74,10 @@ in
     clangTidyPinned
     pkgs.cppcheck
     pkgs.python3Packages.lizard
+    # twisterPython before compliancePython: `west twister` imports the
+    # twister script into the west process itself, so the west binary must
+    # come from the environment that carries twister's python deps.
+    twisterPython
     compliancePython
     clangFormatDiffPy
   ];
@@ -129,6 +152,33 @@ in
           --db-dir "$sanitized" \
           --repo "$PWD" \
           --clang-tidy "$(command -v clang-tidy)"
+      '';
+    };
+
+    "zephyr:tests" = {
+      description = "Run the module's ztest suites on native_posix via twister";
+      exec = ''
+        # native_posix builds with the host gcc; the variant env var keeps
+        # twister's toolchain verification from requiring the Zephyr SDK
+        # (which this profile deliberately does not install). The module is
+        # loaded through the ZEPHYR_MODULES env var (read by zephyr_get
+        # from the ENV scope; twister's cmake configure has no option to
+        # pass arbitrary -D args, and the REMAINDER after -- would reach
+        # the test binary, not CMake). Zephyr only runs its module
+        # registration script when WEST or ZEPHYR_MODULES is set, and WEST
+        # is WEST-NOTFOUND without a west workspace (west topdir is looked
+        # up from ZEPHYR_BASE), so the env var also covers CI, where the
+        # zephyr tree is fetched without a workspace.
+        #
+        # Twister is invoked as a plain python script rather than through
+        # west: west only registers the twister command once the manifest
+        # import chain (config/west.yml -> zmk/app/west.yml) resolves, so
+        # the zmk project must be checked out. The script derives
+        # ZEPHYR_BASE from its own location and has no west dependency.
+        # Its imports come from twisterPython (ordered first in packages).
+        export ZEPHYR_TOOLCHAIN_VARIANT=host
+        export ZEPHYR_MODULES="$PWD"
+        python3 "$PWD/zephyr/scripts/twister" -p native_posix/native/64 -T tests
       '';
     };
 

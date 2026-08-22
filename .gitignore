@@ -6,6 +6,8 @@
 /optional/
 
 build/
+twister-out/
+twister-out.*/
 node_modules/
 result
 __pycache__/
