@@ -6,6 +6,7 @@
  * suite: nothing mutates process-wide state. */
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <zephyr/ztest.h>
@@ -90,4 +91,64 @@ ZTEST(zpt_unit, device_entry_validates_previews_against_capabilities) {
     /* 450 is equidistant from 400 and 500; ties snap toward the lower one. */
     zassert_equal(zpt_cpi_validate(&remote->caps, 450, &effective), 1);
     zassert_equal(effective, 400);
+}
+
+/* The cases below mutate control state; each restores what it changed so
+ * suite order stays irrelevant even though they sort last. */
+
+ZTEST(zpt_unit, zz_device_control_get_reports_compiled_defaults) {
+    uint16_t cpi = 0;
+
+    zassert_ok(zpt_device_control_get(zpt_device_table_find("test-local-trackball"), &cpi));
+    zassert_equal(cpi, 800);
+    zassert_ok(zpt_device_control_get(zpt_device_table_find("test-remote-trackball"), &cpi));
+    zassert_equal(cpi, 400);
+    /* Read-only devices still report their compiled value. */
+    zassert_ok(zpt_device_control_get(zpt_device_table_find("test-fixed-numpad"), &cpi));
+    zassert_equal(cpi, 1200);
+
+    zassert_equal(zpt_device_control_get(NULL, &cpi), -EINVAL);
+    zassert_equal(zpt_device_control_get(zpt_device_table_at(99), &cpi), -EINVAL);
+    zassert_equal(zpt_device_control_get(zpt_device_table_find("test-local-trackball"), NULL),
+                  -EINVAL);
+}
+
+ZTEST(zpt_unit, zz_device_control_previews_snap_persist_and_reset) {
+    const struct zpt_pointing_device *local = zpt_device_table_find("test-local-trackball");
+    const struct zpt_pointing_device *fixed = zpt_device_table_find("test-fixed-numpad");
+    const struct zpt_pointing_device *remote = zpt_device_table_find("test-remote-trackball");
+    uint16_t effective = 0;
+    uint16_t cpi = 0;
+
+    /* Exact request applies as-is. */
+    zassert_equal(zpt_device_control_preview(local, 400, &effective), 0);
+    zassert_equal(effective, 400);
+    zassert_ok(zpt_device_control_get(local, &cpi));
+    zassert_equal(cpi, 400);
+
+    /* Off-list requests snap to the nearest supported value. */
+    zassert_equal(zpt_device_control_preview(local, 1000, &effective), 1);
+    zassert_equal(effective, 800);
+    zassert_ok(zpt_device_control_get(local, &cpi));
+    zassert_equal(cpi, 800);
+
+    /* Range entries clamp to their bounds. */
+    zassert_equal(zpt_device_control_preview(remote, UINT16_MAX, &effective), 1);
+    zassert_equal(effective, 1200);
+
+    /* Read-only entries reject previews but keep reporting their default. */
+    zassert_equal(zpt_device_control_preview(fixed, 800, &effective), -ENOSYS);
+    zassert_ok(zpt_device_control_get(fixed, &cpi));
+    zassert_equal(cpi, 1200);
+
+    /* Reset restores exactly one entry's compiled value. */
+    zassert_ok(zpt_device_control_reset(local));
+    zassert_ok(zpt_device_control_get(local, &cpi));
+    zassert_equal(cpi, 800);
+    zassert_ok(zpt_device_control_reset(remote));
+    zassert_ok(zpt_device_control_get(remote, &cpi));
+    zassert_equal(cpi, 400);
+
+    zassert_equal(zpt_device_control_reset(fixed), -ENOSYS);
+    zassert_equal(zpt_device_control_reset(NULL), -EINVAL);
 }
