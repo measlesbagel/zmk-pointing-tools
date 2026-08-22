@@ -9,41 +9,14 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: npm run check
-      - run: npm test
-      - run: cmake -S host -B build/host -G Ninja
-      - run: cmake --build build/host
-      - run: ctest --test-dir build/host --output-on-failure
-
-  c-style:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check C formatting
-        run: |
-          find src include host -type f \( -name '*.c' -o -name '*.h' \) \
-            -print0 | xargs -0 clang-format --dry-run --Werror
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m pip install --quiet "lizard==1.23.0"
-      - name: Check cyclomatic complexity
-        run: |
-          # Ratcheted thresholds (see docs/quality.md, issue #76):
-          # firmware code at 30, test/runner harness at 40.
-          lizard -l c -C 15 -w src include
-          lizard -l c -C 15 -w host
-
-  c-analysis:
+  # CI runs the same dev tasks as local (devenv.nix) through devenv, with
+  # the toolchain pinned by devenv.lock, so CI results cannot drift from a
+  # local run. 'devenv tasks run repository:check' is the same check set
+  # locally: C formatting, lizard complexity, host clang-tidy, cppcheck,
+  # JavaScript checks/tests, and the host tests.
+  checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
@@ -53,31 +26,14 @@ jobs:
           name: devenv
       - name: Install Devenv
         run: nix profile add github:cachix/devenv/v2.2#devenv
-      # Run the local dev tasks (devenv.nix) so CI analyzes with the same
-      # toolchain as the dev shell: nixpkgs and every tool are pinned by
-      # devenv.lock, so results cannot drift from a local run. c:tidy:check
-      # configures/builds the host tree with the nix gcc and runs
-      # tooling/clang-tidy/check_host_tidy.py with the pinned clang-tidy;
-      # c:cppcheck:check runs the cppcheck baseline.
-      - name: Run host clang-tidy gate
-        run: devenv tasks run c:tidy:check --no-tui
-      - name: Run cppcheck
-        run: devenv tasks run c:cppcheck:check --no-tui
-
-  host-sanitizers:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure host tests with sanitizers
-        run: cmake -S host -B build/host-san -G Ninja -DZPT_ENABLE_SANITIZERS=ON
-      - name: Build host tests with sanitizers
-        run: cmake --build build/host-san
-      - name: Run host tests under sanitizers
-        run: ctest --test-dir build/host-san --output-on-failure
+      - name: Run repository checks
+        run: devenv tasks run repository:check --no-tui
+      - name: Run host tests with sanitizers
+        run: devenv tasks run host:test:asan --no-tui
 
   zephyr-compliance:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,33 +44,29 @@ jobs:
           # than the whole stack.
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-      - name: Set up West and Zephyr SDK
-        uses: urob/zmk-actions/setup-sdk@v12.0.0
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Configure the Devenv binary cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
-          toolchain: zephyr
-      - name: Pull in ZMK and Zephyr modules
-        uses: urob/zmk-actions/setup-zmk@v12.0.0
-        id: setup-zmk
-        with:
-          config: config
-          always-update-west: true
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install compliance dependencies
+          name: devenv
+      - name: Install Devenv
+        run: nix profile add github:cachix/devenv/v2.2#devenv
+      # Fetch the Zephyr tree at the rev pinned in devenv.lock (the same
+      # rev the local west workspace uses). Only the zephyr project is
+      # needed: the module-safe check subset (see docs/quality.md) never
+      # touches ZMK, and the Kconfig checks are excluded. The clone target
+      # is zephyr-tree/ because the repo itself tracks zephyr/module.yml,
+      # so zephyr/ already exists in the checkout.
+      - name: Fetch pinned Zephyr tree
         run: |
-          # west (the Python package) is imported by check_compliance.py even
-          # though the west CLI comes from setup-sdk. The requirements file
-          # lives in the west workspace, not the repo checkout.
-          python -m pip install --quiet west \
-            -r "${{ steps.setup-zmk.outputs.workspace }}/zephyr/scripts/requirements-compliance.txt"
+          rev=$(jq -r '.nodes.zephyr.locked.rev' devenv.lock)
+          git clone --filter=blob:none --no-checkout --quiet \
+            https://github.com/zmkfirmware/zephyr zephyr-tree
+          git -C zephyr-tree fetch --depth 1 --quiet origin "$rev"
+          git -C zephyr-tree checkout --quiet "$rev"
+      # The same script and check subset as the local
+      # zephyr:compliance:check task, over the PR range.
       - name: Run Zephyr compliance checks
-        env:
-          # The script diffs the module repo (it must run from the repo root
-          # so GIT_TOP is this checkout) but needs Zephyr's tree for its
-          # configs and tools, which setup-zmk places in a temporary
-          # workspace.
-          ZEPHYR_BASE: ${{ steps.setup-zmk.outputs.workspace }}/zephyr
         run: |
           if [ -n "${GITHUB_BASE_REF:-}" ]; then
             git fetch origin "$GITHUB_BASE_REF"
@@ -122,13 +74,7 @@ jobs:
           else
             range="HEAD~1..HEAD"
           fi
-          # Module-safe subset of check_compliance.py (see docs/quality.md):
-          # the Kconfig parse family assumes the Zephyr tree (a git grep of
-          # SB_CONFIG_ symbols exits 1 on no-match, which the script treats
-          # as fatal), and Checkpatch enforces kernel style (tabs, 80
-          # columns), which conflicts with this repository's clang-format
-          # style. Kconfig and devicetree correctness are already gated by
-          # the firmware build.
-          python "$ZEPHYR_BASE/scripts/ci/check_compliance.py" -c "$range" \
-            -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
-            -m GitDiffCheck -m TextEncoding -m BinaryFiles
+          ZEPHYR_BASE="$PWD/zephyr-tree" \
+          COMPLIANCE_SCRIPT=zephyr-tree/scripts/ci/check_compliance.py \
+          COMPLIANCE_RANGE="$range" \
+            devenv tasks run zephyr:compliance:check --no-tui

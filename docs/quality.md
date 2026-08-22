@@ -6,6 +6,28 @@ full plan — static analysis, complexity gates, sanitizers, Zephyr compliance,
 firmware clang-tidy, and BSim/ztest — is tracked in
 [issue #76](https://github.com/measlesbagel/zmk-pointing-tools/issues/76).
 
+## CI: the local tasks, run in GitHub Actions
+
+Every check in this document is a dev task in `devenv.nix`, and CI runs the
+tasks themselves rather than re-implementing them with runner-installed
+binaries:
+
+- **`checks` job** (`.github/workflows/check.yml`) — installs nix and
+  devenv 2.2 (the version required by `devenv.yaml`) and runs
+  `devenv tasks run repository:check` (format, complexity, host clang-tidy,
+  cppcheck, JavaScript checks/tests, host tests) plus
+  `devenv tasks run host:test:asan`.
+- **`zephyr-compliance` job** — fetches the Zephyr tree at the rev pinned
+  in `devenv.lock` and runs the `zephyr:compliance:check` task over the PR
+  range.
+- The **firmware build** in `build.yml` (ZMK action) is unchanged and
+  remains the firmware typecheck on every PR.
+
+The toolchain is pinned by `devenv.lock` (nixpkgs revision included), so CI
+analyzes with exactly the tools of the local dev shell; bumping the lock
+moves local and CI together. The firmware clang-tidy gate stays local-only
+by decision (see its section).
+
 ## Formatting (clang-format)
 
 The repository style is defined by the root `.clang-format` file
@@ -17,12 +39,11 @@ sources under `src/`, `include/`, and `host/`; vendored trees (`zephyr/`,
   (equivalent:
   `find src include host -type f \( -name '*.c' -o -name '*.h' \) -print0 | xargs -0 clang-format --dry-run --Werror`)
 - Fix: `devenv tasks run c:format`
-- CI: the `c-style` job in `.github/workflows/check.yml` runs the check on
+- CI: the `checks` job in `.github/workflows/check.yml` runs the task on
   every pull request and push to `main`.
 
-`clang-tools` is part of the default devenv package set. CI uses the
-`clang-format` preinstalled on the runner image; if a runner update changes
-its output, re-run the fix task and commit the result.
+`clang-tools` is part of the default devenv package set; CI runs the same
+task with the same pinned tool (see the CI section below).
 
 ## Cyclomatic complexity (lizard)
 
@@ -36,11 +57,12 @@ verified against it (the former worst offenders — `coherent_stage_process`
 at 26 and the replay-runner `main`s at 31/26/19 — were decomposed into
 small helpers, tracked in #76). `lizard` measures source-level branching and
 does not expand macros, so the values are stable and comparable between
-firmware and host code. CI pins `lizard==1.23.0`; `lizard` is part of the
-default devenv package set.
+firmware and host code. `lizard` is part of the default devenv package
+set; CI runs the same task with the same toolchain.
 
 - Check: `devenv tasks run c:complexity:check`
-- CI: `c-style` job in `.github/workflows/check.yml`.
+- CI: the `checks` job in `.github/workflows/check.yml` runs the task on
+  every pull request and push to `main`.
 
 ## Sanitizers (host test build)
 
@@ -50,9 +72,9 @@ UndefinedBehaviorSanitizer (`-fno-sanitize-recover=all`, so any undefined
 behavior fails the test instead of printing a note).
 
 - Local: `devenv tasks run host:test:asan`
-- CI: `host-sanitizers` job in `.github/workflows/check.yml` runs the full
-  CTest suite (including the Node.js trace-replay harness) under
-  sanitizers on every PR and push to `main`.
+- CI: the `checks` job in `.github/workflows/check.yml` runs the task
+  (the full CTest suite, including the Node.js trace-replay harness)
+  under sanitizers on every PR and push to `main`.
 
 ## Static analysis (clang-tidy and cppcheck)
 
@@ -97,7 +119,7 @@ bumped and a tool update introduces new findings, triage them (fix or
 justify a suppression) before re-freezing the baselines.
 
 - Check: `devenv tasks run c:tidy:check`, `devenv tasks run c:cppcheck:check`
-- CI: `c-analysis` job in `.github/workflows/check.yml`.
+- CI: the `checks` job in `.github/workflows/check.yml` runs both tasks.
 
 ## Firmware clang-tidy (baseline-gated)
 
@@ -189,10 +211,16 @@ build/clang-ccdb`) to analyze the platform layer.
 
 ## Zephyr compliance (check_compliance.py)
 
-The `zephyr-compliance` job in `.github/workflows/check.yml` runs the
-module-safe subset of Zephyr's own `scripts/ci/check_compliance.py` over the
-diff range (the PR's base..head on a pull request, `HEAD~1..HEAD` on a push
-to `main`):
+The `zephyr-compliance` job in `.github/workflows/check.yml` runs the same
+`zephyr:compliance:check` task as local over the diff range (the PR's
+base..head on a pull request, `HEAD~1..HEAD` on a push to `main`). The job
+fetches only the Zephyr project — at the exact rev pinned in `devenv.lock`,
+the same rev the local west workspace uses — into `zephyr-tree/` (the repo
+itself tracks `zephyr/module.yml`, so `zephyr/` is already occupied) and
+points the task at it via `ZEPHYR_BASE` plus the `COMPLIANCE_SCRIPT` and
+`COMPLIANCE_RANGE` overrides (all default to the local behavior, so an
+unmodified local run is unchanged); the module-safe check subset never
+touches ZMK, so no full west workspace is needed. The checks are:
 
 - **ClangFormat** — `clang-format-diff.py` over changed C lines.
 - **DevicetreeBindings** — flags redundant `required: false` in changed
@@ -211,7 +239,7 @@ Two of the script's checks are deliberately **not** run for a module repo:
 - **Checkpatch** — it enforces the Linux-kernel style (tab indentation,
   80-column lines), which directly contradicts this repository's
   clang-format style (4-space, 100-column). Every formatted line would be
-  flagged, so the gate is left to the `c-style` job instead.
+  flagged, so the gate is left to the `checks` job instead.
 - **The Kconfig parse family** (`Kconfig*`, `SysbuildKconfig*`) — the script
   runs `git grep` for `SB_CONFIG_*` symbols from the top-level repo; on a
   module repo that grep exits 1 (no match) and the script treats that as a
@@ -219,13 +247,14 @@ Two of the script's checks are deliberately **not** run for a module repo:
   firmware build, which configures Kconfig and compiles the devicetree for
   real boards.
 
-Running the same subset locally requires the west workspace (`zephyr/`,
-`zmk/`, …) plus a Python environment with the script's imports
-(`unidiff`, `yamllint`, `junitparser`, `lxml`, `python-magic`, `west`):
+Locally the dev task does this with the west workspace's `zephyr/` tree
+and the Python environment from the default shell (which carries the
+script's imports: `unidiff`, `yamllint`, `junitparser`, `lxml`,
+`python-magic`, `west`):
 
-    python3 zephyr/scripts/ci/check_compliance.py -c "origin/main...HEAD" \
-      -m ClangFormat -m DevicetreeBindings -m Nits -m YAMLLint \
-      -m GitDiffCheck -m TextEncoding -m BinaryFiles
+    devenv tasks run zephyr:compliance:check          # HEAD~1..HEAD
+    COMPLIANCE_RANGE=origin/main...HEAD \
+      devenv tasks run zephyr:compliance:check        # a wider range
 
 The CI gate is diff-scoped, so it only polices files a PR touches. To audit
 the *entire* tree at once (e.g. when first adopting the gate), diff against
