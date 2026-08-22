@@ -148,17 +148,21 @@ static void test_quantizer_accumulates_sub_pixel_remainders(void) {
     assert(push_normalized(&fixture.pipeline, &result, 8, ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
     assert(fixture.capture.signal.data.delta.x == 0);
     assert(fixture.quantizer_state.remainder_x == 65520);
-    assert(push_normalized(&fixture.pipeline, &result, 16, ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 16, ZPT_FIXED_ONE / 20, 0, fixture.cpi) ==
+           0);
     assert(fixture.capture.signal.data.delta.x == 1);
     assert(fixture.quantizer_state.remainder_x == 32744);
 
     /* Negative sub-pixel motion carries the sign correctly (fresh state). */
     cursor_fixture_init(&fixture, 1, 1, 254);
-    assert(push_normalized(&fixture.pipeline, &result, 24, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 24, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) ==
+           0);
     assert(fixture.capture.signal.data.delta.x == 0);
-    assert(push_normalized(&fixture.pipeline, &result, 32, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 32, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) ==
+           0);
     assert(fixture.capture.signal.data.delta.x == 0);
-    assert(push_normalized(&fixture.pipeline, &result, 40, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) == 0);
+    assert(push_normalized(&fixture.pipeline, &result, 40, -ZPT_FIXED_ONE / 20, 0, fixture.cpi) ==
+           0);
     assert(fixture.capture.signal.data.delta.x == -1);
     assert(fixture.quantizer_state.remainder_x == -32744);
 }

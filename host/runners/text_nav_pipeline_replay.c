@@ -57,8 +57,8 @@ int main(void) {
     uint32_t discard;
     if (fgets(line, sizeof(line), stdin) == NULL ||
         sscanf(line,
-               "C %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNd32 " %" SCNu16 " %" SCNu16
-               " %" SCNu32 " %" SCNd32 " %" SCNd32 " %" SCNu16,
+               "C %" SCNu16 " %" SCNu16 " %" SCNu16 " %" SCNd32 " %" SCNu16 " %" SCNu16 " %" SCNu32
+               " %" SCNd32 " %" SCNd32 " %" SCNu16,
                &fixture.resolution_cpi, &fixture.intent_config.settings.engage_ratio_percent,
                &fixture.intent_config.settings.release_ratio_percent, &activation_micrometers,
                &fixture.intent_config.settings.window_ms, &fixture.intent_config.idle_timeout_ms,
@@ -66,9 +66,9 @@ int main(void) {
                &fixture.config.idle_timeout_ms) != 10 ||
         fixture.resolution_cpi == 0 || fixture.intent_config.settings.engage_ratio_percent == 0 ||
         fixture.intent_config.settings.release_ratio_percent == 0 || activation_micrometers <= 0 ||
-        fixture.intent_config.settings.window_ms == 0 || fixture.intent_config.idle_timeout_ms == 0 ||
-        horizontal_micrometers <= 0 || vertical_micrometers <= 0 ||
-        fixture.config.idle_timeout_ms == 0) {
+        fixture.intent_config.settings.window_ms == 0 ||
+        fixture.intent_config.idle_timeout_ms == 0 || horizontal_micrometers <= 0 ||
+        vertical_micrometers <= 0 || fixture.config.idle_timeout_ms == 0) {
         fputs("invalid replay configuration\n", stderr);
         return 2;
     }

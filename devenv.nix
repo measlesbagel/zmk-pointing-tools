@@ -18,11 +18,22 @@ in
     pkgs.gcc
     pkgs.cmake
     pkgs.ninja
+    pkgs.clang-tools
   ];
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
 
   tasks = {
+    "c:format" = {
+      description = "Apply clang-format to C sources";
+      exec = "find src include host -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format -i";
+    };
+
+    "c:format:check" = {
+      description = "Check C source formatting";
+      exec = "find src include host -type f \\( -name '*.c' -o -name '*.h' \\) -print0 | xargs -0 clang-format --dry-run --Werror";
+    };
+
     "javascript:check" = {
       description = "Check browser and host JavaScript syntax";
       exec = "npm run check";
@@ -52,7 +63,7 @@ in
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
-      after = [ "javascript:check" "javascript:test" "host:test" ];
+      after = [ "c:format:check" "javascript:check" "javascript:test" "host:test" ];
       before = [ "devenv:enterTest" ];
     };
   };
