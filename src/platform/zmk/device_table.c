@@ -90,6 +90,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
         .location = (uint8_t)DT_INST_PROP_OR(inst, location, 0),                                   \
         .default_cpi = (uint16_t)DT_INST_PROP(inst, resolution_cpi),                               \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
         .sensor = DEVICE_DT_GET(DT_INST_PHANDLE(inst, sensor)),                                    \
         .caps = ZPT_DEVICE_INIT_CAPS(inst)};
 

@@ -10,6 +10,9 @@ export const MESSAGE = Object.freeze({
   TUNING_PARAMETER_METADATA_REQUEST: 0x0a,
   TUNING_SET_MANY_REQUEST: 0x0b,
   STATE_CONTROL_REQUEST: 0x0c,
+  DEVICE_LIST_REQUEST: 0x0d,
+  DEVICE_DESCRIBE_REQUEST: 0x0e,
+  DEVICE_PREVIEW_REQUEST: 0x0f,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -19,10 +22,13 @@ export const MESSAGE = Object.freeze({
   TUNING_TARGET_METADATA_RESPONSE: 0x87,
   TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
   STATE_STATUS_RESPONSE: 0x89,
+  DEVICE_LIST_RESPONSE: 0x8a,
+  DEVICE_DESCRIPTION_RESPONSE: 0x8b,
   STATE_SAMPLE: 0x91,
 });
 
-export const PROTOCOL_VERSION = 6;
+/* v7 added pointing-device discovery and preview messages. */
+export const PROTOCOL_VERSION = 7;
 export const STATE_SCHEMA_VERSION = 2;
 
 /* Target kinds carried in state samples. Pipeline stages are the only

@@ -40,9 +40,9 @@ test("decodes fragmented and adjacent frames", () => {
 });
 
 test("parses the version-only description", () => {
-  assert.deepEqual(parseDescribe(Uint8Array.of(6)), { version: 6 });
+  assert.deepEqual(parseDescribe(Uint8Array.of(7)), { version: 7 });
   assert.throws(
-    () => parseDescribe(Uint8Array.of(5)),
+    () => parseDescribe(Uint8Array.of(6)),
     /does not match tuner protocol/,
   );
 });

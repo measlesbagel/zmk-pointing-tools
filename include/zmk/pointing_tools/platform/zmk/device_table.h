@@ -17,6 +17,7 @@ struct zpt_pointing_device {
     uint8_t location; /* 0 central-local, otherwise owning peripheral index + 1 */
     uint16_t default_cpi;
     const char *stable_id;
+    const char *devicetree_path; /* node path of this entry, for host profiles */
     const struct device *sensor;
     struct zpt_cpi_capabilities caps;
 };

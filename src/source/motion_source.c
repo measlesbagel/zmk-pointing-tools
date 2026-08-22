@@ -85,3 +85,17 @@ bool zpt_motion_source_take_at_sequence(struct zpt_motion_source_state *state,
     return take_at_sequence(state, observed_at_ms, sample_span_us, sequence, additional_flags,
                             signal);
 }
+
+int zpt_motion_source_set_resolution_cpi(struct zpt_motion_source_state *state,
+                                         uint16_t resolution_cpi) {
+    if (state == NULL || resolution_cpi == 0U) {
+        return -EINVAL;
+    }
+    if (state->frame.saw_axis) {
+        /* Counts are already accumulated under the old resolution; labelling
+         * any of them with a new one would corrupt the physical conversion. */
+        return -EBUSY;
+    }
+    state->resolution_cpi = resolution_cpi;
+    return 0;
+}

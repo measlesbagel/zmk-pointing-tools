@@ -15,6 +15,7 @@
  * capacity-fill case is named z_capacity_fill so it runs last of all. */
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -23,11 +24,12 @@
 #include <zephyr/drivers/uart/serial_test.h>
 
 #include <zmk/pointing_tools/observer/state.h>
+#include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/service/tuning.h>
 
 /* --- Wire protocol (v6) ---------------------------------------------- */
 
-#define ZPT_PROTOCOL_VERSION 6
+#define ZPT_PROTOCOL_VERSION 7
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -176,6 +178,111 @@ ZTEST(zpt_unit, describe) {
 
     tx_frame(ZPT_REQ_DESCRIBE, NULL, 0);
     expect_frame(ZPT_RESP_DESCRIBE, payload, 1);
+}
+
+/* --- Pointing device discovery and preview (protocol v7) ------------- */
+
+/* Wire copies of the v7 device messages, mirroring src/service/telemetry.c. */
+#define ZPT_TEST_REQ_DEVICE_LIST 0x0d
+#define ZPT_TEST_REQ_DEVICE_DESCRIBE 0x0e
+#define ZPT_TEST_REQ_DEVICE_PREVIEW 0x0f
+#define ZPT_TEST_RESP_DEVICE_LIST 0x8a
+#define ZPT_TEST_RESP_DEVICE_DESCRIPTION 0x8b
+
+ZTEST(zpt_unit, zz_device_list_reports_table) {
+    /* The overlay declares three entries: local discrete, peripheral-one
+     * range, and a read-only pad. Flags: bit0 local-connected, bit1 has
+     * settable capabilities. */
+    uint8_t expected[] = {
+        3,
+        0,
+        0,
+        0x03,
+        20,
+        't', 'e', 's', 't', '-', 'l', 'o', 'c', 'a', 'l', '-', 't', 'r', 'a', 'c', 'k', 'b',
+        'a', 'l', 'l',
+        1,
+        1,
+        0x02,
+        21,
+        't', 'e', 's', 't', '-', 'r', 'e', 'm', 'o', 't', 'e', '-', 't', 'r', 'a', 'c', 'k',
+        'b', 'a', 'l', 'l',
+        2,
+        0,
+        0x01,
+        17,
+        't', 'e', 's', 't', '-', 'f', 'i', 'x', 'e', 'd', '-', 'n', 'u', 'm', 'p', 'a', 'd',
+    };
+
+    tx_frame(ZPT_TEST_REQ_DEVICE_LIST, NULL, 0);
+    expect_frame(ZPT_TEST_RESP_DEVICE_LIST, expected, sizeof(expected));
+}
+
+ZTEST(zpt_unit, zz_device_describe_reports_identity_and_capabilities) {
+    uint8_t request[1] = {0};
+    static const char stable_id[] = "test-local-trackball";
+    static const char dt_path[] = "/trackball-local";
+    static const uint16_t values[] = {200, 400, 800, 1600};
+    uint8_t expected[64];
+    size_t offset = 0;
+
+    expected[offset++] = (uint8_t)(sizeof(stable_id) - 1);
+    memcpy(&expected[offset], stable_id, sizeof(stable_id) - 1);
+    offset += sizeof(stable_id) - 1;
+    expected[offset++] = (uint8_t)((sizeof(dt_path) - 1) & 0xff);
+    expected[offset++] = (uint8_t)(((sizeof(dt_path) - 1) >> 8) & 0xff);
+    memcpy(&expected[offset], dt_path, sizeof(dt_path) - 1);
+    offset += sizeof(dt_path) - 1;
+    for (int i = 0; i < 2; i++) { /* current, then compiled default */
+        expected[offset++] = 800 & 0xff;
+        expected[offset++] = 800 >> 8;
+    }
+    expected[offset++] = 0x01; /* settable */
+    expected[offset++] = (uint8_t)(sizeof(values) / sizeof(values[0]));
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+        expected[offset++] = values[i] & 0xff;
+        expected[offset++] = values[i] >> 8;
+    }
+
+    tx_frame(ZPT_TEST_REQ_DEVICE_DESCRIBE, request, sizeof(request));
+    expect_frame(ZPT_TEST_RESP_DEVICE_DESCRIPTION, expected, offset);
+}
+
+ZTEST(zpt_unit, zz_device_describe_unknown_id_fails_cleanly) {
+    uint8_t request[1] = {200};
+
+    tx_frame(ZPT_TEST_REQ_DEVICE_DESCRIBE, request, sizeof(request));
+    /* Tuning result shape: request-type, status (unknown target = 1),
+     * target-id sentinel, parameter-id carries the device id, value 0. */
+    uint8_t expected[] = {ZPT_TEST_REQ_DEVICE_DESCRIBE, 1, UINT8_MAX, 200, 0, 0, 0, 0};
+    expect_frame(ZPT_RESP_TUNING_RESULT, expected, sizeof(expected));
+}
+
+ZTEST(zpt_unit, zz_device_preview_snaps_and_persists) {
+    const struct zpt_pointing_device *remote;
+    uint8_t request[3];
+    uint8_t expected[8];
+
+    remote = zpt_device_table_find("test-remote-trackball");
+    zassert_not_null(remote);
+
+    /* Off-lattice requests snap and report the effective value with an OK
+     * status; the host compares requested against effective. */
+    memcpy(request, (uint8_t[]){1, 0xb9, 0x02}, 3); /* 697 -> snaps to 700 */
+    zpt_device_control_reset(remote);
+    tx_frame(ZPT_TEST_REQ_DEVICE_PREVIEW, request, sizeof(request));
+    memcpy(expected,
+           (uint8_t[]){ZPT_TEST_REQ_DEVICE_PREVIEW, 0, UINT8_MAX, 1, 0xbc, 0x02, 0, 0},
+           sizeof(expected)); /* status ok, value 700 */
+    expect_frame(ZPT_RESP_TUNING_RESULT, expected, sizeof(expected));
+
+    /* The preview persists in the store until reset or reboot. */
+    uint16_t cpi = 0;
+    zassert_ok(zpt_device_control_get(remote, &cpi));
+    zassert_equal(cpi, 700);
+
+    /* Restore the compiled value so suite order stays irrelevant. */
+    zassert_ok(zpt_device_control_reset(remote));
 }
 
 ZTEST(zpt_unit, ping) {
