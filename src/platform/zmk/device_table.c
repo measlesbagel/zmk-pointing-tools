@@ -100,6 +100,71 @@ DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFINE)
 static const struct zpt_pointing_device *const zpt_device_entries[] = {
     DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_ENTRY)};
 
+/* Volatile current values, seeded from the compiled defaults. The telemetry
+ * service is the only writer today (one outstanding control request at a
+ * time); entries without settable capabilities are never written and keep
+ * reporting their default. */
+#define ZPT_DEVICE_DEFAULT_CPI(inst) DT_INST_PROP(inst, resolution_cpi),
+static uint16_t zpt_device_current_cpi[] = {DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFAULT_CPI)};
+
+static const struct zpt_pointing_device *zpt_device_valid(const struct zpt_pointing_device *device,
+                                                          uint16_t **current) {
+    if (device == NULL || device->id >= ARRAY_SIZE(zpt_device_entries) ||
+        zpt_device_entries[device->id] != device) {
+        return NULL;
+    }
+    *current = &zpt_device_current_cpi[device->id];
+    return device;
+}
+
+int zpt_device_control_get(const struct zpt_pointing_device *device, uint16_t *cpi) {
+    uint16_t *current;
+
+    if (device == NULL || cpi == NULL || zpt_device_valid(device, &current) == NULL) {
+        return -EINVAL;
+    }
+    /* Native sensor facets read through here once they exist; the RAM value
+     * tracks the compiled default until a preview changes it. */
+    *cpi = *current;
+    return 0;
+}
+
+int zpt_device_control_preview(const struct zpt_pointing_device *device, uint16_t requested,
+                               uint16_t *effective) {
+    uint16_t *current;
+    int ret;
+
+    if (zpt_device_valid(device, &current) == NULL) {
+        return -EINVAL;
+    }
+    if (!device->caps.settable) {
+        return -ENOSYS;
+    }
+    if (effective == NULL) {
+        return -EINVAL;
+    }
+    ret = zpt_cpi_validate(&device->caps, requested, effective);
+    if (ret < 0) {
+        return ret;
+    }
+    /* Native sensor facets dispatch here before the store lands. */
+    *current = *effective;
+    return ret;
+}
+
+int zpt_device_control_reset(const struct zpt_pointing_device *device) {
+    uint16_t *current;
+
+    if (zpt_device_valid(device, &current) == NULL) {
+        return -EINVAL;
+    }
+    if (!device->caps.settable) {
+        return -ENOSYS;
+    }
+    *current = device->default_cpi;
+    return 0;
+}
+
 size_t zpt_device_table_count(void) { return ARRAY_SIZE(zpt_device_entries); }
 
 const struct zpt_pointing_device *zpt_device_table_at(size_t index) {
