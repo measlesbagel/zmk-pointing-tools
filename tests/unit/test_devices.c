@@ -87,6 +87,7 @@ ZTEST(zpt_unit, device_entry_validates_previews_against_capabilities) {
     zassert_equal(effective, 800);
 
     const struct zpt_pointing_device *remote = zpt_device_table_find("test-remote-trackball");
+    /* 450 is equidistant from 400 and 500; ties snap toward the lower one. */
     zassert_equal(zpt_cpi_validate(&remote->caps, 450, &effective), 1);
-    zassert_equal(effective, 500);
+    zassert_equal(effective, 400);
 }
