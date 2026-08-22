@@ -1,6 +1,7 @@
 DT_COMPAT_ZPT_TELEMETRY := measlesbagel,zpt-telemetry
 DT_COMPAT_ZPT_ROUTER := measlesbagel,zpt-router
 DT_COMPAT_ZPT_DEVICE_TABLE := measlesbagel,zpt-pointing-device
+DT_COMPAT_ZPT_SENSOR_TUNNEL := measlesbagel,zpt-sensor-control
 DT_COMPAT_ZPT_ROUTE_BEHAVIOR := measlesbagel,zpt-behavior-route
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
 
@@ -47,6 +48,16 @@ config ZMK_POINTING_TOOLS_DEVICE_TABLE
 
       Deliberately free of ZMK dependencies so the unit-test app builds it
       against plain Zephyr, on both split halves.
+
+config ZMK_POINTING_TOOLS_SENSOR_TUNNEL
+    bool "Split-routed sensor control tunnel"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZPT_SENSOR_TUNNEL))
+    depends on ZMK_POINTING_TOOLS_DEVICE_TABLE
+    depends on ZMK_SPLIT
+    help
+      Relay CPI discovery and preview requests for peripheral-owned devices
+      through ZMK's split behavior invocation, and return outcomes as packed
+      relative input events decoded by the central-side proxy.
 
 config ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     bool
