@@ -7,13 +7,19 @@ include(CTest)
 set(ZPT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 option(ZPT_ENABLE_SANITIZERS
-  "Build host targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+  "Build host targets with AddressSanitizer, UndefinedBehaviorSanitizer, and
+  uninitialized auto-variable detection" OFF)
 
 if(ZPT_ENABLE_SANITIZERS)
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer
                         -fno-sanitize-recover=all)
+    # Fill trivially-initializable automatic variables with 0xAA... so a read
+    # of an uninitialized variable fails the tests on a distinctive value
+    # instead of passing on stack garbage (ASan/UBSan do not catch that
+    # class). Requires GCC 12+ or Clang 15+ (both true of the devenv tools).
+    add_compile_options(-ftrivial-auto-var-init=pattern)
     add_link_options(-fsanitize=address,undefined)
   else()
     message(WARNING "ZPT_ENABLE_SANITIZERS requires GCC or Clang; ignoring")

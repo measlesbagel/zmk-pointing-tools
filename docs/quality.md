@@ -73,7 +73,11 @@ set; CI runs the same task with the same toolchain.
 The host CMake project accepts `-DZPT_ENABLE_SANITIZERS=ON`, which builds all
 host test targets and replay runners with AddressSanitizer and
 UndefinedBehaviorSanitizer (`-fno-sanitize-recover=all`, so any undefined
-behavior fails the test instead of printing a note).
+behavior fails the test instead of printing a note), plus
+`-ftrivial-auto-var-init=pattern`: trivially-initializable automatic
+variables are filled with `0xAA…` at declaration, so a read of an
+uninitialized variable fails the tests on a distinctive value instead of
+passing on stack garbage — a class ASan/UBSan do not catch.
 
 - Local: `devenv tasks run host:test:asan`
 - CI: the `checks` job in `.github/workflows/check.yml` runs the task
