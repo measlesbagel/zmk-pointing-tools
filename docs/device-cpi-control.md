@@ -101,6 +101,11 @@ Rules:
 - The table registers every device into the shared telemetry target table
   (new target kind `5`, "pointing device") so state-telemetry diagnostics can
   address devices with the same machinery as stages.
+- Multiplicity is supported everywhere by construction (the table is a list;
+  discovery responses are lists), but the reference hardware has exactly one
+  trackball per half, so multi-local-device configurations are validated by
+  fake devices in tests only. Host UI renders the list generically at no
+  extra cost rather than hard-coding a single entry.
 
 ## 2. Sensor control API
 
@@ -198,8 +203,12 @@ ZMK message type (no upstream fork):
 - Opcodes: `GET_CAPS`, `GET_CPI`, `SET_CPI`.
 
 Peripheral → central responses ride back as ordinary split input events on a
-reserved event code (the same tunnel trick the compact encoder uses for
-motion), framed as:
+reserved event code — the same tunnel trick the compact encoder uses for
+motion. The default reservation is `INPUT_REL_MISC` (0x09): no driver in
+Zephyr or ZMK emits it, boards may override via devicetree if a future sensor
+disagrees, and acceptance requires a magic byte plus a live request sequence
+number, so a colliding producer would be counted as garbage frames rather
+than misread. Response frames:
 
 ```text
 magic:u8  seq:u16  status:u8  payload-len:u8  payload[≤6]
@@ -228,7 +237,9 @@ Operational rules:
   protocol parser paths for `0x0d–0x0f` including resync-after-garbage,
   proxy decode with stale/duplicate/dropped frames, timeout and
   not-connected paths against mock transports (the `vnd,serial` +
-  fake-behavior patterns from #85 carry over).
+  fake-behavior patterns from #85 carry over). Multi-local-device tables and
+  UI listing paths are covered with fake devices, since the physical
+  hardware is one trackball per half.
 - **Host tests** — the pure parts: supported-value validation/snapping and
   caps encoding compile natively behind the module's host build like other
   core logic.
@@ -245,19 +256,36 @@ Each slice is one stack layer, shippable and testable alone:
 3. Protocol v7 messages (list/describe/preview) for **local** devices +
    docs/protocol.md update.
 4. Split tunnel: peripheral behavior, proxy input processor, seq/timeout
-   semantics + ztest; enable peripheral devices in the protocol.
+   semantics + ztest; enable peripheral devices in the protocol. Before
+   relying on it, bench-validate command round-trip while streaming (see
+   resolved decisions) — if latency disappoints, control still works but the
+   docs must set expectations instead of the 500 ms budget.
 5. Web tuner: device panel, read-only first, then preview controls.
 
-## Open questions
+## Resolved decisions
 
-1. Which pinned ZMK rev stabilizes the modern split transport types this
-   builds on, and does `INVOKE_BEHAVIOR` latency stay acceptable while input
-   streaming is active?
-2. Reserved input event code for the control tunnel — needs a documented
-   reservation distinct from the compact encoder's code and unlikely to
-   collide with real sensors' REL events.
-3. Should describe-of-unreachable-peripheral be a hard error or the
-   degraded-DT-response proposed above? (Sketch proposes degraded.)
-4. Do scroll-wheel-style sensors ever appear alongside trackballs on one
-   board, i.e., does the device table need multiplicity on the central itself
-   on day one? (Table supports it; UI can defer.)
+1. **ZMK dependency.** The design consumes two existing ZMK surfaces: the
+   split transport's central command (`INVOKE_BEHAVIOR`) and split input
+   event forwarding. Both exist in the pinned revision
+   (`fa33e35f11d2b15311973cda9fb89dcd2376888c`; verified in
+   `zmk/app/include/zmk/split/transport/types.h`), so there is no upstream
+   work required to start. What cannot be answered from source is timing:
+   central→peripheral commands share BLE connection time with streaming
+   input events, so round-trip latency during heavy motion is an empirical
+   question. Slice 4 therefore includes a bench check — stream maximum-rate
+   motion from the peripheral while issuing repeated GET/SET previews and
+   confirm round-trips fit the 500 ms timeout budget. The failure mode is
+   soft either way: sequence numbers, timeouts, and immediate
+   disconnected-status mean slow transport degrades to slower UI feedback,
+   never to wrong values (SET is idempotent and confirmed by GET).
+2. **Tunnel event code:** `INPUT_REL_MISC` (0x09) — defined in Zephyr's
+   input-event bindings, emitted by no driver in either tree, overridable per
+   board in devicetree, and guarded by magic byte plus live sequence number
+   so even a collision surfaces as dropped-garbage counts, not corruption.
+3. **Describe of unreachable peripheral:** degrade, do not error — return
+   DT-derived identity, capabilities minus the settable bit, and
+   `current-cpi = default-cpi`; live reads report `not-connected`.
+4. **Device multiplicity:** firmware and protocol stay generic (lists end to
+   end); host UI renders the list without assuming one entry. Physical
+   validation is single-trackball-per-half, so multi-device cases are
+   exercised with fake devices in ztest and host tests only.
