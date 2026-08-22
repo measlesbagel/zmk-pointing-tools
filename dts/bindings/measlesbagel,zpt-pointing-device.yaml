@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+
+description: >
+  Physical pointing device discovery entry. Entries are compiled into every
+  half of a split keyboard from the same devicetree source so numeric ids and
+  stable ids agree without runtime negotiation.
+
+compatible: "measlesbagel,zpt-pointing-device"
+
+properties:
+  stable-id:
+    type: string
+    required: true
+    description: Cross-half identity used by the device table and host tooling
+
+  sensor:
+    type: phandle
+    required: true
+    description: Backing sensor driver device
+
+  location:
+    type: int
+    default: 0
+    description: >
+      Which half owns the device: 0 for central-local, otherwise the owning
+      split peripheral index plus one.
+
+  resolution-cpi:
+    type: int
+    required: true
+    description: Compiled default resolution in counts per inch (fits a u16)
+
+  cpi-values:
+    type: array
+    description: >
+      Ascending discrete supported resolutions, each fitting a u16; the
+      settable form. Mutually exclusive with the range properties.
+
+  cpi-min:
+    type: int
+    description: >
+      Inclusive minimum supported resolution of the stepped-range settable
+      form. Requires cpi-max; mutually exclusive with cpi-values.
+
+  cpi-max:
+    type: int
+    description: Inclusive maximum supported resolution of the range form
+
+  cpi-step:
+    type: int
+    default: 1
+    description: Lattice step above cpi-min; requires cpi-min and cpi-max

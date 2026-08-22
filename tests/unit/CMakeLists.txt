@@ -11,7 +11,12 @@ project(zpt_unit_tests C)
 # devenv task and docs/quality.md); its Kconfig-guarded sources are then
 # built exactly as in the firmware.
 #
-# Both files contribute cases to the single zpt_unit suite (defined in
+# The module under test is provided to the app as a Zephyr module via
+# the ZEPHYR_MODULES environment variable (see the zephyr:tests
+# devenv task and docs/quality.md); its Kconfig-guarded sources are then
+# built exactly as in the firmware.
+#
+# All files contribute cases to the single zpt_unit suite (defined in
 # test_tuning.c). ztest executes suites and cases in name-sorted linker
 # order (SORT_BY_NAME in the ztest linker script), so the shared global
 # tuning registry is managed by name: the capacity-fill case is named
@@ -19,4 +24,5 @@ project(zpt_unit_tests C)
 target_sources(app PRIVATE
   test_tuning.c
   test_telemetry.c
+  test_devices.c
 )
