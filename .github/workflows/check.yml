@@ -85,8 +85,9 @@ jobs:
         with:
           # Full history of the head branch: the script diffs
           # origin/<base>...HEAD and GitDiffCheck needs the parent of every
-          # commit in the range. (On stacked PRs GITHUB_BASE_REF is the
-          # trunk, so the range covers the whole stack.)
+          # commit in the range. On stacked PRs GITHUB_BASE_REF is the parent
+          # stack branch, so the range scopes to this PR's changes rather
+          # than the whole stack.
           ref: ${{ github.head_ref }}
           fetch-depth: 0
       - name: Set up West and Zephyr SDK
