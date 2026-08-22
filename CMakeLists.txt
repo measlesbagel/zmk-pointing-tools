@@ -22,6 +22,9 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
     src/platform/zmk/sensor_control_agent.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL
     src/platform/zmk/sensor_control_proxy.c)
+  # Native sensor facet adapters (require their driver modules present).
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_CONTROL_PAW32XX
+    src/platform/zmk/sensor_control_paw32xx.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_COMPACT_SPLIT_CODEC
     src/source/transport/compact_split_codec.c)
   # Core stage implementations (host-replayable algorithms).
