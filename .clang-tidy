@@ -8,11 +8,6 @@
 #
 # The check set favors correctness (bugprone, clang-analyzer, misc,
 # portability) over style; style is enforced by clang-format instead.
-# Cognitive complexity complements the lizard cyclomatic gate; the threshold
-# is a ratchet set above the worst host-compiled firmware function. Service-
-# layer functions (src/service, src/platform) are not in the host compile
-# database, and their cognitive values are inflated by Zephyr's logging-macro
-# expansion (see docs/quality.md).
 #
 # Excluded:
 # - bugprone-easily-swappable-parameters: pure noise for this codebase
@@ -35,6 +30,13 @@
 #   include guards is churn with no correctness benefit. Recent clang-tidy
 #   versions (22+) flag pragma once in included headers aggressively, which
 #   would fail a clean tree depending on the toolchain version in use.
+# - readability-function-cognitive-complexity: the check scores the macro-
+#   *expanded* AST, so in a Zephyr module it measures Zephyr's macro
+#   machinery rather than this codebase's logic (each LOG_* call adds
+#   ~20-40 points to the enclosing function, one K_MSEC(variable) adds ~93)
+#   and offers no knob to exclude macro-derived increments; every finding it
+#   produced here was such an artifact. Source-level complexity is gated by
+#   the lizard CCN gate instead (see docs/quality.md).
 Checks: >
   bugprone-*,
   -bugprone-easily-swappable-parameters,
@@ -47,9 +49,5 @@ Checks: >
   performance-*,
   -performance-enum-size,
   portability-*,
-  -portability-avoid-pragma-once,
-  readability-function-cognitive-complexity
+  -portability-avoid-pragma-once
 WarningsAsErrors: '*'
-CheckOptions:
-  readability-function-cognitive-complexity.Threshold: '25'
-  readability-function-cognitive-complexity.DescribeBasicIncrements: 'true'
