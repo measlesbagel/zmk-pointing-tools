@@ -17,4 +17,33 @@
 	chosen {
 		measlesbagel,zpt-telemetry-uart = &zpt_test_uart;
 	};
+
+	/* Physical pointing devices for the device-table suite. The sensor
+	 * phandle is opaque to the registry (slice 1 never dereferences it), so
+	 * the mock UART doubles as a stand-in driver device. */
+	trackball-local {
+		compatible = "measlesbagel,zpt-pointing-device";
+		stable-id = "test-local-trackball";
+		sensor = <&zpt_test_uart>;
+		resolution-cpi = <800>;
+		cpi-values = <200 400 800 1600>;
+	};
+
+	trackball-remote {
+		compatible = "measlesbagel,zpt-pointing-device";
+		stable-id = "test-remote-trackball";
+		sensor = <&zpt_test_uart>;
+		location = <1>;
+		resolution-cpi = <400>;
+		cpi-min = <100>;
+		cpi-max = <1200>;
+		cpi-step = <100>;
+	};
+
+	numpad-fixed {
+		compatible = "measlesbagel,zpt-pointing-device";
+		stable-id = "test-fixed-numpad";
+		sensor = <&zpt_test_uart>;
+		resolution-cpi = <1200>;
+	};
 };
