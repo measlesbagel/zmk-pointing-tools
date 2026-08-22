@@ -32,6 +32,10 @@ struct zpt_source_processor_data {
     struct zpt_compact_split_decoder compact_decoder;
 };
 
+/* Referenced by DEVICE_DT_INST_DEFINE only when the devicetree contains an
+ * input-processor-source instance, so it reads as unused in configurations
+ * without one. */
+// NOLINTNEXTLINE(clang-diagnostic-unused-function)
 static int zpt_source_processor_init(const struct device *dev) {
     const struct zpt_source_processor_config *config = dev->config;
     struct zpt_source_processor_data *data = dev->data;
@@ -105,6 +109,9 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
     return ZMK_INPUT_PROC_CONTINUE;
 }
 
+/* See zpt_source_processor_init above: used only when a devicetree instance
+ * instantiates this driver. */
+// NOLINTNEXTLINE(clang-diagnostic-unused-const-variable)
 static const struct zmk_input_processor_driver_api zpt_source_processor_driver_api = {
     .handle_event = zpt_source_processor_handle_event,
 };

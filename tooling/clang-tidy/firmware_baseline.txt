@@ -1,0 +1,26 @@
+# Frozen clang-tidy baseline for the firmware gate (see docs/quality.md,
+# issue #76).
+#
+# Entry format: <file>::<function>::<check>
+#
+# These are the functions that exceeded the cognitive-complexity threshold
+# when the firmware gate was introduced. They are Zephyr-dependent code
+# (devicetree iteration, ZMK listener macros, logging-macro expansion), so
+# their clang-tidy values are inflated relative to their source-level
+# branching. The gate fails on any NEW finding; it warns on baseline
+# entries that no longer produce a finding. Decompose a function, verify
+# locally with c:firmware:tidy, then remove its entry here to ratchet the
+# debt down.
+src/platform/zmk/compact_split_encoder.c::zpt_compact_split_encoder_handle_event::readability-function-cognitive-complexity
+src/platform/zmk/pipeline_telemetry.c::pipeline_telemetry_init::readability-function-cognitive-complexity
+src/platform/zmk/router.c::router_init::readability-function-cognitive-complexity
+src/platform/zmk/router.c::layer_state_changed_listener::readability-function-cognitive-complexity
+src/platform/zmk/router_executor.c::update_deadline_locked::readability-function-cognitive-complexity
+src/platform/zmk/router_executor.c::deadline_work_handler::readability-function-cognitive-complexity
+src/platform/zmk/source_input_processor.c::zpt_source_processor_init::readability-function-cognitive-complexity
+src/platform/zmk/source_input_processor.c::zpt_source_processor_handle_event::readability-function-cognitive-complexity
+src/service/telemetry.c::zpt_send_tuning_targets::readability-function-cognitive-complexity
+src/service/telemetry.c::zpt_send_tuning_description::readability-function-cognitive-complexity
+src/service/telemetry.c::zpt_dispatch::readability-function-cognitive-complexity
+src/service/telemetry.c::zpt_uart_callback::readability-function-cognitive-complexity
+src/service/telemetry.c::zpt_telemetry_init::readability-function-cognitive-complexity

@@ -102,7 +102,12 @@ static int position_state_changed_listener(const zmk_event_t *event) {
     return ZMK_EV_EVENT_BUBBLE;
 }
 
+/* See router.c: external linkage is intrinsic to ZMK's listener/
+ * subscription macros (linker-section collection + `extern`), so a
+ * static variant is impossible. */
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 ZMK_LISTENER(zpt_keypress_suppression, position_state_changed_listener);
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 ZMK_SUBSCRIPTION(zpt_keypress_suppression, zmk_position_state_changed);
 
 #define ZPT_KEYPRESS_SUPPRESSION_DEFINE(inst)                                                      \

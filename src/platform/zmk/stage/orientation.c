@@ -14,6 +14,10 @@ struct zpt_orientation_provider_config {
     struct zpt_orientation_config stage;
 };
 
+/* The init function is referenced by ZPT_STAGE_PROVIDER_DEVICE_DEFINE only
+ * when the devicetree contains an orientation instance, so it reads as
+ * unused in configurations without one. */
+// NOLINTNEXTLINE(clang-diagnostic-unused-function)
 ZPT_STAGE_PROVIDER_INIT_SIMPLE(orientation, &zpt_orthogonal_orientation_stage_api, &config->stage,
                                NULL)
 #define ZPT_ORIENTATION_PROVIDER_DEFINE(inst)                                                      \

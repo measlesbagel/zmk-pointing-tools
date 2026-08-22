@@ -324,7 +324,13 @@ static int layer_state_changed_listener(const zmk_event_t *event) {
     return ZMK_EV_EVENT_BUBBLE;
 }
 
+/* External linkage is intrinsic to ZMK's listener/subscription macros:
+ * the subscription is collected from the .event_subscription linker
+ * section at boot, and ZMK_SUBSCRIPTION emits `extern` for the listener,
+ * so a static variant is impossible. */
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 ZMK_LISTENER(zpt_pointing_router, layer_state_changed_listener);
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 ZMK_SUBSCRIPTION(zpt_pointing_router, zmk_layer_state_changed);
 
 #define ZPT_ROUTER_PIPELINE_DEVICE(node_id, prop, index)                                           \
@@ -366,4 +372,8 @@ ZMK_SUBSCRIPTION(zpt_pointing_router, zmk_layer_state_changed);
                           &zpt_router_config_##inst, POST_KERNEL,                                  \
                           CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &router_api);
 
-DT_INST_FOREACH_STATUS_OKAY(ZPT_ROUTER_DEFINE)
+/* NOLINT(bugprone-branch-clone): DEVICE_DT_INST_DEFINE (inside the macro
+ * above) expands to a conditional operator with identical branches, so
+ * clang-tidy maps a branch-clone finding to this invocation even though no
+ * such construct appears in the source. */
+DT_INST_FOREACH_STATUS_OKAY(ZPT_ROUTER_DEFINE) /* NOLINT(bugprone-branch-clone) */

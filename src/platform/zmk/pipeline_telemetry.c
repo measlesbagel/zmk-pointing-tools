@@ -141,6 +141,7 @@ static int pipeline_telemetry_init(const struct device *dev) {
 }
 
 #define ZPT_TELEMETRY_STAGE_COUNT(node_id, prop, index)                                            \
+    /* NOLINTNEXTLINE(bugprone-macro-parentheses): unary-plus DT_FOREACH idiom */                  \
     +DT_PROP_LEN(DT_PHANDLE_BY_IDX(node_id, prop, index), stages)
 
 #define ZPT_TELEMETRY_TOTAL_STAGES(node_id)                                                        \

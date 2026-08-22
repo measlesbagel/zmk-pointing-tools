@@ -8,17 +8,30 @@
 # decision logic the check exists to catch. The threshold is therefore a
 # ratchet set above the current worst function (84) and should be lowered
 # over time as tests are decomposed (see docs/quality.md, issue #76).
+#
+# Check exclusions mirror the root .clang-tidy (see its comment block),
+# plus host-only exclusions:
+# - bugprone-unchecked-string-to-number-conversion: the replay runners
+#   parse machine-generated replay files; every sscanf is count-checked
+#   (and the configuration line additionally zero-checked), and converting
+#   to strtoul/strtol across the four runners would be scaffolding churn
+#   for a tool that parses its own output.
+# - clang-analyzer-optin.*: see the root .clang-tidy (opt-in analyzers are
+#   enabled explicitly, not via the clang-analyzer-* wildcard).
 Checks: >
   bugprone-*,
   -bugprone-easily-swappable-parameters,
+  -bugprone-unchecked-string-to-number-conversion,
   clang-analyzer-*,
   -clang-analyzer-security.insecureAPI.*,
+  -clang-analyzer-optin.*,
   misc-*,
   -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
   performance-*,
   -performance-enum-size,
   portability-*,
+  -portability-avoid-pragma-once,
   readability-function-cognitive-complexity
 WarningsAsErrors: '*'
 CheckOptions:
