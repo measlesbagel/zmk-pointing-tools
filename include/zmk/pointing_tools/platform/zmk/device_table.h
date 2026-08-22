@@ -14,7 +14,9 @@
 
 struct zpt_pointing_device {
     uint8_t id;       /* dense session id, assigned in devicetree order */
-    uint8_t location; /* 0 central-local, otherwise owning peripheral index + 1 */
+    uint8_t location; /* 0 central-local, otherwise owning peripheral index + 1;
+                         for split topologies with more than one peripheral,
+                         align this with the half's zmk,input-split reg + 1 */
     uint16_t default_cpi;
     const char *stable_id;
     const char *devicetree_path; /* node path of this entry, for host profiles */
