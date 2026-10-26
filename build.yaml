@@ -2,3 +2,6 @@ include:
   - board: nice_nano//zmk
     shield: corne_left
     artifact-name: zmk_pointing_tools_smoke
+  - board: nice_nano//zmk
+    shield: corne_right
+    artifact-name: zmk_pointing_tools_smoke_peripheral
