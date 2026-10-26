@@ -78,9 +78,11 @@ devicetree order:
 | `measlesbagel,zpt-stage-text-nav` | `horizontal-threshold`, `vertical-threshold`, `idle-timeout` |
 | `measlesbagel,zpt-stage-axis-intent` | `engage-ratio`, `release-ratio`, `activation-distance`, `window`, `idle-timeout` |
 | `measlesbagel,zpt-stage-axis-constraint` | `discard-unclassified`, `idle-timeout`, `fold-interval` |
+| `measlesbagel,zpt-stage-cursor-acceleration` | `slow-speed`, `fast-speed`, `slow-gain`, `fast-gain`, `speed-window` |
+| `measlesbagel,zpt-stage-cursor-coalescer` | `report-interval` |
 
-Values use the stage binding's devicetree units (micrometres, steps per metre,
-milliseconds, percent), and each parameter's devicetree property is the
+Values use the stage binding's devicetree units (micrometres, millimetres per
+second, steps per metre, milliseconds, percent), and each parameter's devicetree property is the
 binding property it came from. The target's stable id and label are the
 stage's `stable-id`. A change lands between frames: firmware holds every router
 while it swaps the stage's settings, so no frame sees half of a batch. Stages

@@ -120,6 +120,29 @@ physical distance as the ball at its CPI and the transfer gain scales on top;
 with identity gain the composed path reproduces the count-domain cursor
 behavior within one sub-count unit.
 
+The cursor acceleration stage multiplies each frame by a gain that depends
+on ball speed: the slow gain at or below the slow speed, the fast gain at or
+above the fast speed, and linear in between. Speeds are millimetres per
+second and gains are percentages on top of the transfer gain, so a curve
+means the same thing at any CPI; equal gains turn it off, which is the
+binding default. Speed is the Euclidean distance within a sliding window that
+decays linearly (32 ms by default), divided by the window. That keeps the
+estimate steady when frames arrive unevenly or with millisecond timestamps,
+makes the first frame after a pause count as slow, and lets one gain scale
+both axes, so diagonals keep their direction and accelerate exactly like
+cardinal motion. Magnitudes round to nearest, so negative and positive
+motion scale symmetrically. The stage annotates each frame with its speed
+estimate.
+
+The cursor coalescer sits after the quantizer and sends at most one report
+per report interval. A frame that arrives after a quiet interval goes out at
+once, so coalescing adds no latency to the start of a movement; later frames
+are summed and sent when the interval ends, flagged as coalesced. Sub-unit
+frames that quantize to zero send nothing, and a sum beyond the 16-bit HID
+range is carried into the next report instead of being dropped. Matching the
+interval to the host's report rate keeps a fast sensor from queueing reports
+faster than Bluetooth or USB can deliver them.
+
 Stages carry an optional observer slot that receives generic decision
 events (suppression, discard, qualification, intent changes, flushes, and
 actions) without coupling algorithms to any telemetry transport. A ZMK

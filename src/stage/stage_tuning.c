@@ -8,6 +8,8 @@
 #include <zmk/pointing_tools/core/signal.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
+#include <zmk/pointing_tools/stage/cursor_acceleration.h>
+#include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/cursor_transfer.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 #include <zmk/pointing_tools/stage/scroll_batcher.h>
@@ -534,4 +536,145 @@ const struct zpt_stage_tuning_ops zpt_axis_constraint_tuning_ops = {
     .config_size = sizeof(struct zpt_axis_constraint_config),
     .get = constraint_get,
     .put = constraint_put,
+};
+
+/* --- Cursor acceleration ------------------------------------------------- */
+
+enum {
+    ACCELERATION_SLOW_SPEED = 0,
+    ACCELERATION_FAST_SPEED,
+    ACCELERATION_SLOW_GAIN,
+    ACCELERATION_FAST_GAIN,
+    ACCELERATION_SPEED_WINDOW,
+};
+
+static const struct zpt_tuning_parameter acceleration_parameters[] = {
+    {ACCELERATION_SLOW_SPEED, ZPT_TUNING_VALUE_INTEGER, "slow-speed", "slow-speed-mm-per-s", 0,
+     5000, 1, "Slow speed", "mm/s",
+     "Ball speed at or below which the slow gain applies. Gain ramps between the slow and fast "
+     "speeds."},
+    {ACCELERATION_FAST_SPEED, ZPT_TUNING_VALUE_INTEGER, "fast-speed", "fast-speed-mm-per-s", 1,
+     10000, 1, "Fast speed", "mm/s",
+     "Ball speed at or above which the fast gain applies. Keep it above the slow speed."},
+    {ACCELERATION_SLOW_GAIN, ZPT_TUNING_VALUE_INTEGER, "slow-gain", "slow-gain-percent", 1, 1000, 1,
+     "Slow gain", "%",
+     "Cursor gain for slow, precise movement, on top of the base gain. Below 100 slows fine "
+     "aiming."},
+    {ACCELERATION_FAST_GAIN, ZPT_TUNING_VALUE_INTEGER, "fast-gain", "fast-gain-percent", 1, 1000, 1,
+     "Fast gain", "%",
+     "Cursor gain for fast flicks, on top of the base gain. Equal to the slow gain turns "
+     "acceleration off."},
+    {ACCELERATION_SPEED_WINDOW, ZPT_TUNING_VALUE_INTEGER, "speed-window", "speed-window-ms", 1, 500,
+     1, "Speed window", "ms",
+     "How much recent motion the speed estimate averages. Longer is smoother but reacts later."},
+};
+
+static int32_t fixed_to_rounded_integer(int64_t value) {
+    const int64_t half = ZPT_FIXED_ONE / 2;
+    const int64_t rounded =
+        value >= 0 ? (value + half) / ZPT_FIXED_ONE : (value - half) / ZPT_FIXED_ONE;
+    return rounded > INT32_MAX ? INT32_MAX : (rounded < INT32_MIN ? INT32_MIN : (int32_t)rounded);
+}
+
+static int acceleration_get(const void *config, uint8_t parameter_id, int32_t *value) {
+    const struct zpt_cursor_acceleration_config *acceleration = config;
+    switch (parameter_id) {
+    case ACCELERATION_SLOW_SPEED:
+        *value = fixed_to_rounded_integer(acceleration->slow_speed);
+        return 0;
+    case ACCELERATION_FAST_SPEED:
+        *value = fixed_to_rounded_integer(acceleration->fast_speed);
+        return 0;
+    case ACCELERATION_SLOW_GAIN:
+        *value = acceleration->slow_gain_percent;
+        return 0;
+    case ACCELERATION_FAST_GAIN:
+        *value = acceleration->fast_gain_percent;
+        return 0;
+    case ACCELERATION_SPEED_WINDOW:
+        *value = acceleration->speed_window_ms;
+        return 0;
+    default:
+        return -ENOENT;
+    }
+}
+
+static int acceleration_put(void *config, uint8_t parameter_id, int32_t value) {
+    struct zpt_cursor_acceleration_config *acceleration = config;
+    switch (parameter_id) {
+    case ACCELERATION_SLOW_SPEED:
+        acceleration->slow_speed = (zpt_fixed_t)value * ZPT_FIXED_ONE;
+        return 0;
+    case ACCELERATION_FAST_SPEED:
+        acceleration->fast_speed = (zpt_fixed_t)value * ZPT_FIXED_ONE;
+        return 0;
+    case ACCELERATION_SLOW_GAIN:
+        acceleration->slow_gain_percent = (uint16_t)value;
+        return 0;
+    case ACCELERATION_FAST_GAIN:
+        acceleration->fast_gain_percent = (uint16_t)value;
+        return 0;
+    case ACCELERATION_SPEED_WINDOW:
+        acceleration->speed_window_ms = (uint16_t)value;
+        return 0;
+    default:
+        return -ENOENT;
+    }
+}
+
+static int acceleration_validate(const void *config, uint8_t *failed_parameter_id) {
+    const struct zpt_cursor_acceleration_config *acceleration = config;
+    /* The ramp needs a span to interpolate over. */
+    if (acceleration->fast_speed <= acceleration->slow_speed) {
+        *failed_parameter_id = ACCELERATION_FAST_SPEED;
+        return -EINVAL;
+    }
+    return 0;
+}
+
+const struct zpt_stage_tuning_ops zpt_cursor_acceleration_tuning_ops = {
+    .parameters = acceleration_parameters,
+    .parameter_count = ZPT_ARRAY_SIZE(acceleration_parameters),
+    .config_size = sizeof(struct zpt_cursor_acceleration_config),
+    .get = acceleration_get,
+    .put = acceleration_put,
+    .validate = acceleration_validate,
+};
+
+/* --- Cursor coalescer ---------------------------------------------------- */
+
+enum {
+    COALESCER_REPORT_INTERVAL = 0,
+};
+
+static const struct zpt_tuning_parameter coalescer_parameters[] = {
+    {COALESCER_REPORT_INTERVAL, ZPT_TUNING_VALUE_INTEGER, "report-interval", "report-interval-ms",
+     0, 1000, 1, "Report interval", "ms",
+     "Shortest time between cursor reports; motion in between is summed. 0 sends every frame."},
+};
+
+static int coalescer_get(const void *config, uint8_t parameter_id, int32_t *value) {
+    const struct zpt_cursor_coalescer_config *coalescer = config;
+    if (parameter_id != COALESCER_REPORT_INTERVAL) {
+        return -ENOENT;
+    }
+    *value = coalescer->report_interval_ms;
+    return 0;
+}
+
+static int coalescer_put(void *config, uint8_t parameter_id, int32_t value) {
+    struct zpt_cursor_coalescer_config *coalescer = config;
+    if (parameter_id != COALESCER_REPORT_INTERVAL) {
+        return -ENOENT;
+    }
+    coalescer->report_interval_ms = (uint16_t)value;
+    return 0;
+}
+
+const struct zpt_stage_tuning_ops zpt_cursor_coalescer_tuning_ops = {
+    .parameters = coalescer_parameters,
+    .parameter_count = ZPT_ARRAY_SIZE(coalescer_parameters),
+    .config_size = sizeof(struct zpt_cursor_coalescer_config),
+    .get = coalescer_get,
+    .put = coalescer_put,
 };

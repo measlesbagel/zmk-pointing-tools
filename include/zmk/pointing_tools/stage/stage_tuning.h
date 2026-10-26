@@ -37,6 +37,8 @@ extern const struct zpt_stage_tuning_ops zpt_scroll_batcher_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_text_nav_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_axis_intent_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_axis_constraint_tuning_ops;
+extern const struct zpt_stage_tuning_ops zpt_cursor_acceleration_tuning_ops;
+extern const struct zpt_stage_tuning_ops zpt_cursor_coalescer_tuning_ops;
 
 /* Build the config that results from applying values to current, without
  * touching current. candidate must hold ops->config_size bytes. Values are

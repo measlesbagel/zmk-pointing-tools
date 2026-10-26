@@ -45,6 +45,8 @@ add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/stage/text_nav/text_nav.c"
   "${ZPT_ROOT}/src/stage/cursor_transfer/cursor_transfer.c"
   "${ZPT_ROOT}/src/stage/cursor_quantizer/cursor_quantizer.c"
+  "${ZPT_ROOT}/src/stage/cursor_acceleration/cursor_acceleration.c"
+  "${ZPT_ROOT}/src/stage/cursor_coalescer/cursor_coalescer.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement.c"
   "${ZPT_ROOT}/src/stage/motion_gate/coherent_displacement_stage.c"
   "${ZPT_ROOT}/src/stage/stage_tuning.c"
@@ -80,6 +82,8 @@ zpt_host_executable(source_normalization_test tests/source_normalization_test.c)
 zpt_host_executable(source_ingress_test tests/source_ingress_test.c)
 zpt_host_executable(sensor_control_session_test tests/sensor_control_session_test.c)
 zpt_host_executable(stage_tuning_test tests/stage_tuning_test.c)
+zpt_host_executable(cursor_acceleration_test tests/cursor_acceleration_test.c)
+zpt_host_executable(cursor_coalescer_test tests/cursor_coalescer_test.c)
 zpt_host_executable(zpt_noise_pipeline_replay runners/noise_pipeline_replay.c)
 zpt_host_executable(zpt_scroll_pipeline_replay runners/scroll_pipeline_replay.c)
 zpt_host_executable(zpt_cursor_pipeline_replay runners/cursor_pipeline_replay.c)
@@ -101,6 +105,8 @@ add_test(NAME source_normalization COMMAND source_normalization_test)
 add_test(NAME source_ingress COMMAND source_ingress_test)
 add_test(NAME sensor_control_session COMMAND sensor_control_session_test)
 add_test(NAME stage_tuning COMMAND stage_tuning_test)
+add_test(NAME cursor_acceleration COMMAND cursor_acceleration_test)
+add_test(NAME cursor_coalescer COMMAND cursor_coalescer_test)
 
 find_program(NODE_EXECUTABLE node REQUIRED)
 file(GLOB ZPT_TRACE_FIXTURES CONFIGURE_DEPENDS
