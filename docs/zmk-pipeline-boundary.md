@@ -29,11 +29,13 @@ callback would compete with the standard listener and would need to recreate
 its source ownership externally.
 
 The ingress consumes scalar X/Y values by replacing their source event values
-with zero. Returning `STOP` is not sufficient because a layer override can
-consume that return value before ZMK's HID listener sees it. Other event types
-continue unchanged. A `sync` marker on any later scalar event completes the
-pending X/Y frame, so the adapter does not assume that Y is always the final
-event.
+with zero and returning `STOP`. Zeroing alone is not enough: the listener would
+still send an empty mouse report on every sync, doubling HID traffic next to
+the router's own reports. `STOP` alone is not enough either, because a layer
+override can consume that return value before ZMK's HID listener sees it.
+Other event types continue unchanged. A `sync` marker on any later scalar
+event completes the pending X/Y frame, so the adapter does not assume that Y
+is always the final event.
 
 Attach this source processor to the base listener, not to per-layer overrides.
 It remains attached once while the separate router observes route changes

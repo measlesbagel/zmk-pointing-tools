@@ -107,30 +107,29 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
                                   k_uptime_get_32(), &signal, &decode_error);
     k_spin_unlock(&data->frame_lock, key);
 
-    if (kind != ZPT_SOURCE_EVENT_OTHER) {
-        /* The motion now lives in the source frame; nothing downstream of
-         * this processor may observe it a second time. */
-        event->value = 0;
-    }
     if (decode_error < 0) {
         LOG_ERR("Source %u rejected compact split packet: %d", config->ingress.source.source_id,
                 decode_error);
     }
-    if (!frame_ready) {
+    if (frame_ready) {
+        struct zpt_pipeline_result result;
+        int ret = zpt_zmk_router_push(config->router_device, &signal, &result);
+        if (ret < 0) {
+            LOG_ERR("Motion router rejected source %u frame: %d", config->ingress.source.source_id,
+                    ret);
+        }
+    }
+    if (kind == ZPT_SOURCE_EVENT_OTHER) {
         return ZMK_INPUT_PROC_CONTINUE;
     }
 
-    struct zpt_pipeline_result result;
-    int ret = zpt_zmk_router_push(config->router_device, &signal, &result);
-    if (ret < 0) {
-        LOG_ERR("Motion router rejected source %u frame: %d", config->ingress.source.source_id,
-                ret);
-    }
-
-    /* Keep the processor chain intact: ZMK's input listener treats any
-     * non-CONTINUE return as termination and drops the whole event on a
-     * negative value, which would also discard the frame boundary. */
-    return ZMK_INPUT_PROC_CONTINUE;
+    /* The motion now lives in the source frame; nothing downstream may
+     * observe it a second time. Zeroing covers a layer override, which
+     * swallows STOP; STOP keeps the base listener from sending an empty
+     * mouse report on every sync, since the router reports the motion.
+     * STOP is positive, so the listener ends the event without an error. */
+    event->value = 0;
+    return ZMK_INPUT_PROC_STOP;
 }
 
 /* See zpt_source_processor_init above: used only when a devicetree instance
