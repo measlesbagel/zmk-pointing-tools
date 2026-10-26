@@ -13,23 +13,20 @@
 #include <drivers/input_processor.h>
 
 #include <zmk/pointing_tools/platform/zmk/router.h>
-#include <zmk/pointing_tools/source/motion_source.h>
-#include <zmk/pointing_tools/source/transport/compact_split_codec.h>
+#include <zmk/pointing_tools/source/source_ingress.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct zpt_source_processor_config {
-    struct zpt_motion_source_config source;
+    struct zpt_source_ingress_config ingress;
     const struct device *router_device;
     uint16_t compact_event_code;
     bool compact_transport;
-    bool compact_transport_coalesced;
 };
 
 struct zpt_source_processor_data {
     struct k_spinlock frame_lock;
-    struct zpt_motion_source_state source;
-    struct zpt_compact_split_decoder compact_decoder;
+    struct zpt_source_ingress ingress;
 };
 
 /* Referenced by DEVICE_DT_INST_DEFINE only when the devicetree contains an
@@ -40,13 +37,26 @@ static int zpt_source_processor_init(const struct device *dev) {
     const struct zpt_source_processor_config *config = dev->config;
     struct zpt_source_processor_data *data = dev->data;
 
-    int ret = zpt_motion_source_init(&data->source, &config->source);
+    int ret = zpt_source_ingress_init(&data->ingress, &config->ingress);
     if (ret < 0) {
-        LOG_ERR("Failed to initialize motion source %u: %d", config->source.source_id, ret);
+        LOG_ERR("Failed to initialize motion source %u: %d", config->ingress.source.source_id, ret);
         return ret;
     }
-    zpt_compact_split_decoder_init(&data->compact_decoder);
     return device_is_ready(config->router_device) ? 0 : -ENODEV;
+}
+
+static enum zpt_source_event_kind classify_event(const struct zpt_source_processor_config *config,
+                                                 const struct input_event *event) {
+    if (event->type != INPUT_EV_REL) {
+        return ZPT_SOURCE_EVENT_OTHER;
+    }
+    if (config->compact_transport && event->code == config->compact_event_code) {
+        return ZPT_SOURCE_EVENT_COMPACT;
+    }
+    if (event->code == INPUT_REL_X) {
+        return ZPT_SOURCE_EVENT_AXIS_X;
+    }
+    return event->code == INPUT_REL_Y ? ZPT_SOURCE_EVENT_AXIS_Y : ZPT_SOURCE_EVENT_OTHER;
 }
 
 static int zpt_source_processor_handle_event(const struct device *dev, struct input_event *event,
@@ -58,41 +68,25 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
 
     const struct zpt_source_processor_config *config = dev->config;
     struct zpt_source_processor_data *data = dev->data;
+    const enum zpt_source_event_kind kind = classify_event(config, event);
     struct zpt_signal signal;
-    bool frame_ready = false;
-    uint32_t now = event->sync ? k_uptime_get_32() : 0U;
+    int decode_error;
 
     k_spinlock_key_t key = k_spin_lock(&data->frame_lock);
-    if (config->compact_transport && event->type == INPUT_EV_REL &&
-        event->code == config->compact_event_code) {
-        struct zpt_compact_split_frame frame;
-        now = k_uptime_get_32();
-        int ret = zpt_compact_split_decode(&data->compact_decoder, (uint32_t)event->value, &frame);
-        event->value = 0;
-        if (ret == 0) {
-            zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_X, frame.motion.x_counts);
-            zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_Y, frame.motion.y_counts);
-            uint32_t flags = frame.flags;
-            if (config->compact_transport_coalesced) {
-                flags |= ZPT_SIGNAL_FLAG_COALESCED;
-            }
-            frame_ready = zpt_motion_source_take_at_sequence(
-                &data->source, now, frame.sample_span_us, frame.sequence, flags, &signal);
-        } else {
-            LOG_ERR("Source %u rejected compact split packet: %d", config->source.source_id, ret);
-        }
-    } else if (event->type == INPUT_EV_REL && event->code == INPUT_REL_X) {
-        zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_X, event->value);
-        event->value = 0;
-    } else if (event->type == INPUT_EV_REL && event->code == INPUT_REL_Y) {
-        zpt_motion_source_add(&data->source, ZPT_MOTION_AXIS_Y, event->value);
-        event->value = 0;
-    }
-    if (event->sync) {
-        frame_ready = zpt_motion_source_take(&data->source, now, 0U, 0U, &signal);
-    }
+    const bool frame_ready =
+        zpt_source_ingress_handle(&data->ingress, &config->ingress, kind, event->value, event->sync,
+                                  k_uptime_get_32(), &signal, &decode_error);
     k_spin_unlock(&data->frame_lock, key);
 
+    if (kind != ZPT_SOURCE_EVENT_OTHER) {
+        /* The motion now lives in the source frame; nothing downstream of
+         * this processor may observe it a second time. */
+        event->value = 0;
+    }
+    if (decode_error < 0) {
+        LOG_ERR("Source %u rejected compact split packet: %d", config->ingress.source.source_id,
+                decode_error);
+    }
     if (!frame_ready) {
         return ZMK_INPUT_PROC_CONTINUE;
     }
@@ -100,7 +94,8 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
     struct zpt_pipeline_result result;
     int ret = zpt_zmk_router_push(config->router_device, &signal, &result);
     if (ret < 0) {
-        LOG_ERR("Motion router rejected source %u frame: %d", config->source.source_id, ret);
+        LOG_ERR("Motion router rejected source %u frame: %d", config->ingress.source.source_id,
+                ret);
     }
 
     /* Keep the processor chain intact: ZMK's input listener treats any
@@ -135,17 +130,21 @@ static const struct zmk_input_processor_driver_api zpt_source_processor_driver_a
                  "compact-event-code must not overlap a native axis");                             \
     static struct zpt_source_processor_data zpt_source_processor_data_##inst;                      \
     static const struct zpt_source_processor_config zpt_source_processor_config_##inst = {         \
-        .source =                                                                                  \
+        .ingress =                                                                                 \
             {                                                                                      \
-                .flags = COND_CODE_1(DT_INST_PROP(inst, transported),                              \
-                                     (ZPT_SIGNAL_FLAG_TRANSPORTED), (ZPT_SIGNAL_FLAG_LOCAL)),      \
-                .source_id = DT_INST_PROP(inst, source_id),                                        \
-                .resolution_cpi = DT_INST_PROP(inst, resolution_cpi),                              \
+                .source =                                                                          \
+                    {                                                                              \
+                        .flags =                                                                   \
+                            COND_CODE_1(DT_INST_PROP(inst, transported),                           \
+                                        (ZPT_SIGNAL_FLAG_TRANSPORTED), (ZPT_SIGNAL_FLAG_LOCAL)),   \
+                        .source_id = DT_INST_PROP(inst, source_id),                                \
+                        .resolution_cpi = DT_INST_PROP(inst, resolution_cpi),                      \
+                    },                                                                             \
+                .compact_transport_coalesced = DT_INST_PROP(inst, compact_transport_coalesced),    \
             },                                                                                     \
         .router_device = DEVICE_DT_GET(DT_INST_PHANDLE(inst, router)),                             \
         .compact_event_code = DT_INST_PROP_OR(inst, compact_event_code, 0),                        \
         .compact_transport = DT_INST_NODE_HAS_PROP(inst, compact_event_code),                      \
-        .compact_transport_coalesced = DT_INST_PROP(inst, compact_transport_coalesced),            \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, zpt_source_processor_init, NULL,                                   \
                           &zpt_source_processor_data_##inst, &zpt_source_processor_config_##inst,  \

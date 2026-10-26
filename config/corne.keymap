@@ -239,6 +239,28 @@
         device = <&zpt_test_compact_router>;
     };
 
+    /* Source ingress for both routers: a local native-axis source and a
+     * transported compact-split source. Instantiated for build coverage of
+     * the input-processor adapter; no listener feeds them live motion. */
+    zpt_test_local_source: zpt_test_local_source {
+        compatible = "measlesbagel,zpt-input-processor-source";
+        #input-processor-cells = <0>;
+        source-id = <1>;
+        resolution-cpi = <800>;
+        router = <&zpt_test_cursor_router>;
+    };
+
+    zpt_test_compact_source: zpt_test_compact_source {
+        compatible = "measlesbagel,zpt-input-processor-source";
+        #input-processor-cells = <0>;
+        source-id = <2>;
+        resolution-cpi = <800>;
+        router = <&zpt_test_compact_router>;
+        transported;
+        compact-event-code = <INPUT_REL_Z>;
+        compact-transport-coalesced;
+    };
+
     zpt_telemetry {
         compatible = "measlesbagel,zpt-telemetry";
     };
