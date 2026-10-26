@@ -120,8 +120,9 @@ value:i32
 ```
 
 Status values are success (`0`), unknown target (`1`), unknown parameter (`2`),
-invalid value (`3`), and internal error (`4`). A successful preview returns the
-effective current value.
+invalid value (`3`), internal error (`4`), and, for pointing-device results
+only, unreachable (`5`): the split half that owns the device didn't answer. A
+successful preview returns the effective current value.
 
 Runtime values live only in RAM. They remain active when the web page
 disconnects, but reset explicitly or on keyboard reboot. No protocol command
@@ -201,14 +202,16 @@ identities join the two halves of a split keyboard.
 device-count:u8
 repeat device-count times:
   device-id:u8
-  location:u8          /* 0 central-local, otherwise peripheral index */
-  flags:u8             /* bit0 local-connected, bit1 settable */
+  location:u8          /* 0 central-local, otherwise peripheral index + 1 */
+  flags:u8             /* bit0 reachable, bit1 settable */
   label-length:u8
   label:utf8[label-length]
 ```
 
-The label is the entry's stable id. Entries owned by other halves are listed
-without the local-connected flag until split-routed control reaches them.
+The label is the entry's stable id. Listing never contacts a peripheral.
+Central-local entries are always reachable; an entry owned by another half is
+reachable when that half answered the last control request sent to it, so it
+starts out unreachable until the first describe or preview.
 
 ### Describe pointing device
 
@@ -217,15 +220,20 @@ stable-id-length:u8, stable-id:utf8[..]
 devicetree-path-length:u16, devicetree-path:utf8[..]
 current-cpi:u16
 default-cpi:u16       /* compiled devicetree value */
-settable:u8           /* 1 when capabilities follow */
+flags:u8              /* bit0 settable (capabilities follow), bit1 stale */
 if settable and discrete:
   value-count:u8, then value-count × cpi:u16   /* ascending */
 if settable and not discrete:
   reserved:u8 (zero), min:u16, max:u16, step:u16
 ```
 
+Describing an entry owned by another half reads its resolution live through
+the split. If that half doesn't answer within 500 ms, the description still
+arrives with the last value the central knows and the stale flag set.
+
 Unknown ids fail with an ordinary tuning result carrying request type `0x0e`
-and status unknown target.
+and status unknown target. A description that can't fit the response payload
+fails with status internal error.
 
 ### Preview device CPI
 
@@ -235,7 +243,13 @@ firmware validates the request against the declared capabilities and snaps to
 the nearest supported value when needed, so a host compares requested against
 effective to offer corrections. Previews are RAM-only and expire on reboot,
 like tuning previews. Read-only devices reject previews with status invalid
-value.
+value. A preview for a peripheral's device is relayed to that half, and fails
+with status unreachable when the half doesn't answer within 500 ms.
+
+Frames from a previewed device are labelled with the new resolution from the
+next frame boundary, as long as its source processor names the device (see
+[`device-cpi-control.md`](device-cpi-control.md)). Cursor speed then changes
+with CPI while millimetre-based thresholds keep their physical meaning.
 
 ## Stage-state telemetry
 

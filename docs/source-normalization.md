@@ -26,12 +26,13 @@ Each raw signal carries:
 - coalescing, clipping, timing, discontinuity, and transport evidence.
 
 `zpt_motion_source_state` owns frame reconstruction, sequence allocation, and
-the current CPI value. The CPI can be updated between complete frames without
-rebuilding source state, providing the generic boundary needed by future
-sensor discovery and split-routed controls. An update is rejected while motion
-is pending so counts are never labelled with the wrong resolution. The current
-ZMK devicetree adapter initializes it from `resolution-cpi`; no sensor driver is
-queried or changed by this slice.
+the current CPI value. The CPI can change without rebuilding source state. A
+change requested while motion is pending is staged and applies once that frame
+is taken, so counts are never labelled with the wrong resolution. The ZMK
+devicetree adapter initializes it from `resolution-cpi`, or from the
+`device` it names in the pointing-device table, and then follows that entry's
+current resolution as CPI previews change it (see
+[`device-cpi-control.md`](device-cpi-control.md)).
 
 Exactly one of `LOCAL` and `TRANSPORTED` is required when a source is created.
 Native ZMK split input needs no special canonical format: the central proxy's
