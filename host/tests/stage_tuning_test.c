@@ -19,6 +19,7 @@ static const struct zpt_stage_tuning_ops *const all_ops[] = {
     &zpt_coherent_displacement_tuning_ops, &zpt_cursor_transfer_tuning_ops,
     &zpt_scroll_batcher_tuning_ops,        &zpt_text_nav_tuning_ops,
     &zpt_axis_intent_tuning_ops,           &zpt_axis_constraint_tuning_ops,
+    &zpt_cursor_acceleration_tuning_ops,   &zpt_cursor_coalescer_tuning_ops,
 };
 
 static int32_t get(const struct zpt_stage_tuning_ops *ops, const void *config, uint8_t id) {

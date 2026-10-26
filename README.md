@@ -53,8 +53,8 @@ text behavior run through shared stages with a ZMK router, explicit lifecycle,
 keypress suppression, and per-stage telemetry. The superseded monolithic
 processors are removed, and every regression fixture replays byte-exactly
 through the composed stages, and their parameters are tunable at runtime from
-the web tuner. Acceleration curves and cursor report coalescing remain under
-development.
+the web tuner. The cursor path adds speed-based acceleration and report
+coalescing.
 
 See [`docs/architecture.md`](docs/architecture.md) for the pipeline model.
 See [`docs/zmk-pipeline-boundary.md`](docs/zmk-pipeline-boundary.md) for the

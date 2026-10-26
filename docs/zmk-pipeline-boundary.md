@@ -47,7 +47,8 @@ signed sensor counts to Q16 fixed-point millimetres using the frame's
 compiled CPI. The smoke keymap then composes three pipelines:
 
 - the cursor pipeline runs normalization, the coherent-displacement motion
-  gate, a unit cursor transfer, and the sub-pixel cursor quantizer;
+  gate, speed-based acceleration, a unit cursor transfer, the sub-pixel
+  cursor quantizer, and the report coalescer;
 - the scroll pipeline runs normalization, the axis-intent estimator, the
   axis-constraint, and the steps-per-metre scroll batcher, with a shared
   `measlesbagel,zpt-keypress-suppression` guard on the stateful stages;
@@ -58,7 +59,10 @@ compiled CPI. The smoke keymap then composes three pipelines:
 
 The cursor quantizer clamps each frame to the signed 16-bit HID movement
 range the cursor sink accepts; whole units beyond the range are dropped,
-while the fractional part stays in the remainder for later frames. The sink
+while the fractional part stays in the remainder for later frames. The
+coalescer then sends at most one report per report interval and splits a sum
+beyond that range over several reports, so nothing past the quantizer is
+dropped. The sink
 performs no scaling, clipping, accumulation, or cadence selection. After validating both axes, it emits `REL_X` followed by a
 synchronized `REL_Y` from the router's virtual input device. The scroll sink
 emits wheel events for discrete steps, and the action sink drives keymap
@@ -86,6 +90,15 @@ the cursor path is:
         idle-timeout-ms = <120>;
     };
 
+    my_cursor_acceleration: my_cursor_acceleration {
+        compatible = "measlesbagel,zpt-stage-cursor-acceleration";
+        stable-id = "cursor-acceleration";
+        slow-speed-mm-per-s = <20>;
+        fast-speed-mm-per-s = <220>;
+        slow-gain-percent = <80>;
+        fast-gain-percent = <250>;
+    };
+
     my_cursor_transfer: my_cursor_transfer {
         compatible = "measlesbagel,zpt-stage-cursor-transfer";
         stable-id = "cursor-transfer";
@@ -98,6 +111,12 @@ the cursor path is:
         stable-id = "cursor-quantizer";
     };
 
+    my_cursor_coalescer: my_cursor_coalescer {
+        compatible = "measlesbagel,zpt-stage-cursor-coalescer";
+        stable-id = "cursor-coalescer";
+        report-interval-ms = <8>;
+    };
+
     my_cursor_sink: my_cursor_sink {
         compatible = "measlesbagel,zpt-sink-cursor";
         stable-id = "cursor";
@@ -106,8 +125,8 @@ the cursor path is:
     my_cursor_pipeline: my_cursor_pipeline {
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "right-cursor";
-        stages = <&my_resolution_normalize &my_motion_gate
-                  &my_cursor_transfer &my_cursor_quantizer>;
+        stages = <&my_resolution_normalize &my_motion_gate &my_cursor_acceleration
+                  &my_cursor_transfer &my_cursor_quantizer &my_cursor_coalescer>;
         sink = <&my_cursor_sink>;
     };
 
@@ -186,8 +205,10 @@ The current devicetree-backed providers are:
 | `measlesbagel,zpt-stage-coherent-displacement` | normalized motion → normalized motion | stateful |
 | `measlesbagel,zpt-stage-axis-intent` | normalized motion → normalized motion | stateful |
 | `measlesbagel,zpt-stage-axis-constraint` | normalized motion → normalized motion | stateful |
+| `measlesbagel,zpt-stage-cursor-acceleration` | normalized motion → normalized motion | stateful |
 | `measlesbagel,zpt-stage-cursor-transfer` | normalized motion → normalized motion | stateless |
 | `measlesbagel,zpt-stage-cursor-quantizer` | normalized motion → pointer delta | stateful |
+| `measlesbagel,zpt-stage-cursor-coalescer` | pointer delta → pointer delta | stateful |
 | `measlesbagel,zpt-stage-scroll-batcher` | normalized motion → scroll steps | stateful |
 | `measlesbagel,zpt-stage-text-nav` | normalized motion → action | stateful |
 | `measlesbagel,zpt-sink-cursor` | pointer delta → synchronized ZMK events | stateless |
@@ -275,8 +296,6 @@ stage's state samples carry its tuning target id.
   explicit.
 - Persistent explicit route selection is not implemented yet; the current
   behavior is momentary.
-- Acceleration curves and report coalescing for the cursor path are future
-  transfer-stage work.
 - The Bridges configuration is not migrated by this slice.
 
 Host tests cover frame reconstruction, saturation evidence, metadata

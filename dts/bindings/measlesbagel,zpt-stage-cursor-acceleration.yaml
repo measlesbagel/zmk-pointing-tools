@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+
+description: |
+  Cursor acceleration stage over normalized motion. Scales each frame by a
+  gain that depends on ball speed: slow-gain-percent at or below
+  slow-speed-mm-per-s, fast-gain-percent at or above fast-speed-mm-per-s, and
+  linear in between. The defaults leave both gains at 100, which turns
+  acceleration off. Place it before cursor-transfer so speeds are ball speeds.
+
+compatible: "measlesbagel,zpt-stage-cursor-acceleration"
+
+include: measlesbagel,zpt-stage-base.yaml
+
+properties:
+  slow-speed-mm-per-s:
+    type: int
+    default: 25
+    description: Ball speed at or below which slow-gain-percent applies
+
+  fast-speed-mm-per-s:
+    type: int
+    default: 250
+    description: Ball speed at or above which fast-gain-percent applies; must exceed the slow speed
+
+  slow-gain-percent:
+    type: int
+    default: 100
+    description: Gain for slow movement, on top of the cursor-transfer base gain
+
+  fast-gain-percent:
+    type: int
+    default: 100
+    description: Gain for fast movement, on top of the cursor-transfer base gain
+
+  speed-window-ms:
+    type: int
+    default: 32
+    description: How much recent motion the speed estimate averages

@@ -9,7 +9,7 @@
     };
 
     /* Normalized cursor pipeline: counts to Q16 millimetres, motion gate,
-     * base gain, and sub-pixel quantizer. */
+     * acceleration, base gain, sub-pixel quantizer, and report coalescing. */
     zpt_test_resolution_normalize: zpt_test_resolution_normalize {
         compatible = "measlesbagel,zpt-stage-resolution-normalize";
         stable-id = "resolution-normalize";
@@ -25,6 +25,15 @@
         idle-timeout-ms = <120>;
     };
 
+    zpt_test_cursor_acceleration: zpt_test_cursor_acceleration {
+        compatible = "measlesbagel,zpt-stage-cursor-acceleration";
+        stable-id = "cursor-acceleration";
+        slow-speed-mm-per-s = <20>;
+        fast-speed-mm-per-s = <220>;
+        slow-gain-percent = <80>;
+        fast-gain-percent = <250>;
+    };
+
     zpt_test_cursor_transfer: zpt_test_cursor_transfer {
         compatible = "measlesbagel,zpt-stage-cursor-transfer";
         stable-id = "cursor-transfer";
@@ -37,6 +46,12 @@
         stable-id = "cursor-quantizer";
     };
 
+    zpt_test_cursor_coalescer: zpt_test_cursor_coalescer {
+        compatible = "measlesbagel,zpt-stage-cursor-coalescer";
+        stable-id = "cursor-coalescer";
+        report-interval-ms = <8>;
+    };
+
     zpt_test_cursor_sink: zpt_test_cursor_sink {
         compatible = "measlesbagel,zpt-sink-cursor";
         stable-id = "cursor";
@@ -46,7 +61,8 @@
         compatible = "measlesbagel,zpt-pipeline";
         stable-id = "test-cursor";
         stages = <&zpt_test_resolution_normalize &zpt_test_motion_gate
-                  &zpt_test_cursor_transfer &zpt_test_cursor_quantizer>;
+                  &zpt_test_cursor_acceleration &zpt_test_cursor_transfer
+                  &zpt_test_cursor_quantizer &zpt_test_cursor_coalescer>;
         sink = <&zpt_test_cursor_sink>;
     };
 
