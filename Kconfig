@@ -119,6 +119,16 @@ config ZMK_POINTING_TOOLS_STATE_TELEMETRY
       gesture lifecycle decisions from observed pipeline stages. State
       telemetry remains off until requested by a connected host.
 
+config ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY
+    int "Pipeline stage telemetry init priority"
+    default 90
+    range 41 99
+    depends on ZMK_POINTING_TOOLS_STATE_TELEMETRY
+    help
+      POST_KERNEL priority of measlesbagel,zpt-pipeline-telemetry. It runs
+      after the stage providers (KERNEL_INIT_PRIORITY_DEFAULT) so tunable
+      stages report state under the target id they registered for tuning.
+
 endif
 
 config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE

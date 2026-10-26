@@ -117,7 +117,7 @@ function renderTuning() {
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
   if (!tuningTargets.size) {
-    elements.tuning.innerHTML = '<p class="muted">No tunable targets yet; runtime stage tuning is reserved for a later milestone.</p>';
+    elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, transfer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
     return;
   }
 

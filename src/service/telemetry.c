@@ -143,7 +143,7 @@ static atomic_t zpt_state_dropped;
 static atomic_t zpt_state_slot_limit;
 static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 /* A non-NULL label marks a state-only slot as allocated. Registration runs
- * from device init, before the telemetry thread reads the table. */
+ * from device init, before the telemetry thread starts reading the table. */
 static const char *zpt_state_labels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 #endif
 
@@ -156,9 +156,31 @@ enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id) {
     return (enum zpt_state_level)atomic_get(&zpt_state_levels[target_id]);
 }
 
+static int find_state_target(const char *stable_id) {
+    /* A tunable stage reports state under its tuning target id. */
+    for (size_t index = 0; index < zpt_tuning_target_count(); index++) {
+        if (strcmp(zpt_tuning_target_get((uint8_t)index)->stable_id, stable_id) == 0) {
+            return (int)index;
+        }
+    }
+    /* A stage shared by several pipelines is observed once per pipeline but
+     * is one target. */
+    for (size_t index = zpt_tuning_target_count(); index < ARRAY_SIZE(zpt_state_labels); index++) {
+        if (zpt_state_labels[index] != NULL && strcmp(zpt_state_labels[index], stable_id) == 0) {
+            return (int)index;
+        }
+    }
+    return -ENOENT;
+}
+
 int zpt_state_telemetry_register_target(uint8_t *target_id, const char *stable_id) {
     if (target_id == NULL || stable_id == NULL) {
         return -EINVAL;
+    }
+    const int existing = find_state_target(stable_id);
+    if (existing >= 0) {
+        *target_id = (uint8_t)existing;
+        return 0;
     }
     /* Allocation is tracked by label, not by telemetry level: every level is
      * OFF at boot, so a level-based "free" test handed the same id to every

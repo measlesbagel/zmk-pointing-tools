@@ -16,6 +16,7 @@
 
 struct zpt_axis_intent_provider_config {
     const char *stable_id;
+    const char *devicetree_path;
     struct zpt_axis_intent_stage_config stage;
     const struct device *suppression_device;
 };
@@ -24,9 +25,13 @@ struct zpt_axis_intent_provider_data {
     struct zpt_zmk_stage_provider_data provider;
     struct zpt_axis_intent_stage_config stage;
     struct zpt_axis_intent_stage_state state;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
 };
 
-ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_intent, &zpt_axis_intent_stage_api)
+ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_intent, &zpt_axis_intent_stage_api,
+                                         &zpt_axis_intent_tuning_ops)
 #define ZPT_AXIS_INTENT_PROVIDER_DEFINE(inst)                                                      \
     BUILD_ASSERT(DT_INST_PROP(inst, policy) >= ZPT_AXIS_POLICY_FREE &&                             \
                      DT_INST_PROP(inst, policy) <= ZPT_AXIS_POLICY_VERTICAL,                       \
@@ -46,6 +51,7 @@ ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_intent, &zpt_axis_intent_stage_api
     static struct zpt_axis_intent_provider_data zpt_axis_intent_provider_data_##inst;              \
     static const struct zpt_axis_intent_provider_config zpt_axis_intent_provider_config_##inst = { \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
         .stage =                                                                                   \
             {                                                                                      \
                 .policy = DT_INST_PROP(inst, policy),                                              \

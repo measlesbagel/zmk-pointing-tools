@@ -15,16 +15,16 @@ Profiles are versioned JSON documents:
   "exportedAt": "2026-01-01T00:00:00.000Z",
   "targets": [
     {
-      "stableId": "left-scroll",
-      "kind": 1,
-      "label": "Left scroll",
-      "devicetreePath": "/zpt_left_scroll",
+      "stableId": "right-scroll-batcher",
+      "kind": 4,
+      "label": "right-scroll-batcher",
+      "devicetreePath": "/zpt_right_scroll_batcher",
       "parameters": [
         {
-          "key": "scale-multiplier",
-          "devicetreeProperty": "scale-multiplier",
-          "value": 7,
-          "compiled": 7
+          "key": "steps-per-meter",
+          "devicetreeProperty": "steps-per-meter",
+          "value": 4000,
+          "compiled": 3445
         }
       ]
     }
@@ -47,14 +47,21 @@ Imports are temporary previews. They never write flash.
 
 ## Git-tracked defaults
 
-**Copy config** creates a devicetree overlay using the firmware-advertised node
-paths and property names:
+**Copy config** creates a devicetree overlay with every parameter of every
+target, using the firmware-advertised node paths and property names:
 
 ```dts
-/* Left scroll (left-scroll) */
-&{/zpt_left_scroll} {
-    scale-multiplier = <7>;
+/* right-scroll-batcher (right-scroll-batcher) */
+&{/zpt_right_scroll_batcher} {
+    steps-per-meter = <4000>;
+    report-interval-ms = <16>;
+};
+
+/* right-constraint (right-constraint) */
+&{/zpt_right_constraint} {
     /delete-property/ discard-unclassified;
+    idle-timeout-ms = <120>;
+    fold-interval-ms = <0>;
 };
 ```
 
@@ -63,5 +70,5 @@ disabled. Review the generated overlay and either incorporate its values into
 the original nodes or commit the overlay in the consuming ZMK configuration.
 The generated text is a handoff aid, not an automatic repository edit.
 
-Set `tuning-id` to a unique, durable value on every tunable target. Changing
-that ID intentionally prevents older profiles from matching the target.
+A stage's `stable-id` is its target's stable id, so keep it unique and durable.
+Changing it intentionally prevents older profiles from matching the stage.

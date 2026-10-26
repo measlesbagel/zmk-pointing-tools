@@ -25,3 +25,6 @@ int zpt_zmk_router_executor_push(struct zpt_zmk_router_executor *executor,
                                  struct zpt_pipeline_result *result);
 int zpt_zmk_router_executor_flush(struct zpt_zmk_router_executor *executor, uint32_t now_ms,
                                   struct zpt_pipeline_result *result);
+/* Hold the router between frames, for changes its stages must see whole. */
+int zpt_zmk_router_executor_lock(struct zpt_zmk_router_executor *executor);
+int zpt_zmk_router_executor_unlock(struct zpt_zmk_router_executor *executor);

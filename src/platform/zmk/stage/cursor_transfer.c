@@ -14,21 +14,31 @@
 
 struct zpt_cursor_transfer_provider_config {
     const char *stable_id;
+    const char *devicetree_path;
     struct zpt_cursor_transfer_config stage;
 };
 
-ZPT_STAGE_PROVIDER_INIT_SIMPLE(cursor_transfer, &zpt_cursor_transfer_stage_api, &config->stage,
-                               NULL)
+struct zpt_cursor_transfer_provider_data {
+    struct zpt_zmk_stage_provider_data provider;
+    struct zpt_cursor_transfer_config stage;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
+};
+
+ZPT_STAGE_PROVIDER_INIT_TUNABLE(cursor_transfer, &zpt_cursor_transfer_stage_api,
+                                &zpt_cursor_transfer_tuning_ops, NULL)
 #define ZPT_CURSOR_TRANSFER_PROVIDER_DEFINE(inst)                                                  \
     BUILD_ASSERT(DT_INST_PROP(inst, scale_multiplier) <= UINT16_MAX,                               \
                  "scale-multiplier must fit in 16 bits");                                          \
     BUILD_ASSERT(DT_INST_PROP(inst, scale_divisor) > 0 &&                                          \
                      DT_INST_PROP(inst, scale_divisor) <= UINT16_MAX,                              \
                  "scale-divisor must fit in 16 bits and be positive");                             \
-    static struct zpt_zmk_stage_provider_data zpt_cursor_transfer_provider_data_##inst;            \
+    static struct zpt_cursor_transfer_provider_data zpt_cursor_transfer_provider_data_##inst;      \
     static const struct zpt_cursor_transfer_provider_config                                        \
         zpt_cursor_transfer_provider_config_##inst = {                                             \
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
+            .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                    \
             .stage =                                                                               \
                 {                                                                                  \
                     .scale_multiplier = DT_INST_PROP(inst, scale_multiplier),                      \

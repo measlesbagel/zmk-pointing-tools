@@ -9,9 +9,14 @@
  *    provider init function. The simple variant points
  *    zpt_zmk_stage_provider_init at member expressions evaluated inside the
  *    generated function, so callers pass e.g. &config->stage or NULL. The
- *    suppression variant copies the stage config into device data first,
- *    resolves the optional keypress-suppression policy into it, and
- *    registers that writable copy.
+ *    tunable variant copies the stage config into device data, registers
+ *    that writable copy with the stage, and offers it for runtime tuning.
+ *    The suppression variant also resolves the optional keypress-suppression
+ *    policy into the copy first.
+ *
+ *    Tunable providers declare `devicetree_path` in their config and, under
+ *    CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING, a
+ *    `struct zpt_zmk_stage_tuning tuning` member in their data.
  *  - ZPT_STAGE_PROVIDER_DEVICE_DEFINE is invoked per devicetree instance
  *    (inside the per-compat DEFINE macro) and expands to the
  *    DEVICE_DT_INST_DEFINE shared by every provider.
@@ -24,6 +29,16 @@
 #include <zmk/pointing_tools/platform/zmk/stage_provider.h>
 #include <zmk/pointing_tools/policy/suppression.h>
 
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+#include <zmk/pointing_tools/platform/zmk/stage_tuning.h>
+
+#define ZPT_STAGE_PROVIDER_REGISTER_TUNING(tuning_ops)                                             \
+    zpt_zmk_stage_tuning_register(&data->tuning, (tuning_ops), config->stable_id,                  \
+                                  config->devicetree_path, &config->stage, &data->stage)
+#else
+#define ZPT_STAGE_PROVIDER_REGISTER_TUNING(tuning_ops) (void)config->devicetree_path
+#endif
+
 #define ZPT_STAGE_PROVIDER_INIT_SIMPLE(prefix, stage_api, config_member, state_member)             \
     static int zpt_##prefix##_provider_init(const struct device *dev) {                            \
         const struct zpt_##prefix##_provider_config *config = dev->config;                         \
@@ -33,7 +48,21 @@
                                            state_member);                                          \
     }
 
-#define ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(prefix, stage_api)                                \
+#define ZPT_STAGE_PROVIDER_INIT_TUNABLE(prefix, stage_api, tuning_ops, state_member)               \
+    static int zpt_##prefix##_provider_init(const struct device *dev) {                            \
+        const struct zpt_##prefix##_provider_config *config = dev->config;                         \
+        struct zpt_##prefix##_provider_data *data = dev->data;                                     \
+        data->stage = config->stage;                                                               \
+        int ret = zpt_zmk_stage_provider_init(dev, config->stable_id, (stage_api), &data->stage,   \
+                                              state_member);                                       \
+        if (ret < 0) {                                                                             \
+            return ret;                                                                            \
+        }                                                                                          \
+        ZPT_STAGE_PROVIDER_REGISTER_TUNING(tuning_ops);                                            \
+        return 0;                                                                                  \
+    }
+
+#define ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(prefix, stage_api, tuning_ops)                    \
     static int zpt_##prefix##_provider_init(const struct device *dev) {                            \
         const struct zpt_##prefix##_provider_config *config = dev->config;                         \
         struct zpt_##prefix##_provider_data *data = dev->data;                                     \
@@ -45,8 +74,13 @@
                 return ret;                                                                        \
             }                                                                                      \
         }                                                                                          \
-        return zpt_zmk_stage_provider_init(dev, config->stable_id, (stage_api), &data->stage,      \
-                                           &data->state);                                          \
+        int ret = zpt_zmk_stage_provider_init(dev, config->stable_id, (stage_api), &data->stage,   \
+                                              &data->state);                                       \
+        if (ret < 0) {                                                                             \
+            return ret;                                                                            \
+        }                                                                                          \
+        ZPT_STAGE_PROVIDER_REGISTER_TUNING(tuning_ops);                                            \
+        return 0;                                                                                  \
     }
 
 #define ZPT_STAGE_PROVIDER_DEVICE_DEFINE(inst, prefix)                                             \

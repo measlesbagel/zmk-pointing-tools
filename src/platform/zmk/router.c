@@ -377,3 +377,47 @@ ZMK_SUBSCRIPTION(zpt_pointing_router, zmk_layer_state_changed);
  * clang-tidy maps a branch-clone finding to this invocation even though no
  * such construct appears in the source. */
 DT_INST_FOREACH_STATUS_OKAY(ZPT_ROUTER_DEFINE) /* NOLINT(bugprone-branch-clone) */
+
+#define ZPT_ROUTER_DEVICE_REF(inst) DEVICE_DT_INST_GET(inst),
+
+/* NULL-terminated so a build without routers still has a valid array. */
+static const struct device *const zpt_router_devices[] = {
+    DT_INST_FOREACH_STATUS_OKAY(ZPT_ROUTER_DEVICE_REF) NULL};
+
+static struct zpt_zmk_router_executor *ready_executor(const struct device *dev) {
+    if (!device_is_ready(dev)) {
+        return NULL;
+    }
+    struct zpt_router_data *data = dev->data;
+    return &data->executor;
+}
+
+int zpt_zmk_router_unlock_all(void) {
+    int result = 0;
+    for (size_t index = 0; zpt_router_devices[index] != NULL; index++) {
+        struct zpt_zmk_router_executor *executor = ready_executor(zpt_router_devices[index]);
+        int ret = executor == NULL ? 0 : zpt_zmk_router_executor_unlock(executor);
+        if (ret < 0 && result == 0) {
+            result = ret;
+        }
+    }
+    return result;
+}
+
+int zpt_zmk_router_lock_all(void) {
+    for (size_t index = 0; zpt_router_devices[index] != NULL; index++) {
+        struct zpt_zmk_router_executor *executor = ready_executor(zpt_router_devices[index]);
+        int ret = executor == NULL ? 0 : zpt_zmk_router_executor_lock(executor);
+        if (ret < 0) {
+            /* Release the routers already held, newest first. */
+            while (index-- > 0) {
+                executor = ready_executor(zpt_router_devices[index]);
+                if (executor != NULL) {
+                    (void)zpt_zmk_router_executor_unlock(executor);
+                }
+            }
+            return ret;
+        }
+    }
+    return 0;
+}

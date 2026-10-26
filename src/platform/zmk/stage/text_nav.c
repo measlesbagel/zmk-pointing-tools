@@ -14,15 +14,21 @@
 
 struct zpt_text_nav_provider_config {
     const char *stable_id;
+    const char *devicetree_path;
     struct zpt_text_nav_config stage;
 };
 
 struct zpt_text_nav_provider_data {
     struct zpt_zmk_stage_provider_data provider;
+    struct zpt_text_nav_config stage;
     struct zpt_text_nav_state state;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
 };
 
-ZPT_STAGE_PROVIDER_INIT_SIMPLE(text_nav, &zpt_text_nav_stage_api, &config->stage, &data->state)
+ZPT_STAGE_PROVIDER_INIT_TUNABLE(text_nav, &zpt_text_nav_stage_api, &zpt_text_nav_tuning_ops,
+                                &data->state)
 #define ZPT_TEXT_NAV_PROVIDER_DEFINE(inst)                                                         \
     BUILD_ASSERT(DT_INST_PROP(inst, horizontal_threshold_micrometers) > 0,                         \
                  "horizontal-threshold-micrometers must be positive");                             \
@@ -34,6 +40,7 @@ ZPT_STAGE_PROVIDER_INIT_SIMPLE(text_nav, &zpt_text_nav_stage_api, &config->stage
     static struct zpt_text_nav_provider_data zpt_text_nav_provider_data_##inst;                    \
     static const struct zpt_text_nav_provider_config zpt_text_nav_provider_config_##inst = {       \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
         .stage =                                                                                   \
             {                                                                                      \
                 .horizontal_threshold = ZPT_MICROMETERS_TO_FIXED_MILLIMETERS(                      \

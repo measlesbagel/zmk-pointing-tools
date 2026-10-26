@@ -700,6 +700,23 @@ ZTEST(zpt_unit, state_ids_distinct) {
     zassert_mem_equal(&second_entry[3], "zpt-test-second", strlen("zpt-test-second"));
 }
 
+/* A tunable stage reports state under its tuning id, and a stage observed in
+ * several pipelines registers once per pipeline but stays one target. */
+ZTEST(zpt_unit, state_ids_follow_tuning_and_repeats) {
+    uint8_t tuned;
+    zassert_equal(zpt_state_telemetry_register_target(&tuned, "zpt-test-target-a"), 0);
+    const struct zpt_tuning_target *target = zpt_tuning_target_get(tuned);
+    zassert_not_null(target);
+    zassert_str_equal(target->stable_id, "zpt-test-target-a");
+
+    uint8_t first;
+    uint8_t again;
+    zassert_equal(zpt_state_telemetry_register_target(&first, "zpt-test-shared"), 0);
+    zassert_equal(zpt_state_telemetry_register_target(&again, "zpt-test-shared"), 0);
+    zassert_equal(first, again);
+    zassert_true(first >= (uint8_t)zpt_tuning_target_count());
+}
+
 ZTEST(zpt_unit, state_level_off) {
     uint8_t state_id;
 
