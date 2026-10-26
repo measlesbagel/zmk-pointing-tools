@@ -276,8 +276,68 @@ static void test_text_observer_sees_actions(void) {
     assert(has_event(&observer, ZPT_STAGE_EVENT_ACTION, ZPT_TEXT_NAV_RIGHT));
 }
 
+struct frame_record {
+    struct zpt_signal signals[4];
+    size_t count;
+};
+
+static void record_frame(const struct zpt_stage *stage, const struct zpt_signal *signal,
+                         uint32_t now_ms, void *user_data) {
+    (void)stage;
+    (void)now_ms;
+    struct frame_record *frames = user_data;
+    if (frames->count < 4) {
+        frames->signals[frames->count++] = *signal;
+    }
+}
+
+/* The frame hook sees exactly what a stage emits, metadata included, before
+ * the next stage runs; stages without one are unaffected. */
+static void test_frame_observer_sees_emitted_signals(void) {
+    struct frame_record frames = {0};
+    struct zpt_stage normalize = {
+        .stable_id = "resolution-normalize",
+        .api = &zpt_resolution_normalize_stage_api,
+        .observer = {.frame = record_frame, .user_data = &frames},
+    };
+    struct zpt_stage *stages[1] = {&normalize};
+    struct capture_state capture = {0};
+    struct zpt_sink sink = {.stable_id = "capture", .api = &capture_api, .state = &capture};
+    struct zpt_pipeline pipeline = {
+        .stable_id = "frame-observer",
+        .input_kind = ZPT_SIGNAL_RAW_MOTION,
+        .stages = stages,
+        .stage_count = 1,
+        .sink = &sink,
+        .dispatch_budget = 4,
+    };
+    assert(zpt_pipeline_validate(&pipeline) == 0);
+    assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+
+    struct zpt_pipeline_result result;
+    struct zpt_signal raw = {
+        .kind = ZPT_SIGNAL_RAW_MOTION,
+        .metadata = {.observed_at_ms = 42, .resolution_cpi = 254, .sequence = 7, .source_id = 2},
+        .data.raw_motion = {.x_counts = 10, .y_counts = -20},
+    };
+    assert(zpt_pipeline_push(&pipeline, &raw, &result) == 0);
+    assert(frames.count == 1);
+    assert(frames.signals[0].kind == ZPT_SIGNAL_NORMALIZED_MOTION);
+    /* 254 CPI is 10 counts per millimetre. */
+    assert(frames.signals[0].data.fixed_vector.x == ZPT_FIXED_ONE);
+    assert(frames.signals[0].data.fixed_vector.y == -2 * ZPT_FIXED_ONE);
+    assert(frames.signals[0].metadata.resolution_cpi == 254);
+    assert(frames.signals[0].metadata.sequence == 7);
+    assert(frames.signals[0].metadata.source_id == 2);
+
+    normalize.observer.frame = NULL;
+    assert(zpt_pipeline_push(&pipeline, &raw, &result) == 0);
+    assert(frames.count == 1);
+}
+
 int main(void) {
     test_gate_observer_sees_qualification_and_suppression();
+    test_frame_observer_sees_emitted_signals();
     test_scroll_observer_sees_intent_suppression_and_flush();
     test_text_observer_sees_actions();
     puts("stage observer tests passed");

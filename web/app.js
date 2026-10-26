@@ -23,7 +23,12 @@ import {
   parseTuningTargetMetadata,
   parseTuningTargets,
 } from "./protocol.js";
-import { buildSimulatorEvent, buildSimulatorState } from "./simulator-model.js";
+import {
+  SIMULATED_STAGES,
+  buildSimulatorEvent,
+  buildSimulatorFrame,
+  buildSimulatorState,
+} from "./simulator-model.js";
 import {
   createTuningProfile,
   prepareProfileImport,
@@ -31,12 +36,15 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { PointingPlayground } from "./playground.js";
+import { CalibrationPanel } from "./calibration.js";
+import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
 
 const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
 const STAGE_EVENT_LABELS = ["suppressed", "discarded", "qualified", "intent-changed", "flushed", "action"];
 const STAGE_EVENT_INTENT_CHANGED = 3;
+const SIGNAL_KIND_LABELS = ["invalid", "raw", "normalized", "pointer", "scroll", "action"];
 
 const elements = Object.fromEntries(
   ["status", "connect", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
@@ -57,6 +65,7 @@ let stateEvents = [];
 let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
 let stateDirty = true;
 let decoder = new FrameDecoder();
+let calibration;
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
     if (!writer) throw new Error("Serial writer is unavailable");
@@ -116,6 +125,7 @@ function renderTuning() {
   elements["profile-copy"].disabled = !profileReady;
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
+  calibration?.refresh();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
     return;
@@ -155,7 +165,16 @@ function stateFlagLabels(flags) {
   ].filter(([flag]) => flags & flag).map(([, label]) => label);
 }
 
+function describeStageFrame(event) {
+  const [, kind, x, y, cpi] = event.values;
+  const motion = kind === SIGNAL_KIND.NORMALIZED_MOTION
+    ? `${(x / 65536).toFixed(2)}, ${(y / 65536).toFixed(2)} mm`
+    : `${x}, ${y}`;
+  return `frame · ${SIGNAL_KIND_LABELS[kind] ?? `kind ${kind}`} ${motion}${cpi ? ` · ${cpi} CPI` : ""}`;
+}
+
 function describeStateEvent(event) {
+  if (event.targetKind === 4 && event.values[0] === STAGE_FRAME) return describeStageFrame(event);
   if (event.targetKind === 4) {
     const label = STAGE_EVENT_LABELS[event.values[0]] ?? `stage-event ${event.values[0]}`;
     const quantity = event.values[0] === STAGE_EVENT_INTENT_CHANGED
@@ -211,9 +230,21 @@ function setStateStatus(status) {
   stateStatus = status;
   stateDirty = true;
   updateHeartbeat();
+  calibration?.refresh();
+}
+
+function setStateLevel(targetId, level) {
+  if (simulator) {
+    stateStatus.levels.set(targetId, level);
+    stateDirty = true;
+    calibration?.refresh();
+  } else if (writer && protocolReady) {
+    tuningRequests.enqueue(MESSAGE.STATE_CONTROL_REQUEST, encodeStateControl(targetId, level));
+  }
 }
 
 function addStateEvent(event) {
+  calibration?.handleSample(event);
   stateEvents.push(event);
   if (stateEvents.length > MAX_STATE_EVENTS) stateEvents.splice(0, stateEvents.length - MAX_STATE_EVENTS);
   stateDirty = true;
@@ -453,7 +484,7 @@ function handleFrame(frame) {
       notice(`${target.label} preview updated. Changes remain temporary until reboot.`);
     } else if (result.requestType === MESSAGE.TUNING_SET_MANY_REQUEST && target) {
       queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
-      notice(`${target.label} profile values applied atomically as a temporary preview.`);
+      notice(`${target.label} values applied atomically as a temporary preview.`);
     } else if (result.requestType === MESSAGE.TUNING_RESET_REQUEST) {
       const resetTargets = result.targetId === TUNING.ALL_TARGETS ? [...tuningTargets.values()] : [target].filter(Boolean);
       for (const item of resetTargets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
@@ -489,6 +520,7 @@ async function disconnect() {
   port = writer = undefined;
   protocolReady = false;
   tuningRequests.clear();
+  calibration.cancel();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
   elements.connect.textContent = "Connect keyboard";
@@ -541,6 +573,7 @@ function startSimulator() {
   if (simulator) {
     clearInterval(simulator);
     simulator = undefined;
+    calibration.cancel();
     elements.simulate.textContent = "Simulate";
     setStatus(port ? "Connected" : "Disconnected", Boolean(port));
     tuningTargets = new Map();
@@ -582,10 +615,16 @@ function startSimulator() {
     if (tick % 24 === 12) {
       emit(7, STATE.EVENT_FLUSH, STATE.FLAG_OUTPUT, [STAGE_EVENT_LABELS.indexOf("flushed"), 3 + (tick % 4)]);
     }
+    for (const { id, label } of SIMULATED_STAGES) {
+      if (stateStatus.levels.get(id) !== STATE.VERBOSE) continue;
+      const values = buildSimulatorFrame(label, tick);
+      if (values) emit(id, STATE.EVENT_FRAME, 0, values);
+    }
     tick += 1;
   }, 8);
   elements.simulate.textContent = "Stop simulation";
   setStatus("Simulating", true);
+  calibration.refresh();
 }
 
 elements.connect.addEventListener("click", () => (port ? disconnect() : connect()));
@@ -598,14 +637,7 @@ elements.clear.addEventListener("click", () => {
 elements.diagnostics.addEventListener("change", (event) => {
   const select = event.target.closest("[data-state-target]");
   if (!select) return;
-  const targetId = Number(select.dataset.stateTarget);
-  const level = Number(select.value);
-  if (simulator) {
-    stateStatus.levels.set(targetId, level);
-    stateDirty = true;
-  } else if (writer && protocolReady) {
-    tuningRequests.enqueue(MESSAGE.STATE_CONTROL_REQUEST, encodeStateControl(targetId, level));
-  }
+  setStateLevel(Number(select.dataset.stateTarget), Number(select.value));
 });
 
 elements["profile-export"].addEventListener("click", () => {
@@ -742,6 +774,41 @@ new PointingPlayground(document.getElementById("playground"), {
       `zmk-pointing-playground-${result.activity.id}-${new Date().toISOString().replaceAll(":", "-")}.json`,
     );
     notice(`Exported ${result.activity.label} playground results.`);
+  },
+});
+
+/* Calibration sends one atomic transaction per target, like a profile. */
+function applyCalibration(target, values) {
+  const updates = values.map(({ key, value }) => ({
+    parameterId: target.parameters.find((parameter) => parameter.key === key).id,
+    value,
+  }));
+  if (simulator) {
+    for (const update of updates) {
+      target.parameters.find(({ id }) => id === update.parameterId).current = update.value;
+    }
+    renderTuning();
+    notice(`${target.label} simulator calibration applied.`);
+  } else if (writer) {
+    tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(target.id, updates));
+  }
+}
+
+calibration = new CalibrationPanel(document.getElementById("calibration"), {
+  getTuningTargets: () => tuningTargets,
+  getStateStatus: () => stateStatus,
+  getDropped: () => stateStatus.dropped,
+  canControl: () => Boolean(simulator) || (Boolean(writer) && protocolReady),
+  setStateLevel,
+  applyValues: applyCalibration,
+  onExport: (result) => {
+    downloadJson(
+      result,
+      `zmk-pointing-calibration-${result.calibration.mode}-${new Date().toISOString().replaceAll(":", "-")}.json`,
+    );
+    notice(result.targets.length
+      ? "Exported the calibration. Import it as a profile to apply it again."
+      : "Exported the calibration evidence; it has no tunable target to import.");
   },
 });
 

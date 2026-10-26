@@ -333,8 +333,27 @@ intent-change events and zero otherwise. Stage samples use these flag bits:
 | 3 | semantic output emitted |
 | 4 | pending movement qualified as intentional |
 
-The decisions level emits stage decisions only; the every-frame level
-is reserved for future per-frame stage producers and currently adds nothing.
+The decisions level emits stage decisions only. The every-frame level adds
+one sample for every signal the stage emits, with `event` frame (`1`), no
+flags, `intent` set to the signal's axis-intent annotation, `timestamp-ms` set
+to the signal's observation time (or the processing time when the source left
+it unset), and these values:
+
+| Index | Value |
+| --- | --- |
+| 0 | `128`, marking an every-frame sample |
+| 1 | signal kind (`1` raw, `2` normalized, `3` pointer, `4` scroll steps, `5` action) |
+| 2, 3 | x and y: counts for raw motion, Q16 millimetres for normalized motion, units for pointer and scroll deltas, the action id and zero for actions |
+| 4 | resolution in CPI |
+| 5 | source-side sample span in microseconds |
+| 6 | source sequence |
+| 7 | signal metadata flags (coalesced, timing estimated, clipped, sequence gap, discontinuity, span clipped) |
+| 8 | source id |
+| 9 | speed annotation in Q16 millimetres per second, zero until a stage sets it |
+
+Values that exceed the i32 range saturate. The tuner's calibration workflow
+reads every-frame samples from a resolution-normalize stage (see
+[`calibration.md`](calibration.md)).
 Reserved values and unknown flags must be ignored for forward compatibility.
 Firmware disables all state levels after the ordinary host heartbeat timeout
 or an explicit all-targets-off request.

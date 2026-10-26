@@ -106,6 +106,51 @@
         </div>
       </section>
 
+      <section id="calibration" class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Calibration</h2>
+            <span>Set gain from repeated gestures, so it fits your hand, ball, and CPI.</span>
+          </div>
+          <div class="panel-actions">
+            <button type="button" class="primary" data-calibration-start disabled>Start</button>
+            <button type="button" data-calibration-stop disabled>Stop</button>
+            <button type="button" data-calibration-apply disabled>Apply as preview</button>
+            <button type="button" data-calibration-export disabled>Export calibration</button>
+          </div>
+        </div>
+        <div class="temporary-warning">
+          Recording turns on every-frame detail for the measured stage only. Applied values are
+          RAM previews; export the calibration or copy config to keep them.
+        </div>
+        <div class="calibration-controls">
+          <label>
+            Measure from
+            <select data-calibration-measure></select>
+          </label>
+          <label>
+            Calibrate
+            <select data-calibration-target></select>
+          </label>
+          <label data-calibration-acceleration-field>
+            Account for acceleration
+            <select data-calibration-acceleration></select>
+          </label>
+          <label>
+            Output per gesture
+            <span class="calibration-output">
+              <input type="number" data-calibration-output min="1" step="1">
+              <small data-calibration-unit></small>
+            </span>
+          </label>
+          <strong data-calibration-status role="status">Ready</strong>
+        </div>
+        <p class="playground-instructions" data-calibration-instructions></p>
+        <div class="calibration-result" data-calibration-result aria-live="polite">
+          <p class="muted">Measure from a resolution-normalize stage of the ball you are calibrating.</p>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel-heading">
           <div>

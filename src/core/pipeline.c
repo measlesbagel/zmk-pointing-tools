@@ -74,6 +74,9 @@ int zpt_stage_emit(struct zpt_stage_context *context, const struct zpt_signal *s
     if (signal->kind != stage->api->output_kind) {
         return -EPROTOTYPE;
     }
+    if (stage->observer.frame != NULL) {
+        stage->observer.frame(stage, signal, context->operation->now_ms, stage->observer.user_data);
+    }
     return dispatch_at(context->operation, context->stage_index + 1U, signal);
 }
 
