@@ -52,7 +52,9 @@ struct zpt_signal_metadata {
 };
 
 struct zpt_signal_annotations {
-    /* Per-frame Manhattan speed (|x| + |y|) in Q16 millimetres per second. */
+    /* Speed in Q16 millimetres per second, as estimated by the last stage
+     * that set it: axis intent uses per-frame Manhattan speed (|x| + |y|),
+     * cursor acceleration its windowed Euclidean speed. */
     zpt_fixed_t speed_per_second;
     uint16_t axis_confidence_percent;
     uint8_t axis_intent;

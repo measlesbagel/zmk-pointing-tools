@@ -4,6 +4,7 @@
 #if defined(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <zephyr/device.h>
@@ -65,6 +66,74 @@ static void stage_observer(const struct zpt_stage *stage, enum zpt_stage_event e
         .event = event == ZPT_STAGE_EVENT_FLUSHED ? ZPT_STATE_EVENT_FLUSH : ZPT_STATE_EVENT_FRAME,
         .flags = flags,
         .values = {(int32_t)event, (int32_t)value},
+    };
+    zpt_state_telemetry_submit(&sample);
+}
+
+static int32_t clamp_int32(int64_t value) {
+    return value > INT32_MAX ? INT32_MAX : (value < INT32_MIN ? INT32_MIN : (int32_t)value);
+}
+
+static void signal_axes(const struct zpt_signal *signal, int64_t *x, int64_t *y) {
+    switch (signal->kind) {
+    case ZPT_SIGNAL_RAW_MOTION:
+        *x = signal->data.raw_motion.x_counts;
+        *y = signal->data.raw_motion.y_counts;
+        return;
+    case ZPT_SIGNAL_NORMALIZED_MOTION:
+        *x = signal->data.fixed_vector.x;
+        *y = signal->data.fixed_vector.y;
+        return;
+    case ZPT_SIGNAL_POINTER_DELTA:
+    case ZPT_SIGNAL_SCROLL_STEPS:
+        *x = signal->data.delta.x;
+        *y = signal->data.delta.y;
+        return;
+    case ZPT_SIGNAL_ACTION:
+        *x = signal->data.action.id;
+        *y = 0;
+        return;
+    default:
+        *x = 0;
+        *y = 0;
+        return;
+    }
+}
+
+/* Every-frame samples carry what a stage emitted, for diagnostics and
+ * calibration; see docs/protocol.md for the value layout. */
+static void frame_observer(const struct zpt_stage *stage, const struct zpt_signal *signal,
+                           uint32_t now_ms, void *user_data) {
+    (void)stage;
+    const struct zpt_pipeline_telemetry_entry *entry = user_data;
+    if (zpt_state_telemetry_level(entry->target_id) != ZPT_STATE_LEVEL_VERBOSE) {
+        return;
+    }
+
+    int64_t x;
+    int64_t y;
+    signal_axes(signal, &x, &y);
+    struct zpt_state_sample sample = {
+        /* Observation time keeps gesture timing exact when frames queue. */
+        .timestamp_ms =
+            signal->metadata.observed_at_ms != 0 ? signal->metadata.observed_at_ms : now_ms,
+        .target_id = entry->target_id,
+        .target_kind = ZPT_TUNING_TARGET_PIPELINE_STAGE,
+        .event = ZPT_STATE_EVENT_FRAME,
+        .intent = signal->annotations.axis_intent,
+        .values =
+            {
+                ZPT_STATE_STAGE_FRAME,
+                (int32_t)signal->kind,
+                clamp_int32(x),
+                clamp_int32(y),
+                signal->metadata.resolution_cpi,
+                clamp_int32(signal->metadata.sample_span_us),
+                signal->metadata.sequence,
+                clamp_int32(signal->metadata.flags),
+                signal->metadata.source_id,
+                clamp_int32(signal->annotations.speed_per_second),
+            },
     };
     zpt_state_telemetry_submit(&sample);
 }
@@ -135,6 +204,7 @@ static int pipeline_telemetry_init(const struct device *dev) {
             };
             stage->observer = (struct zpt_stage_observer){
                 .callback = stage_observer,
+                .frame = frame_observer,
                 .user_data = &data->entries[data->entry_count],
             };
             data->entry_count++;

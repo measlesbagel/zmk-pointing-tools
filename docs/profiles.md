@@ -45,6 +45,10 @@ are separate transactions.
 
 Imports are temporary previews. They never write flash.
 
+A calibration export (see [`calibration.md`](calibration.md)) is a profile
+whose targets hold only the recommended values, with the evidence behind them
+in an extra `calibration` object that import ignores.
+
 ## Git-tracked defaults
 
 **Copy config** creates a devicetree overlay with every parameter of every

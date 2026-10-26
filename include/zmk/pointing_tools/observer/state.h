@@ -27,6 +27,10 @@ enum zpt_state_flag {
     ZPT_STATE_FLAG_QUALIFIED = 1 << 4,
 };
 
+/* values[0] of a pipeline stage sample is the decision's zpt_stage_event, or
+ * this marker for an every-frame sample of a signal the stage emitted. */
+#define ZPT_STATE_STAGE_FRAME 128
+
 struct zpt_state_sample {
     uint32_t timestamp_ms;
     uint32_t sequence;

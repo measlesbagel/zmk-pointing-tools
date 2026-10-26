@@ -47,8 +47,15 @@ typedef void (*zpt_stage_observer_callback_t)(const struct zpt_stage *stage,
                                               enum zpt_stage_event event, int64_t value,
                                               uint32_t now_ms, void *user_data);
 
+/* Sees every signal a stage emits, before the next stage processes it. */
+typedef void (*zpt_stage_frame_callback_t)(const struct zpt_stage *stage,
+                                           const struct zpt_signal *signal, uint32_t now_ms,
+                                           void *user_data);
+
 struct zpt_stage_observer {
     zpt_stage_observer_callback_t callback;
+    /* Optional per-frame hook for diagnostics and calibration. */
+    zpt_stage_frame_callback_t frame;
     void *user_data;
 };
 

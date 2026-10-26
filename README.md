@@ -24,6 +24,7 @@ work with arbitrary ZMK pointing devices.
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic byte-exact regression replay through the composed stages
 - Guided scroll, text, cursor, click, and drag playground activities
+- Repeated-gesture calibration of cursor gain, scroll speed, and text steps
 
 Planned capabilities include:
 
@@ -66,6 +67,8 @@ semantics.
 See [`docs/trace-replay.md`](docs/trace-replay.md) for deterministic regression
 replay.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
+See [`docs/calibration.md`](docs/calibration.md) for per-device gain
+calibration.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 See [`docs/build.md`](docs/build.md) for host checks and the firmware smoke
