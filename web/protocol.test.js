@@ -210,18 +210,18 @@ test("parses pointing device lists", () => {
     1,
     0,
     0, // local
-    DEVICE_FLAGS_SETTABLE_AND_CONNECTED,
+    DEVICE_FLAGS_SETTABLE_AND_REACHABLE,
     label.length,
     ...label,
   );
   assert.deepEqual(parseDeviceList(payload), [
-    { id: 0, location: 0, connected: true, settable: true, label: "test-local-trackball" },
+    { id: 0, location: 0, reachable: true, settable: true, label: "test-local-trackball" },
   ]);
 
   assert.throws(() => parseDeviceList(Uint8Array.of(2, 0)), /Truncated device list entry/);
 });
 
-const DEVICE_FLAGS_SETTABLE_AND_CONNECTED = 0x03;
+const DEVICE_FLAGS_SETTABLE_AND_REACHABLE = 0x03;
 
 test("parses pointing device descriptions in every capability form", () => {
   const stableId = new TextEncoder().encode("test-local-trackball");
@@ -240,6 +240,7 @@ test("parses pointing device descriptions in every capability form", () => {
     currentCpi: 800,
     defaultCpi: 800,
     settable: true,
+    stale: false,
     discrete: true,
     values: [200, 400, 800, 1600],
   });
@@ -251,6 +252,7 @@ test("parses pointing device descriptions in every capability form", () => {
     currentCpi: 800,
     defaultCpi: 800,
     settable: true,
+    stale: false,
     discrete: false,
     range: { min: 100, max: 1200, step: 100 },
   });
@@ -262,7 +264,14 @@ test("parses pointing device descriptions in every capability form", () => {
     currentCpi: 1200,
     defaultCpi: 1200,
     settable: false,
+    stale: false,
   });
+
+  /* A peripheral's device described with the last known value because its
+   * half didn't answer. */
+  const staleRange = Uint8Array.of(...head.slice(0, -1), 0x03, 0, 100 & 0xff, 100 >> 8, 0xb0, 0x04, 100 & 0xff, 100 >> 8);
+  assert.equal(parseDeviceDescription(staleRange).stale, true);
+  assert.equal(parseDeviceDescription(staleRange).settable, true);
 
   assert.throws(() => parseDeviceDescription(Uint8Array.of(3, ...stableId.slice(0, 2))), /Truncated device stable id/);
 });

@@ -20,7 +20,11 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #endif
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+/* Only the central relays requests for devices owned by other halves. */
+#define ZPT_REMOTE_DEVICES                                                                         \
+    (IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL) &&                                        \
+     IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+#if ZPT_REMOTE_DEVICES
 #include <zmk/pointing_tools/platform/zmk/sensor_control_proxy.h>
 #endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -96,6 +100,8 @@ enum zpt_tuning_status {
     ZPT_TUNING_STATUS_UNKNOWN_PARAMETER = 2,
     ZPT_TUNING_STATUS_INVALID_VALUE = 3,
     ZPT_TUNING_STATUS_INTERNAL_ERROR = 4,
+    /* Device results only: the split half owning the device didn't answer. */
+    ZPT_TUNING_STATUS_UNREACHABLE = 5,
 };
 
 #define ZPT_UART_NODE DT_CHOSEN(measlesbagel_zpt_telemetry_uart)
@@ -303,6 +309,8 @@ static uint8_t zpt_tuning_status_from_errno(int error) {
      * applicable to the addressed device. */
     case -ENOSYS:
         return ZPT_TUNING_STATUS_INVALID_VALUE;
+    case -EAGAIN:
+        return ZPT_TUNING_STATUS_UNREACHABLE;
     default:
         return ZPT_TUNING_STATUS_INTERNAL_ERROR;
     }
@@ -610,6 +618,15 @@ static bool zpt_is_tuning_request(uint8_t type) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE) &&                                          \
     IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 
+#define ZPT_DEVICE_FLAG_REACHABLE 0x01
+#define ZPT_DEVICE_FLAG_SETTABLE 0x02
+#define ZPT_DEVICE_DESCRIPTION_SETTABLE 0x01
+#define ZPT_DEVICE_DESCRIPTION_STALE 0x02
+/* Description bytes besides the two strings: stable-id length (1), path
+ * length (2), current and compiled CPI (4), flags (1), and the range form's
+ * reserved count byte plus min, max and step (7). */
+#define ZPT_DEVICE_DESCRIPTION_FIXED_SIZE 15
+
 /* Device discovery and preview reuse the tuning result message so hosts
  * keep one error-status mapping; device ids ride the parameter-id byte. */
 static void zpt_send_device_result(uint8_t request_type, int error, uint8_t device_id,
@@ -631,11 +648,16 @@ static void zpt_send_device_list(void) {
             payload[0] = (uint8_t)i;
             break;
         }
-        /* Location 0 is central-local; entries owned by other halves appear
-         * here as not connected until split-routed control lands. */
+        /* Location 0 is central-local and always reachable. Entries owned
+         * by other halves are reachable when their half answered the last
+         * request sent to it. */
         const uint8_t location = device->location;
-        const uint8_t flags =
-            (uint8_t)((location == 0 ? 0x01 : 0x00) | (device->caps.settable ? 0x02 : 0x00));
+        bool reachable = location == 0;
+#if ZPT_REMOTE_DEVICES
+        reachable = reachable || zpt_sensor_control_remote_reachable(device);
+#endif
+        const uint8_t flags = (uint8_t)((reachable ? ZPT_DEVICE_FLAG_REACHABLE : 0x00) |
+                                        (device->caps.settable ? ZPT_DEVICE_FLAG_SETTABLE : 0x00));
         payload[offset++] = device->id;
         payload[offset++] = location;
         payload[offset++] = flags;
@@ -657,27 +679,32 @@ static void zpt_send_device_description(uint8_t device_id) {
     const size_t stable_id_length = MIN(strlen(device->stable_id), UINT8_MAX);
     const char *dt_path = device->devicetree_path;
     const size_t dt_path_length = MIN(strlen(dt_path), UINT16_MAX);
-    if (5 + stable_id_length + 2 + dt_path_length > ZPT_MAX_DESCRIBE_PAYLOAD) {
+    /* Everything but the discrete values must fit, with the range form as
+     * the larger alternative; the value list is truncated to the rest. */
+    if (ZPT_DEVICE_DESCRIPTION_FIXED_SIZE + stable_id_length + dt_path_length >
+        ZPT_MAX_DESCRIBE_PAYLOAD) {
         zpt_send_device_result(ZPT_REQ_DEVICE_DESCRIBE, -ENOSPC, device_id, 0);
         return;
     }
 
     uint16_t current = 0;
-    int ret = zpt_device_control_get(device, &current);
+    bool stale = false;
+    int ret = 0;
+#if ZPT_REMOTE_DEVICES
+    if (device->location != 0) {
+        /* Live read through the tunnel. When the half can't be reached,
+         * describe the device anyway with the last known value, marked
+         * stale. */
+        stale = zpt_sensor_control_get_remote(device, &current) < 0;
+    } else
+#endif
+    {
+        ret = zpt_device_control_get(device, &current);
+    }
     if (ret < 0) {
         zpt_send_device_result(ZPT_REQ_DEVICE_DESCRIBE, ret, device_id, 0);
         return;
     }
-
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
-    if (device->location != 0) {
-        /* Live read through the tunnel; degrade to the stored value when
-         * the half cannot be reached. */
-        uint16_t live = current;
-        zpt_sensor_control_get_remote(device, &live);
-        current = live;
-    }
-#endif
 
     uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
     size_t offset = 0;
@@ -692,7 +719,8 @@ static void zpt_send_device_description(uint8_t device_id) {
     offset += 2;
     sys_put_le16(device->default_cpi, &payload[offset]);
     offset += 2;
-    payload[offset++] = (uint8_t)(device->caps.settable ? 0x01 : 0x00);
+    payload[offset++] = (uint8_t)((device->caps.settable ? ZPT_DEVICE_DESCRIPTION_SETTABLE : 0) |
+                                  (stale ? ZPT_DEVICE_DESCRIPTION_STALE : 0));
     if (device->caps.settable && device->caps.discrete) {
         const size_t values = MIN(device->caps.list_count, (sizeof(payload) - offset - 1) / 2U);
         if (values < device->caps.list_count) {
@@ -729,7 +757,7 @@ static void zpt_handle_device_preview(const uint8_t *payload, uint16_t length) {
         return;
     }
 
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+#if ZPT_REMOTE_DEVICES
     if (device->location != 0) {
         uint16_t effective = 0;
         int tunnel_ret = zpt_sensor_control_preview_remote(device, requested, &effective);

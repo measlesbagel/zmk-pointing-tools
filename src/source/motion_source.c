@@ -65,6 +65,10 @@ static bool take_at_sequence(struct zpt_motion_source_state *state, uint32_t obs
         .data.raw_motion = motion,
     };
     state->sequence = sequence + 1U;
+    if (state->staged_resolution_cpi != 0U) {
+        state->resolution_cpi = state->staged_resolution_cpi;
+        state->staged_resolution_cpi = 0U;
+    }
     return true;
 }
 
@@ -94,8 +98,10 @@ int zpt_motion_source_set_resolution_cpi(struct zpt_motion_source_state *state,
     if (state->frame.saw_axis) {
         /* Counts are already accumulated under the old resolution; labelling
          * any of them with a new one would corrupt the physical conversion. */
-        return -EBUSY;
+        state->staged_resolution_cpi = resolution_cpi;
+        return 1;
     }
     state->resolution_cpi = resolution_cpi;
+    state->staged_resolution_cpi = 0U;
     return 0;
 }

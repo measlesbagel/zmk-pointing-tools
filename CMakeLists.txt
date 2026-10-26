@@ -21,11 +21,16 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE src/source/device_caps.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE
     src/platform/zmk/device_table.c)
-  # Split-routed sensor control: peripheral agent + central proxy.
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL
-    src/platform/zmk/sensor_control_agent.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL
-    src/platform/zmk/sensor_control_proxy.c)
+  # Split-routed sensor control: the agent serves requests on peripherals,
+  # and the proxy relays them from the central.
+  if(CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL)
+    if(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+      zephyr_library_sources(src/source/sensor_control_session.c)
+      zephyr_library_sources(src/platform/zmk/sensor_control_proxy.c)
+    else()
+      zephyr_library_sources(src/platform/zmk/sensor_control_agent.c)
+    endif()
+  endif()
   # Native sensor facet adapters (require their driver modules present).
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_SENSOR_CONTROL_PAW32XX
     src/platform/zmk/sensor_control_paw32xx.c)

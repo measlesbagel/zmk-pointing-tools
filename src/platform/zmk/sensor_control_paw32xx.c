@@ -33,9 +33,13 @@ static const struct zpt_sensor_control_api zpt_paw32xx_api = {
     .set_cpi = zpt_paw32xx_set_cpi,
 };
 
+#define ZPT_PAW32XX_IS_SENSOR(inst)                                                                \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, sensor),                                               \
+                (DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(inst, sensor), pixart_paw3222)), (0))
+
 #define ZPT_PAW32XX_BIND(inst)                                                                     \
     IF_ENABLED(                                                                                    \
-        DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(inst, sensor), pixart_paw3222), ({                      \
+        ZPT_PAW32XX_IS_SENSOR(inst), ({                                                            \
             const struct zpt_pointing_device *device = zpt_device_table_at(inst);                  \
             if (device != NULL) {                                                                  \
                 const int ret = zpt_sensor_control_register(device->sensor, &zpt_paw32xx_api);     \

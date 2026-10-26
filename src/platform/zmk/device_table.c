@@ -8,10 +8,12 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/source/device_caps.h>
 #include <zmk/pointing_tools/source/sensor_control.h>
+#include <zmk/pointing_tools/source/sensor_control_wire.h>
 
 /* Devicetree-declared physical pointing devices. The table is fully const:
  * ids, capabilities, and defaults are fixed at build time so both halves of
@@ -92,7 +94,8 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
         .default_cpi = (uint16_t)DT_INST_PROP(inst, resolution_cpi),                               \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
         .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
-        .sensor = DEVICE_DT_GET(DT_INST_PHANDLE(inst, sensor)),                                    \
+        .sensor = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, sensor),                                 \
+                              (DEVICE_DT_GET(DT_INST_PHANDLE(inst, sensor))), (NULL)),             \
         .caps = ZPT_DEVICE_INIT_CAPS(inst)};
 
 DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFINE)
@@ -102,27 +105,42 @@ DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFINE)
 static const struct zpt_pointing_device *const zpt_device_entries[] = {
     DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_ENTRY)};
 
-/* Volatile current values, seeded from the compiled defaults. The telemetry
- * service is the only writer today (one outstanding control request at a
- * time); entries without settable capabilities are never written and keep
- * reporting their default. */
-#define ZPT_DEVICE_DEFAULT_CPI(inst) DT_INST_PROP(inst, resolution_cpi),
-static uint16_t zpt_device_current_cpi[] = {DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFAULT_CPI)};
+/* Volatile current values, seeded from the compiled defaults. One control
+ * request is outstanding at a time, so writers never race each other, but
+ * source processors read these on the input thread to label frames, hence
+ * the atomics. Entries without settable capabilities are never written and
+ * keep reporting their default. */
+#define ZPT_DEVICE_DEFAULT_CPI(inst) ATOMIC_INIT(DT_INST_PROP(inst, resolution_cpi)),
+static atomic_t zpt_device_current_cpi_store[] = {
+    DT_INST_FOREACH_STATUS_OKAY(ZPT_DEVICE_DEFAULT_CPI)};
 
-static const struct zpt_pointing_device *zpt_device_valid(const struct zpt_pointing_device *device,
-                                                          uint16_t **current) {
+static atomic_t *zpt_device_valid(const struct zpt_pointing_device *device) {
     if (device == NULL || device->id >= ARRAY_SIZE(zpt_device_entries) ||
         zpt_device_entries[device->id] != device) {
         return NULL;
     }
-    *current = &zpt_device_current_cpi[device->id];
-    return device;
+    return &zpt_device_current_cpi_store[device->id];
+}
+
+uint16_t zpt_device_current_cpi(const struct zpt_pointing_device *device) {
+    const atomic_t *current = zpt_device_valid(device);
+    return current == NULL ? 0U : (uint16_t)atomic_get(current);
+}
+
+int zpt_device_control_record(const struct zpt_pointing_device *device, uint16_t cpi) {
+    atomic_t *current = zpt_device_valid(device);
+
+    if (current == NULL || cpi == 0U) {
+        return -EINVAL;
+    }
+    atomic_set(current, (atomic_val_t)cpi);
+    return 0;
 }
 
 int zpt_device_control_get(const struct zpt_pointing_device *device, uint16_t *cpi) {
-    uint16_t *current;
+    const atomic_t *current = zpt_device_valid(device);
 
-    if (device == NULL || cpi == NULL || zpt_device_valid(device, &current) == NULL) {
+    if (current == NULL || cpi == NULL) {
         return -EINVAL;
     }
     /* Native facets report live sensor state; the RAM value tracks the
@@ -131,16 +149,16 @@ int zpt_device_control_get(const struct zpt_pointing_device *device, uint16_t *c
     if (api != NULL && api->get_cpi != NULL) {
         return api->get_cpi(device->sensor, cpi);
     }
-    *cpi = *current;
+    *cpi = (uint16_t)atomic_get(current);
     return 0;
 }
 
 int zpt_device_control_preview(const struct zpt_pointing_device *device, uint16_t requested,
                                uint16_t *effective) {
-    uint16_t *current;
+    atomic_t *current = zpt_device_valid(device);
     int ret;
 
-    if (zpt_device_valid(device, &current) == NULL) {
+    if (current == NULL) {
         return -EINVAL;
     }
     if (!device->caps.settable) {
@@ -163,14 +181,14 @@ int zpt_device_control_preview(const struct zpt_pointing_device *device, uint16_
             return ret;
         }
     }
-    *current = *effective;
+    atomic_set(current, (atomic_val_t)*effective);
     return ret;
 }
 
 int zpt_device_control_reset(const struct zpt_pointing_device *device) {
-    uint16_t *current;
+    atomic_t *current = zpt_device_valid(device);
 
-    if (zpt_device_valid(device, &current) == NULL) {
+    if (current == NULL) {
         return -EINVAL;
     }
     if (!device->caps.settable) {
@@ -183,8 +201,42 @@ int zpt_device_control_reset(const struct zpt_pointing_device *device) {
             return ret;
         }
     }
-    *current = device->default_cpi;
+    atomic_set(current, (atomic_val_t)device->default_cpi);
     return 0;
+}
+
+/* --- Split request service -------------------------------------------- */
+
+uint32_t zpt_device_control_serve(uint32_t param1, uint32_t param2) {
+    const uint8_t seq = zpt_scw_param_seq(param1);
+    const struct zpt_pointing_device *device = zpt_device_table_at(zpt_scw_param_device_id(param1));
+    uint16_t value = 0;
+    int ret;
+
+    if (device == NULL || device->location == 0U) {
+        /* Unknown here, or owned by the central, which never relays its own
+         * devices: answer rather than leave the central waiting. */
+        ret = -ENODEV;
+    } else {
+        switch (zpt_scw_param_opcode(param1)) {
+        case ZPT_SCW_OPCODE_GET_CPI:
+            ret = zpt_device_control_get(device, &value);
+            break;
+        case ZPT_SCW_OPCODE_SET_CPI:
+            /* The central validated and snapped against the same capability
+             * declaration; preview validates again and echoes the value it
+             * applied. */
+            ret = zpt_device_control_preview(device, (uint16_t)(param2 & 0xFFFFu), &value);
+            break;
+        default:
+            ret = -EINVAL;
+            break;
+        }
+    }
+    if (ret < 0) {
+        value = 0;
+    }
+    return zpt_scw_encode(ret < 0 ? (uint8_t)MIN(-ret, UINT8_MAX) : 0U, seq, value);
 }
 
 /* --- Native sensor facet registry ------------------------------------- */

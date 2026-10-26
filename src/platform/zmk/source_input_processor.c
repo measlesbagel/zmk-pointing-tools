@@ -14,12 +14,18 @@
 
 #include <zmk/pointing_tools/platform/zmk/router.h>
 #include <zmk/pointing_tools/source/source_ingress.h>
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
+#include <zmk/pointing_tools/platform/zmk/device_table.h>
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct zpt_source_processor_config {
     struct zpt_source_ingress_config ingress;
     const struct device *router_device;
+    /* Stable id of the pointing-device entry whose resolution labels this
+     * source's frames, or NULL to keep the compiled resolution. */
+    const char *device_stable_id;
     uint16_t compact_event_code;
     bool compact_transport;
 };
@@ -27,7 +33,19 @@ struct zpt_source_processor_config {
 struct zpt_source_processor_data {
     struct k_spinlock frame_lock;
     struct zpt_source_ingress ingress;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
+    const struct zpt_pointing_device *device;
+#endif
 };
+
+static uint16_t zpt_source_followed_cpi(const struct zpt_source_processor_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
+    return data->device != NULL ? zpt_device_current_cpi(data->device) : 0U;
+#else
+    ARG_UNUSED(data);
+    return 0U;
+#endif
+}
 
 /* Referenced by DEVICE_DT_INST_DEFINE only when the devicetree contains an
  * input-processor-source instance, so it reads as unused in configurations
@@ -42,6 +60,16 @@ static int zpt_source_processor_init(const struct device *dev) {
         LOG_ERR("Failed to initialize motion source %u: %d", config->ingress.source.source_id, ret);
         return ret;
     }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
+    if (config->device_stable_id != NULL) {
+        data->device = zpt_device_table_find(config->device_stable_id);
+        if (data->device == NULL) {
+            LOG_ERR("Motion source %u names unknown pointing device %s",
+                    config->ingress.source.source_id, config->device_stable_id);
+            return -ENODEV;
+        }
+    }
+#endif
     return device_is_ready(config->router_device) ? 0 : -ENODEV;
 }
 
@@ -73,6 +101,7 @@ static int zpt_source_processor_handle_event(const struct device *dev, struct in
     int decode_error;
 
     k_spinlock_key_t key = k_spin_lock(&data->frame_lock);
+    zpt_source_ingress_follow_resolution(&data->ingress, zpt_source_followed_cpi(data));
     const bool frame_ready =
         zpt_source_ingress_handle(&data->ingress, &config->ingress, kind, event->value, event->sync,
                                   k_uptime_get_32(), &signal, &decode_error);
@@ -111,11 +140,26 @@ static const struct zmk_input_processor_driver_api zpt_source_processor_driver_a
     .handle_event = zpt_source_processor_handle_event,
 };
 
+/* The compiled resolution: the source's own, else its pointing device's. */
+#define ZPT_SOURCE_RESOLUTION_CPI(inst)                                                            \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, resolution_cpi), (DT_INST_PROP(inst, resolution_cpi)), \
+                (DT_PROP_OR(DT_INST_PHANDLE(inst, device), resolution_cpi, 0)))
+
+#define ZPT_SOURCE_DEVICE_STABLE_ID(inst)                                                          \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, device),                                               \
+                (DT_PROP(DT_INST_PHANDLE(inst, device), stable_id)), (NULL))
+
 #define ZPT_SOURCE_PROCESSOR_DEFINE(inst)                                                          \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) >= 0, "source-id cannot be negative");              \
     BUILD_ASSERT(DT_INST_PROP(inst, source_id) <= UINT16_MAX, "source-id must fit in 16 bits");    \
-    BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) > 0, "resolution-cpi must be positive");       \
-    BUILD_ASSERT(DT_INST_PROP(inst, resolution_cpi) <= UINT16_MAX,                                 \
+    BUILD_ASSERT(DT_INST_NODE_HAS_PROP(inst, resolution_cpi) ||                                    \
+                     DT_INST_NODE_HAS_PROP(inst, device),                                          \
+                 "set resolution-cpi, or a device to take it from");                               \
+    BUILD_ASSERT(!DT_INST_NODE_HAS_PROP(inst, device) ||                                           \
+                     IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE),                           \
+                 "a source device needs CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE");                  \
+    BUILD_ASSERT(ZPT_SOURCE_RESOLUTION_CPI(inst) > 0, "resolution-cpi must be positive");          \
+    BUILD_ASSERT(ZPT_SOURCE_RESOLUTION_CPI(inst) <= UINT16_MAX,                                    \
                  "resolution-cpi must fit in 16 bits");                                            \
     BUILD_ASSERT(!DT_INST_NODE_HAS_PROP(inst, compact_event_code) ||                               \
                      DT_INST_PROP(inst, transported),                                              \
@@ -138,11 +182,12 @@ static const struct zmk_input_processor_driver_api zpt_source_processor_driver_a
                             COND_CODE_1(DT_INST_PROP(inst, transported),                           \
                                         (ZPT_SIGNAL_FLAG_TRANSPORTED), (ZPT_SIGNAL_FLAG_LOCAL)),   \
                         .source_id = DT_INST_PROP(inst, source_id),                                \
-                        .resolution_cpi = DT_INST_PROP(inst, resolution_cpi),                      \
+                        .resolution_cpi = ZPT_SOURCE_RESOLUTION_CPI(inst),                         \
                     },                                                                             \
                 .compact_transport_coalesced = DT_INST_PROP(inst, compact_transport_coalesced),    \
             },                                                                                     \
         .router_device = DEVICE_DT_GET(DT_INST_PHANDLE(inst, router)),                             \
+        .device_stable_id = ZPT_SOURCE_DEVICE_STABLE_ID(inst),                                     \
         .compact_event_code = DT_INST_PROP_OR(inst, compact_event_code, 0),                        \
         .compact_transport = DT_INST_NODE_HAS_PROP(inst, compact_event_code),                      \
     };                                                                                             \

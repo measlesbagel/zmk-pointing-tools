@@ -239,14 +239,39 @@
         device = <&zpt_test_compact_router>;
     };
 
+    /* Physical pointing devices, one per half, declared identically for
+     * both halves. Corne's left half is the central (location 0). Neither
+     * names a sensor: the smoke build has none, and a real keyboard adds
+     * each sensor from its owning half's devicetree. The range matches the
+     * PAW3222 driver, which applies multiples of 38 CPI. */
+    zpt_test_central_ball: zpt_test_central_ball {
+        compatible = "measlesbagel,zpt-pointing-device";
+        stable-id = "central-ball";
+        resolution-cpi = <684>;
+        cpi-min = <608>;
+        cpi-max = <4826>;
+        cpi-step = <38>;
+    };
+
+    zpt_test_peripheral_ball: zpt_test_peripheral_ball {
+        compatible = "measlesbagel,zpt-pointing-device";
+        stable-id = "peripheral-ball";
+        location = <1>;
+        resolution-cpi = <684>;
+        cpi-min = <608>;
+        cpi-max = <4826>;
+        cpi-step = <38>;
+    };
+
     /* Source ingress for both routers: a local native-axis source and a
-     * transported compact-split source. Instantiated for build coverage of
-     * the input-processor adapter; no listener feeds them live motion. */
+     * transported compact-split source, each labelled with its device's
+     * current resolution. Instantiated for build coverage of the
+     * input-processor adapter; no listener feeds them live motion. */
     zpt_test_local_source: zpt_test_local_source {
         compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
         source-id = <1>;
-        resolution-cpi = <800>;
+        device = <&zpt_test_central_ball>;
         router = <&zpt_test_cursor_router>;
     };
 
@@ -254,7 +279,7 @@
         compatible = "measlesbagel,zpt-input-processor-source";
         #input-processor-cells = <0>;
         source-id = <2>;
-        resolution-cpi = <800>;
+        device = <&zpt_test_peripheral_ball>;
         router = <&zpt_test_compact_router>;
         transported;
         compact-event-code = <INPUT_REL_Z>;
@@ -265,19 +290,31 @@
         compatible = "measlesbagel,zpt-telemetry";
     };
 
-    /* Split sensor-control tunnel: the agent behavior executes on the half
-     * that owns a device; the proxy decodes packed responses centrally.
-     * Compiled for build coverage; runtime use needs device-table entries
-     * wired to real sensors. */
+    /* Split sensor-control tunnel, wired as a real keyboard would be. The
+     * peripheral builds the agent behavior, which serves CPI requests and
+     * reports each answer from its own device; the split input carries
+     * those reports to the central, where the proxy matches them to its
+     * requests. The agent's node name must stay within 8 characters. */
     zpt_cpi: zpt_cpi {
         compatible = "measlesbagel,zpt-sensor-control";
         #binding-cells = <0>;
     };
 
-    zpt_sensor_proxy {
-        compatible = "measlesbagel,zpt-input-processor-sensor-control-proxy";
-        #input-processor-cells = <0>;
+    split_inputs {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        zpt_cpi_split: zpt_cpi_split@0 {
+            compatible = "zmk,input-split";
+            reg = <0>;
+            device = <&zpt_cpi>;
+        };
+    };
+
+    zpt_cpi_proxy {
+        compatible = "measlesbagel,zpt-sensor-control-proxy";
         agent = <&zpt_cpi>;
+        input = <&zpt_cpi_split>;
     };
 
     zpt_telemetry_pipeline {

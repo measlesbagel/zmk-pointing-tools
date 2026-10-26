@@ -66,3 +66,15 @@ bool zpt_source_ingress_handle(struct zpt_source_ingress *ingress,
     }
     return sync && zpt_motion_source_take(&ingress->source, now_ms, 0U, 0U, signal);
 }
+
+void zpt_source_ingress_follow_resolution(struct zpt_source_ingress *ingress, uint16_t cpi) {
+    if (ingress == NULL || cpi == 0U) {
+        return;
+    }
+    const struct zpt_motion_source_state *source = &ingress->source;
+    const uint16_t upcoming = source->staged_resolution_cpi != 0U ? source->staged_resolution_cpi
+                                                                  : source->resolution_cpi;
+    if (cpi != upcoming) {
+        (void)zpt_motion_source_set_resolution_cpi(&ingress->source, cpi);
+    }
+}

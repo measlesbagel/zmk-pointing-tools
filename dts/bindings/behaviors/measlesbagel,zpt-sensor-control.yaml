@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: MIT
 
 description: >
-  Split sensor-control agent. On a peripheral half, executes CPI operations
-  relayed by the central through ZMK's split behavior invocation and reports
-  outcomes as packed relative input events.
+  Split sensor-control agent. On a peripheral half, serves CPI requests the
+  central relays through ZMK's split behavior invocation, and reports each
+  outcome as a packed relative input event from this behavior device. A
+  zmk,input-split node with this behavior as its device carries the reports
+  to the central proxy. The node name must be eight characters or fewer.
 
 compatible: "measlesbagel,zpt-sensor-control"
 
