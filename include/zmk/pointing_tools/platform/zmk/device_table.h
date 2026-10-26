@@ -20,7 +20,7 @@ struct zpt_pointing_device {
     uint16_t default_cpi;
     const char *stable_id;
     const char *devicetree_path; /* node path of this entry, for host profiles */
-    const struct device *sensor;
+    const struct device *sensor; /* NULL on halves that don't own the device */
     struct zpt_cpi_capabilities caps;
 };
 
@@ -55,3 +55,19 @@ int zpt_device_control_get(const struct zpt_pointing_device *device, uint16_t *c
 int zpt_device_control_preview(const struct zpt_pointing_device *device, uint16_t requested,
                                uint16_t *effective);
 int zpt_device_control_reset(const struct zpt_pointing_device *device);
+
+/* The resolution currently labelling this device's motion, as last set by a
+ * preview, reset, or record. Safe to call from any thread. Returns 0 for an
+ * invalid entry. */
+uint16_t zpt_device_current_cpi(const struct zpt_pointing_device *device);
+
+/* Store a value another split half applied to its own device, so frames
+ * from that half are labelled correctly on the central. Doesn't touch any
+ * sensor. Returns -EINVAL on an invalid entry or a zero value. */
+int zpt_device_control_record(const struct zpt_pointing_device *device, uint16_t cpi);
+
+/* Execute one split sensor-control request (param1 and param2 as packed by
+ * sensor_control_wire.h) against this half's table and return the packed
+ * response frame. Used by the peripheral agent. Requests for entries this
+ * half can't own (location 0, the central's) answer -ENODEV. */
+uint32_t zpt_device_control_serve(uint32_t param1, uint32_t param2);

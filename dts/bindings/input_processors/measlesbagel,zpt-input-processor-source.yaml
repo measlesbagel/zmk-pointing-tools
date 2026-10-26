@@ -14,8 +14,19 @@ properties:
 
   resolution-cpi:
     type: int
-    required: true
-    description: Compiled sensor resolution used for source metadata
+    description: >
+      Compiled sensor resolution used for source metadata. Required unless
+      device is set, in which case it defaults to that entry's
+      resolution-cpi.
+
+  device:
+    type: phandle
+    description: >
+      The measlesbagel,zpt-pointing-device entry for the sensor feeding this
+      source. Frames are then labelled with the entry's current resolution,
+      so a CPI preview from the tuner changes cursor speed without
+      rescaling millimetre-based thresholds. The change applies at the next
+      frame boundary.
 
   router:
     type: phandle

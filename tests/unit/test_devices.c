@@ -13,6 +13,7 @@
 
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/source/device_caps.h>
+#include <zmk/pointing_tools/source/sensor_control_wire.h>
 
 ZTEST(zpt_unit, device_table_discovers_all_entries_in_dt_order) {
     zassert_equal(zpt_device_table_count(), 3);
@@ -67,6 +68,11 @@ ZTEST(zpt_unit, device_remote_entry_reports_range_capabilities) {
     zassert_equal(device->caps.range_min, 100);
     zassert_equal(device->caps.range_max, 1200);
     zassert_equal(device->caps.range_step, 100);
+}
+
+ZTEST(zpt_unit, device_sensor_is_optional) {
+    zassert_not_null(zpt_device_table_find("test-local-trackball")->sensor);
+    zassert_is_null(zpt_device_table_find("test-remote-trackball")->sensor);
 }
 
 ZTEST(zpt_unit, device_without_capabilities_is_read_only) {
@@ -151,4 +157,58 @@ ZTEST(zpt_unit, zz_device_control_previews_snap_persist_and_reset) {
 
     zassert_equal(zpt_device_control_reset(fixed), -ENOSYS);
     zassert_equal(zpt_device_control_reset(NULL), -EINVAL);
+}
+
+ZTEST(zpt_unit, zz_device_record_sets_the_labelling_resolution) {
+    const struct zpt_pointing_device *remote = zpt_device_table_find("test-remote-trackball");
+    uint16_t cpi = 0;
+
+    zassert_equal(zpt_device_current_cpi(remote), 400);
+
+    /* What the central stores after the owning half applies a preview. */
+    zassert_ok(zpt_device_control_record(remote, 1200));
+    zassert_equal(zpt_device_current_cpi(remote), 1200);
+    zassert_ok(zpt_device_control_get(remote, &cpi));
+    zassert_equal(cpi, 1200);
+
+    zassert_equal(zpt_device_control_record(remote, 0), -EINVAL);
+    zassert_equal(zpt_device_control_record(NULL, 800), -EINVAL);
+    zassert_equal(zpt_device_current_cpi(NULL), 0);
+    zassert_equal(zpt_device_current_cpi(remote), 1200);
+
+    zassert_ok(zpt_device_control_reset(remote));
+    zassert_equal(zpt_device_current_cpi(remote), 400);
+}
+
+/* Decodes one served response, checking the tag and the echoed sequence. */
+static int serve(uint8_t seq, uint8_t opcode, uint8_t device_id, uint32_t param2, uint16_t *value) {
+    uint8_t status = 0;
+    uint8_t echoed = 0;
+    const uint32_t frame = zpt_device_control_serve(zpt_scw_param1(seq, opcode, device_id), param2);
+
+    zassert_true(zpt_scw_decode(frame, &status, &echoed, value));
+    zassert_equal(echoed, seq);
+    return -(int)status;
+}
+
+ZTEST(zpt_unit, zz_device_serve_answers_split_requests) {
+    const struct zpt_pointing_device *remote = zpt_device_table_find("test-remote-trackball");
+    uint16_t value = 0;
+
+    /* The peripheral owns the remote entry: reads and previews succeed. */
+    zassert_equal(serve(1, ZPT_SCW_OPCODE_GET_CPI, remote->id, 0, &value), 0);
+    zassert_equal(value, 400);
+    zassert_equal(serve(15, ZPT_SCW_OPCODE_SET_CPI, remote->id, 1000, &value), 0);
+    zassert_equal(value, 1000);
+    zassert_equal(zpt_device_current_cpi(remote), 1000);
+
+    /* Entries owned by the central, unknown ids, and unknown opcodes are
+     * answered with an error rather than ignored. */
+    zassert_equal(serve(2, ZPT_SCW_OPCODE_GET_CPI, 0, 0, &value), -ENODEV);
+    zassert_equal(value, 0);
+    zassert_equal(serve(3, ZPT_SCW_OPCODE_SET_CPI, 2, 800, &value), -ENODEV);
+    zassert_equal(serve(4, ZPT_SCW_OPCODE_GET_CPI, 99, 0, &value), -ENODEV);
+    zassert_equal(serve(5, 0x7f, remote->id, 0, &value), -EINVAL);
+
+    zassert_ok(zpt_device_control_reset(remote));
 }

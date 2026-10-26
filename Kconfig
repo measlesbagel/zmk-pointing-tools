@@ -58,7 +58,8 @@ config ZMK_POINTING_TOOLS_SENSOR_TUNNEL
     help
       Relay CPI discovery and preview requests for peripheral-owned devices
       through ZMK's split behavior invocation, and return outcomes as packed
-      relative input events decoded by the central-side proxy.
+      relative input events over a zmk,input-split channel. Peripherals
+      build the agent behavior; the central builds the proxy.
 
 config ZMK_POINTING_TOOLS_SENSOR_CONTROL_PAW32XX
     bool "PAW32XX native sensor-control adapter"

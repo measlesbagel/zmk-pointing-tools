@@ -20,6 +20,8 @@ struct zpt_motion_source_state {
     uint16_t source_id;
     uint16_t sequence;
     uint16_t resolution_cpi;
+    /* Resolution to adopt once the pending frame is taken; zero when none. */
+    uint16_t staged_resolution_cpi;
 };
 
 /* Source state is allocation-free and externally synchronized by its adapter. */
@@ -41,11 +43,13 @@ bool zpt_motion_source_take_at_sequence(struct zpt_motion_source_state *state,
                                         uint16_t sequence, uint32_t additional_flags,
                                         struct zpt_signal *signal);
 
-/* Stage a new sensor resolution for the next complete frame.
+/* Change the sensor resolution that labels subsequent frames.
  *
- * Returns 0 when the value is armed, -EBUSY while motion is pending in the
- * frame assembler (the staged change applies once the adapter takes that
- * frame and re-arms), and -EINVAL on malformed arguments. Arming twice
- * before a frame boundary simply overwrites the staged value. */
+ * Returns 0 when the value applies at once, because no motion is pending.
+ * While counts are pending they were measured at the old resolution, so the
+ * value is staged instead and 1 is returned: the frame in progress keeps the
+ * old label and the staged value applies as soon as that frame is taken.
+ * Staging again before the boundary overwrites the staged value. Returns
+ * -EINVAL on malformed arguments. */
 int zpt_motion_source_set_resolution_cpi(struct zpt_motion_source_state *state,
                                          uint16_t resolution_cpi);

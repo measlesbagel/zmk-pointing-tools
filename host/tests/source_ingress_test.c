@@ -97,6 +97,54 @@ static void test_rejected_compact_packet_reports_error(void) {
     assert(error == -EBADMSG);
 }
 
+static void test_followed_resolution_waits_for_frame_boundary(void) {
+    struct zpt_source_ingress ingress;
+    struct zpt_signal signal;
+    int error = 0;
+    assert(zpt_source_ingress_init(&ingress, &native_config) == 0);
+
+    /* Between frames a new resolution applies to the very next frame. */
+    zpt_source_ingress_follow_resolution(&ingress, 912);
+    assert(zpt_source_ingress_handle(&ingress, &native_config, ZPT_SOURCE_EVENT_AXIS_X, 2, true, 1,
+                                     &signal, &error));
+    assert(signal.metadata.resolution_cpi == 912);
+
+    /* Mid-frame, the counts already read keep the old label. */
+    assert(!zpt_source_ingress_handle(&ingress, &native_config, ZPT_SOURCE_EVENT_AXIS_X, 3, false,
+                                      2, &signal, &error));
+    zpt_source_ingress_follow_resolution(&ingress, 1216);
+    zpt_source_ingress_follow_resolution(&ingress, 1216);
+    assert(zpt_source_ingress_handle(&ingress, &native_config, ZPT_SOURCE_EVENT_AXIS_Y, 1, true, 3,
+                                     &signal, &error));
+    assert(signal.metadata.resolution_cpi == 912);
+    assert(zpt_source_ingress_handle(&ingress, &native_config, ZPT_SOURCE_EVENT_AXIS_Y, 1, true, 4,
+                                     &signal, &error));
+    assert(signal.metadata.resolution_cpi == 1216);
+
+    /* Zero means unknown and never replaces a real resolution. */
+    zpt_source_ingress_follow_resolution(&ingress, 0);
+    zpt_source_ingress_follow_resolution(NULL, 800);
+    assert(zpt_source_ingress_handle(&ingress, &native_config, ZPT_SOURCE_EVENT_AXIS_Y, 1, true, 5,
+                                     &signal, &error));
+    assert(signal.metadata.resolution_cpi == 1216);
+}
+
+static void test_followed_resolution_labels_compact_frames(void) {
+    struct zpt_compact_split_encoder encoder;
+    struct zpt_source_ingress ingress;
+    struct zpt_signal signal;
+    int error = 0;
+    zpt_compact_split_encoder_init(&encoder);
+    assert(zpt_source_ingress_init(&ingress, &compact_config) == 0);
+
+    /* A compact packet is a whole frame, so nothing is ever pending. */
+    zpt_source_ingress_follow_resolution(&ingress, 1596);
+    assert(zpt_source_ingress_handle(&ingress, &compact_config, ZPT_SOURCE_EVENT_COMPACT,
+                                     (int32_t)encode(&encoder, 7, 7, 8000), true, 10, &signal,
+                                     &error));
+    assert(signal.metadata.resolution_cpi == 1596);
+}
+
 static void test_invalid_arguments(void) {
     struct zpt_source_ingress ingress;
     int error = 0;
@@ -111,6 +159,8 @@ int main(void) {
     test_native_axes_complete_on_sync();
     test_synced_compact_packet_yields_its_frame();
     test_rejected_compact_packet_reports_error();
+    test_followed_resolution_waits_for_frame_boundary();
+    test_followed_resolution_labels_compact_frames();
     test_invalid_arguments();
     puts("source ingress tests passed");
     return 0;

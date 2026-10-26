@@ -13,9 +13,6 @@ export const MESSAGE = Object.freeze({
   DEVICE_LIST_REQUEST: 0x0d,
   DEVICE_DESCRIBE_REQUEST: 0x0e,
   DEVICE_PREVIEW_REQUEST: 0x0f,
-  DEVICE_LIST_REQUEST: 0x0d,
-  DEVICE_DESCRIBE_REQUEST: 0x0e,
-  DEVICE_PREVIEW_REQUEST: 0x0f,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -25,8 +22,6 @@ export const MESSAGE = Object.freeze({
   TUNING_TARGET_METADATA_RESPONSE: 0x87,
   TUNING_PARAMETER_METADATA_RESPONSE: 0x88,
   STATE_STATUS_RESPONSE: 0x89,
-  DEVICE_LIST_RESPONSE: 0x8a,
-  DEVICE_DESCRIPTION_RESPONSE: 0x8b,
   DEVICE_LIST_RESPONSE: 0x8a,
   DEVICE_DESCRIPTION_RESPONSE: 0x8b,
   STATE_SAMPLE: 0x91,
@@ -51,8 +46,16 @@ export const TUNING = Object.freeze({
 
 export const DEVICE = Object.freeze({
   LOCATION_LOCAL: 0,
-  FLAG_LOCAL_CONNECTED: 0x01,
+  /* Device list flags. Local devices are always reachable; a peripheral's
+   * are reachable when its half answered the last request sent to it. */
+  FLAG_REACHABLE: 0x01,
   FLAG_SETTABLE: 0x02,
+  /* Device description flags. Stale marks a value the central last knew
+   * because the owning half didn't answer. */
+  DESCRIPTION_SETTABLE: 0x01,
+  DESCRIPTION_STALE: 0x02,
+  /* Device results only: the owning split half didn't answer. */
+  STATUS_UNREACHABLE: 5,
 });
 
 export const STATE = Object.freeze({
@@ -324,7 +327,7 @@ export function parseDeviceList(payload) {
     devices.push({
       id,
       location,
-      connected: Boolean(flags & DEVICE.FLAG_LOCAL_CONNECTED),
+      reachable: Boolean(flags & DEVICE.FLAG_REACHABLE),
       settable: Boolean(flags & DEVICE.FLAG_SETTABLE),
       label,
     });
@@ -352,10 +355,12 @@ export function parseDeviceDescription(payload) {
   offset += 2;
   const defaultCpi = view.getUint16(offset, true);
   offset += 2;
-  const settable = payload[offset++] !== 0;
+  const flags = payload[offset++];
+  const settable = Boolean(flags & DEVICE.DESCRIPTION_SETTABLE);
+  const stale = Boolean(flags & DEVICE.DESCRIPTION_STALE);
 
   if (!settable) {
-    return { stableId, devicetreePath, currentCpi, defaultCpi, settable };
+    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale };
   }
 
   requireBytes(payload, offset, 1, "device capability count");
@@ -367,7 +372,7 @@ export function parseDeviceDescription(payload) {
       values.push(view.getUint16(offset, true));
       offset += 2;
     }
-    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, discrete: true, values };
+    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale, discrete: true, values };
   }
   requireBytes(payload, offset, 6, "device capability range");
   const range = {
@@ -375,7 +380,7 @@ export function parseDeviceDescription(payload) {
     max: view.getUint16(offset + 2, true),
     step: view.getUint16(offset + 4, true),
   };
-  return { stableId, devicetreePath, currentCpi, defaultCpi, settable, discrete: false, range };
+  return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale, discrete: false, range };
 }
 
 export function encodeDevicePreview(deviceId, cpi) {

@@ -191,8 +191,9 @@ ZTEST(zpt_unit, describe) {
 
 ZTEST(zpt_unit, zz_device_list_reports_table) {
     /* The overlay declares three entries: local discrete, peripheral-one
-     * range, and a read-only pad. Flags: bit0 local-connected, bit1 has
-     * settable capabilities. */
+     * range, and a read-only pad. Flags: bit0 reachable (local, or the
+     * owning half answered; this build has no tunnel), bit1 has settable
+     * capabilities. */
     uint8_t expected[] = {
         3,   0,   0,   0x03, 20,  't', 'e', 's', 't', '-',  'l', 'o', 'c', 'a', 'l', '-', 't',  'r',
         'a', 'c', 'k', 'b',  'a', 'l', 'l', 1,   1,   0x02, 21,  't', 'e', 's', 't', '-', 'r',  'e',
@@ -229,6 +230,33 @@ ZTEST(zpt_unit, zz_device_describe_reports_identity_and_capabilities) {
         expected[offset++] = values[i] & 0xff;
         expected[offset++] = values[i] >> 8;
     }
+
+    tx_frame(ZPT_TEST_REQ_DEVICE_DESCRIBE, request, sizeof(request));
+    expect_frame(ZPT_TEST_RESP_DEVICE_DESCRIPTION, expected, offset);
+}
+
+ZTEST(zpt_unit, zz_device_describe_reports_range_capabilities) {
+    uint8_t request[1] = {1};
+    static const char stable_id[] = "test-remote-trackball";
+    static const char dt_path[] = "/trackball-remote";
+    uint8_t expected[64];
+    size_t offset = 0;
+
+    expected[offset++] = (uint8_t)(sizeof(stable_id) - 1);
+    memcpy(&expected[offset], stable_id, sizeof(stable_id) - 1);
+    offset += sizeof(stable_id) - 1;
+    expected[offset++] = (uint8_t)(sizeof(dt_path) - 1);
+    expected[offset++] = 0;
+    memcpy(&expected[offset], dt_path, sizeof(dt_path) - 1);
+    offset += sizeof(dt_path) - 1;
+    for (int i = 0; i < 2; i++) { /* current, then compiled default: 400 */
+        expected[offset++] = 0x90;
+        expected[offset++] = 0x01;
+    }
+    expected[offset++] = 0x01; /* settable, value is current */
+    expected[offset++] = 0;    /* range form */
+    memcpy(&expected[offset], (uint8_t[]){100, 0, 0xb0, 0x04, 100, 0}, 6);
+    offset += 6;
 
     tx_frame(ZPT_TEST_REQ_DEVICE_DESCRIBE, request, sizeof(request));
     expect_frame(ZPT_TEST_RESP_DEVICE_DESCRIPTION, expected, offset);

@@ -285,6 +285,9 @@ function setDeviceDescription(description) {
   const device = [...devices.values()].find((candidate) => candidate.label === description.stableId);
   if (!device) return;
   device.description = description;
+  /* Describing a peripheral's device reads it live through that half, so
+   * the answer is fresher than the list's reachability flag. */
+  if (device.location !== DEVICE.LOCATION_LOCAL) device.reachable = !description.stale;
   renderDevices();
 }
 
@@ -304,7 +307,7 @@ function renderDevices() {
   elements.devices.innerHTML = [...devices.values()].map((device) => {
     const described = device.description;
     const remote = device.location !== DEVICE.LOCATION_LOCAL;
-    const badge = `${escapeHtml(locationLabel(device.location))}${remote && !device.connected ? " · not connected" : ""}`;
+    const badge = `${escapeHtml(locationLabel(device.location))}${remote && !device.reachable ? " · not reachable" : ""}`;
     let body = '<p class="muted">Read-only sensor; resolution is fixed by configuration.</p>';
     if (device.settable && !described) {
       body = '<p class="muted">Loading capabilities…</p>';
@@ -421,9 +424,14 @@ function handleFrame(frame) {
        * all-targets sentinel for device results. */
       const device = devices.get(result.parameterId);
       if (result.status !== TUNING.STATUS_OK) {
-        const messages = ["success", "unknown device", "unknown parameter", "not applicable to this device", "internal error"];
+        const messages = ["success", "unknown device", "unknown parameter", "not applicable to this device", "internal error", "the half that owns it didn't answer"];
+        if (device && result.status === DEVICE.STATUS_UNREACHABLE) {
+          device.reachable = false;
+          renderDevices();
+        }
         notice(`Device preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
       } else if (device) {
+        device.reachable = true;
         if (device.description) device.description.currentCpi = result.value;
         renderDevices();
         notice(`${device.label} resolution preview updated. Changes remain temporary until reboot.`);

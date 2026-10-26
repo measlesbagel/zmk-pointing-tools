@@ -205,7 +205,7 @@ static void test_orient_then_normalize_pipeline(void) {
     assert(capture.signal.metadata.resolution_cpi == 700);
 }
 
-static void test_resolution_update_rejects_while_pending(void) {
+static void test_resolution_update_stages_while_pending(void) {
     const struct zpt_motion_source_config config = {
         .flags = ZPT_SIGNAL_FLAG_LOCAL,
         .source_id = 3,
@@ -215,24 +215,34 @@ static void test_resolution_update_rejects_while_pending(void) {
     struct zpt_signal signal;
 
     assert(zpt_motion_source_init(&source, &config) == 0);
-    /* Idle: the change arms immediately. */
+    /* Idle: the change applies immediately. */
     assert(zpt_motion_source_set_resolution_cpi(&source, 800) == 0);
 
     zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, 10);
-    /* Counts are pending under 800 CPI; the change must be rejected. */
-    assert(zpt_motion_source_set_resolution_cpi(&source, 1600) == -EBUSY);
+    /* Counts are pending under 800 CPI: the change is staged, and a second
+     * request before the boundary replaces the first. */
+    assert(zpt_motion_source_set_resolution_cpi(&source, 1200) == 1);
+    assert(zpt_motion_source_set_resolution_cpi(&source, 1600) == 1);
     assert(zpt_motion_source_set_resolution_cpi(&source, 0) == -EINVAL);
     assert(zpt_motion_source_set_resolution_cpi(NULL, 800) == -EINVAL);
 
     assert(zpt_motion_source_take(&source, 100, 0, 0, &signal));
     assert(signal.metadata.resolution_cpi == 800);
 
-    /* Frame boundary passed; a new value arms again and labels the next
-     * frame. */
-    assert(zpt_motion_source_set_resolution_cpi(&source, 1600) == 0);
+    /* The staged value labels the next frame without another request. */
     zpt_motion_source_add(&source, ZPT_MOTION_AXIS_X, 4);
     assert(zpt_motion_source_take(&source, 110, 0, 0, &signal));
     assert(signal.metadata.resolution_cpi == 1600);
+
+    /* An immediate change clears anything staged earlier. */
+    zpt_motion_source_add(&source, ZPT_MOTION_AXIS_Y, 2);
+    assert(zpt_motion_source_set_resolution_cpi(&source, 400) == 1);
+    assert(zpt_motion_source_take(&source, 120, 0, 0, &signal));
+    assert(signal.metadata.resolution_cpi == 1600);
+    assert(zpt_motion_source_set_resolution_cpi(&source, 800) == 0);
+    zpt_motion_source_add(&source, ZPT_MOTION_AXIS_Y, 2);
+    assert(zpt_motion_source_take(&source, 130, 0, 0, &signal));
+    assert(signal.metadata.resolution_cpi == 800);
 }
 
 int main(void) {
@@ -242,7 +252,7 @@ int main(void) {
     test_orthogonal_orientation();
     test_resolution_conversion();
     test_orient_then_normalize_pipeline();
-    test_resolution_update_rejects_while_pending();
+    test_resolution_update_stages_while_pending();
     puts("source normalization tests passed");
     return 0;
 }

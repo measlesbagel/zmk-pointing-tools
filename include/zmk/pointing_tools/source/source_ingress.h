@@ -44,3 +44,10 @@ bool zpt_source_ingress_handle(struct zpt_source_ingress *ingress,
                                const struct zpt_source_ingress_config *config,
                                enum zpt_source_event_kind kind, int32_t value, bool sync,
                                uint32_t now_ms, struct zpt_signal *signal, int *decode_error);
+
+/* Follow a resolution owned elsewhere, such as a pointing-device table
+ * entry, by calling this before each event. It does nothing while cpi
+ * matches the resolution the next frame will carry. A change applies at
+ * once between frames, or after the frame in progress, so no frame mixes
+ * counts from two resolutions. A zero cpi is ignored. */
+void zpt_source_ingress_follow_resolution(struct zpt_source_ingress *ingress, uint16_t cpi);

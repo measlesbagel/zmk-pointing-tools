@@ -15,8 +15,13 @@ properties:
 
   sensor:
     type: phandle
-    required: true
-    description: Backing sensor driver device
+    description: >
+      Backing sensor driver device. Set it on the half that owns the device
+      and leave it out elsewhere: each half only defines its own sensor
+      node, so a split keyboard declares the entry in shared devicetree and
+      adds the sensor from the owning half's file. Without a sensor the
+      entry still lists, labels motion, and relays control requests, but
+      nothing reaches a driver on that half.
 
   location:
     type: int
