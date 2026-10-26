@@ -121,8 +121,12 @@ static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 static atomic_t zpt_state_dropped;
-static atomic_t zpt_state_stage_targets;
+/* One past the highest state-only target id handed out; status responses
+ * enumerate every id below it (and below the tuning count). */
+static atomic_t zpt_state_slot_limit;
 static atomic_t zpt_state_levels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
+/* A non-NULL label marks a state-only slot as allocated. Registration runs
+ * from device init, before the telemetry thread reads the table. */
 static const char *zpt_state_labels[CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS];
 #endif
 
@@ -139,12 +143,17 @@ int zpt_state_telemetry_register_target(uint8_t *target_id, const char *stable_i
     if (target_id == NULL || stable_id == NULL) {
         return -EINVAL;
     }
-    for (size_t index = 0; index < ARRAY_SIZE(zpt_state_levels); index++) {
-        if (atomic_get(&zpt_state_levels[index]) == ZPT_STATE_LEVEL_OFF &&
-            index >= zpt_tuning_target_count()) {
+    /* Allocation is tracked by label, not by telemetry level: every level is
+     * OFF at boot, so a level-based "free" test handed the same id to every
+     * stage registered during init. */
+    for (size_t index = zpt_tuning_target_count(); index < ARRAY_SIZE(zpt_state_levels); index++) {
+        if (zpt_state_labels[index] == NULL) {
             *target_id = (uint8_t)index;
             zpt_state_labels[index] = stable_id;
-            atomic_inc(&zpt_state_stage_targets);
+            const atomic_val_t limit = (atomic_val_t)index + 1;
+            if (atomic_get(&zpt_state_slot_limit) < limit) {
+                atomic_set(&zpt_state_slot_limit, limit);
+            }
             return 0;
         }
     }
@@ -223,7 +232,7 @@ static void zpt_send_state_status(void) {
     uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS *
                             (3 + ZPT_STATE_LABEL_MAX_LENGTH)];
     const size_t target_count =
-        MIN(zpt_tuning_target_count() + (size_t)atomic_get(&zpt_state_stage_targets),
+        MIN(MAX(zpt_tuning_target_count(), (size_t)atomic_get(&zpt_state_slot_limit)),
             ARRAY_SIZE(zpt_state_levels));
     payload[0] = ZPT_STATE_SCHEMA_VERSION;
     sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[1]);

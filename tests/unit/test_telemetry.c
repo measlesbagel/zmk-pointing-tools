@@ -496,10 +496,8 @@ ZTEST(zpt_unit, state_register_submit) {
     zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
     zassert_equal(frame_type, ZPT_RESP_STATE_STATUS);
     zassert_equal(payload[0], ZPT_STATE_SCHEMA_VERSION);
-    /* The entry count also covers earlier state registrations; this case's
-     * id is not necessarily the highest one (there is no unregister API and
-     * earlier cases may leave their slots at the default OFF level, which
-     * the next registration reuses). */
+    /* The entry count also covers earlier state registrations (there is no
+     * unregister API, so every earlier case keeps its slot). */
     zassert_true(payload[7] >= state_id + 1);
     const uint8_t *entry = state_status_entry(payload, state_id);
     zassert_not_null(entry);
@@ -539,6 +537,35 @@ ZTEST(zpt_unit, state_register_submit) {
     for (int i = 0; i < ZPT_STATE_VALUE_COUNT; i++) {
         zassert_equal((int32_t)sys_get_le32(&payload[14 + i * 4]), sample.values[i]);
     }
+}
+
+/* Regression: allocation used to treat any slot at the default OFF level as
+ * free, so every stage registered during init shared one id and the status
+ * response listed only the last label. */
+ZTEST(zpt_unit, state_ids_distinct) {
+    uint8_t frame_type;
+    uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t length;
+    uint8_t first;
+    uint8_t second;
+
+    zassert_equal(zpt_state_telemetry_register_target(&first, "zpt-test-first"), 0);
+    zassert_equal(zpt_state_telemetry_register_target(&second, "zpt-test-second"), 0);
+    zassert_not_equal(first, second);
+    zassert_equal(zpt_state_telemetry_level(first), ZPT_STATE_LEVEL_OFF);
+    zassert_equal(zpt_state_telemetry_level(second), ZPT_STATE_LEVEL_OFF);
+
+    tx_frame(ZPT_REQ_STATE_CONTROL, NULL, 0);
+    zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
+    zassert_equal(frame_type, ZPT_RESP_STATE_STATUS);
+    const uint8_t *first_entry = state_status_entry(payload, first);
+    const uint8_t *second_entry = state_status_entry(payload, second);
+    zassert_not_null(first_entry);
+    zassert_not_null(second_entry);
+    zassert_equal(first_entry[2], (uint8_t)strlen("zpt-test-first"));
+    zassert_mem_equal(&first_entry[3], "zpt-test-first", strlen("zpt-test-first"));
+    zassert_equal(second_entry[2], (uint8_t)strlen("zpt-test-second"));
+    zassert_mem_equal(&second_entry[3], "zpt-test-second", strlen("zpt-test-second"));
 }
 
 ZTEST(zpt_unit, state_level_off) {
