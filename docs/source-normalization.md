@@ -39,6 +39,13 @@ ordinary scalar X/Y events pass through the same frame assembler and are marked
 as transported. A compact packed codec remains an optional later transport
 optimization.
 
+`zpt_source_ingress` (`src/source/source_ingress.c`) decides when a frame is
+complete, so that logic is host-tested rather than buried in the ZMK input
+processor. The adapter only classifies each input event as a native axis, a
+compact packet, or something else. Native axes complete a frame on sync. A
+compact packet is a complete frame by itself, and the sync flag it always
+carries marks that same boundary rather than a second, empty frame.
+
 ## Orientation
 
 The orthogonal orientation stage applies, in order:
