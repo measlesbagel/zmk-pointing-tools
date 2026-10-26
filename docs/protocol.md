@@ -66,10 +66,27 @@ automatically when the host disappears.
 
 ## Runtime tuning
 
-Targets are runtime instances rather than hard-coded left/right devices.
-After the monolithic processors were removed, the registry reports zero
-tunable targets; the protocol remains in place for stage-parameter
-registration (tracked by #15).
+Targets are runtime instances rather than hard-coded left/right devices. Every
+instance of a tunable pipeline stage registers one target at boot, in
+devicetree order:
+
+| Stage | Parameters |
+| --- | --- |
+| `measlesbagel,zpt-stage-coherent-displacement` | `enabled`, `activation-distance`, `coherence`, `qualification-timeout`, `idle-timeout` |
+| `measlesbagel,zpt-stage-cursor-transfer` | `scale-multiplier`, `scale-divisor` |
+| `measlesbagel,zpt-stage-scroll-batcher` | `steps-per-meter`, `report-interval` |
+| `measlesbagel,zpt-stage-text-nav` | `horizontal-threshold`, `vertical-threshold`, `idle-timeout` |
+| `measlesbagel,zpt-stage-axis-intent` | `engage-ratio`, `release-ratio`, `activation-distance`, `window`, `idle-timeout` |
+| `measlesbagel,zpt-stage-axis-constraint` | `discard-unclassified`, `idle-timeout`, `fold-interval` |
+
+Values use the stage binding's devicetree units (micrometres, steps per metre,
+milliseconds, percent), and each parameter's devicetree property is the
+binding property it came from. The target's stable id and label are the
+stage's `stable-id`. A change lands between frames: firmware holds every router
+while it swaps the stage's settings, so no frame sees half of a batch. Stages
+read their settings on every frame, so nothing else is reset. A stage that
+doesn't fit in `CONFIG_ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS` logs a warning
+and keeps its compiled settings.
 
 ### Tuning targets
 
@@ -83,8 +100,8 @@ repeat target-count times:
 ```
 
 Target kinds are `1` scroll, `2` text navigation, `3` noise filter, and `4`
-pipeline stage. Kind `4` currently appears only on stage-state samples; no
-stage parameters are tunable yet.
+pipeline stage. Current firmware registers only kind `4`; the others belonged
+to the removed monolithic processors.
 
 ### Tuning target description
 
@@ -167,8 +184,8 @@ key:utf8[key-length]
 devicetree-property:utf8[devicetree-property-length]
 ```
 
-Stable target IDs are keyboard policy supplied by `tuning-id`. Parameter keys
-are owned by each processor family. Devicetree paths and property names allow a
+Stable target IDs are keyboard policy supplied by each stage's `stable-id`.
+Parameter keys are owned by each stage type. Devicetree paths and property names allow a
 host to generate a reviewable overlay without assuming node labels.
 
 ### Atomic parameter preview
@@ -255,8 +272,10 @@ with CPI while millimetre-based thresholds keep their physical meaning.
 
 Optional diagnostics are keyed by target id in the shared tuning/telemetry
 target table. Tuning-registered targets take the first ids; pipeline stage
-observers (`measlesbagel,zpt-pipeline-telemetry`) allocate the remaining ids at
-init, and the status response enumerates every allocated target.
+observers (`measlesbagel,zpt-pipeline-telemetry`) reuse the tuning id of a
+tunable stage and allocate the remaining ids for the rest at init, and the
+status response enumerates every allocated target. A stage observed in several
+pipelines is one target.
 
 Control levels are off (`0`), decisions (`1`), and every frame (`2`). Target ID
 `0xff` applies a level to every target. An empty request queries status without

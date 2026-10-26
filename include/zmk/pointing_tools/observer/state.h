@@ -41,7 +41,10 @@ struct zpt_state_sample {
 enum zpt_state_level zpt_state_telemetry_level(uint8_t target_id);
 void zpt_state_telemetry_submit(const struct zpt_state_sample *sample);
 
-/* Allocate the next free state-telemetry target id for non-tunable
- * observers (pipeline stages) and record its stable label; returns
- * -ENOSPC when exhausted. */
+/* Find or allocate the state-telemetry target id for an observer (a
+ * pipeline stage). A stage that registered a tuning target reports under
+ * that id, and registering the same stable id again returns the id it got
+ * the first time. Otherwise the next free id above the tuning targets is
+ * allocated with stable_id as its label; returns -ENOSPC when exhausted.
+ * Register only after every tuning target has registered. */
 int zpt_state_telemetry_register_target(uint8_t *target_id, const char *stable_id);

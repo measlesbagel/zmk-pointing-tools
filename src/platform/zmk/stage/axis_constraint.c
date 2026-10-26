@@ -16,6 +16,7 @@
 
 struct zpt_axis_constraint_provider_config {
     const char *stable_id;
+    const char *devicetree_path;
     struct zpt_axis_constraint_config stage;
     const struct device *suppression_device;
 };
@@ -24,9 +25,13 @@ struct zpt_axis_constraint_provider_data {
     struct zpt_zmk_stage_provider_data provider;
     struct zpt_axis_constraint_config stage;
     struct zpt_axis_constraint_state state;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
 };
 
-ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_constraint, &zpt_axis_constraint_stage_api)
+ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_constraint, &zpt_axis_constraint_stage_api,
+                                         &zpt_axis_constraint_tuning_ops)
 #define ZPT_AXIS_CONSTRAINT_PROVIDER_DEFINE(inst)                                                  \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, idle_timeout_ms, 0) <= UINT16_MAX,                          \
                  "idle-timeout-ms must fit in 16 bits");                                           \
@@ -34,6 +39,7 @@ ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(axis_constraint, &zpt_axis_constraint_s
     static const struct zpt_axis_constraint_provider_config                                        \
         zpt_axis_constraint_provider_config_##inst = {                                             \
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
+            .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                    \
             .stage =                                                                               \
                 {                                                                                  \
                     .discard_unclassified = DT_INST_PROP_OR(inst, discard_unclassified, false),    \

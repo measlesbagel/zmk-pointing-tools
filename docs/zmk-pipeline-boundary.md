@@ -256,6 +256,19 @@ telemetry. The state-status response enumerates the observed stage targets
 with their stable identities so the web tuner can render per-stage controls
 without tuning discovery.
 
+## Stage tuning
+
+Tunable stage providers copy their compiled settings into device data, point
+the stage at that copy, and register it as a runtime tuning target at init
+(see [`protocol.md`](protocol.md#runtime-tuning) for the stage types and
+parameters). The platform-neutral half (`src/stage/stage_tuning.c`) converts
+between devicetree units and stage fixed point and builds a complete candidate;
+the ZMK half (`src/platform/zmk/stage_tuning.c`) copies it over the live
+settings while holding every router's executor lock, so a batch never lands
+mid-frame. Pipeline telemetry initializes later in `POST_KERNEL`
+(`CONFIG_ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY`) so a tunable
+stage's state samples carry its tuning target id.
+
 ## Current limits
 
 - Sink providers cover cursor, scroll, and text actions; sink selection is

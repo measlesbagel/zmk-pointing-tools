@@ -647,9 +647,11 @@ Runtime updates are applied atomically per stage:
 
 1. validate the complete candidate settings;
 2. reject the entire update on failure;
-3. swap settings under the stage's synchronization policy;
-4. reset only the state invalidated by that change;
-5. publish a retuning event.
+3. swap settings while every router is held between frames;
+4. reset only the state invalidated by that change. Current stages read
+   their settings on every frame and derive no state from them, so nothing
+   is reset;
+5. publish a retuning event (not implemented yet).
 
 Profiles address values by pipeline and stage stable identity rather than
 boot-time registration order.

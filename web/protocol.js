@@ -31,8 +31,8 @@ export const MESSAGE = Object.freeze({
 export const PROTOCOL_VERSION = 7;
 export const STATE_SCHEMA_VERSION = 2;
 
-/* Target kinds carried in state samples. Pipeline stages are the only
- * producers in the current firmware; the tuning registry is empty. */
+/* Target kinds carried in tuning targets and state samples. Pipeline stages
+ * are the only kind current firmware registers. */
 export const TARGET_KIND = Object.freeze({
   PIPELINE_STAGE: 4,
 });

@@ -16,6 +16,7 @@
 
 struct zpt_scroll_batcher_provider_config {
     const char *stable_id;
+    const char *devicetree_path;
     struct zpt_scroll_batcher_config stage;
     const struct device *suppression_device;
 };
@@ -24,9 +25,13 @@ struct zpt_scroll_batcher_provider_data {
     struct zpt_zmk_stage_provider_data provider;
     struct zpt_scroll_batcher_config stage;
     struct zpt_scroll_batcher_state state;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
 };
 
-ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(scroll_batcher, &zpt_scroll_batcher_stage_api)
+ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(scroll_batcher, &zpt_scroll_batcher_stage_api,
+                                         &zpt_scroll_batcher_tuning_ops)
 #define ZPT_SCROLL_BATCHER_PROVIDER_DEFINE(inst)                                                   \
     BUILD_ASSERT(DT_INST_PROP(inst, steps_per_meter) > 0, "steps-per-meter must be positive");     \
     BUILD_ASSERT(DT_INST_PROP(inst, report_interval_ms) > 0 &&                                     \
@@ -36,6 +41,7 @@ ZPT_STAGE_PROVIDER_INIT_WITH_SUPPRESSION(scroll_batcher, &zpt_scroll_batcher_sta
     static const struct zpt_scroll_batcher_provider_config                                         \
         zpt_scroll_batcher_provider_config_##inst = {                                              \
             .stable_id = DT_INST_PROP(inst, stable_id),                                            \
+            .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                    \
             .stage =                                                                               \
                 {                                                                                  \
                     .steps_per_millimeter = ZPT_PER_METER_TO_FIXED_PER_MILLIMETER(                 \

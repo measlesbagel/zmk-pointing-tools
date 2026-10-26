@@ -104,6 +104,9 @@ int zpt_zmk_pipeline_telemetry_lookup(const struct device *dev, const char *stab
     return api->lookup_stage == NULL ? -ENOSYS : api->lookup_stage(dev, stable_id, stage);
 }
 
+/* Runs after every stage provider has registered its tuning target, so a
+ * tunable stage's state samples share its tuning target id instead of
+ * colliding with ids registered later. */
 static int pipeline_telemetry_init(const struct device *dev) {
     const struct zpt_pipeline_telemetry_config *config = dev->config;
     struct zpt_pipeline_telemetry_data *data = dev->data;
@@ -147,6 +150,10 @@ static int pipeline_telemetry_init(const struct device *dev) {
 #define ZPT_TELEMETRY_TOTAL_STAGES(node_id)                                                        \
     (0 DT_INST_FOREACH_PROP_ELEM(node_id, pipelines, ZPT_TELEMETRY_STAGE_COUNT))
 
+BUILD_ASSERT(CONFIG_ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY >
+                 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
+             "pipeline telemetry must initialize after the stage providers");
+
 #define ZPT_PIPELINE_TELEMETRY_DEFINE(inst)                                                        \
     static struct zpt_pipeline_telemetry_entry                                                     \
         zpt_pipeline_telemetry_entries_##inst[ZPT_TELEMETRY_TOTAL_STAGES(inst)];                   \
@@ -159,10 +166,10 @@ static int pipeline_telemetry_init(const struct device *dev) {
         .pipeline_devices = zpt_pipeline_telemetry_devices_##inst,                                 \
         .pipeline_count = ARRAY_SIZE(zpt_pipeline_telemetry_devices_##inst),                       \
     };                                                                                             \
-    DEVICE_DT_INST_DEFINE(inst, pipeline_telemetry_init, NULL,                                     \
-                          &zpt_pipeline_telemetry_data_##inst,                                     \
-                          &zpt_pipeline_telemetry_config_##inst, POST_KERNEL,                      \
-                          CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &pipeline_telemetry_api);
+    DEVICE_DT_INST_DEFINE(                                                                         \
+        inst, pipeline_telemetry_init, NULL, &zpt_pipeline_telemetry_data_##inst,                  \
+        &zpt_pipeline_telemetry_config_##inst, POST_KERNEL,                                        \
+        CONFIG_ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY, &pipeline_telemetry_api);
 
 #define ZPT_PIPELINE_TELEMETRY_DEVICE(node_id, prop, index)                                        \
     DEVICE_DT_GET(DT_PHANDLE_BY_IDX(node_id, prop, index))

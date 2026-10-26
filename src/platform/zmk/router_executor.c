@@ -96,6 +96,17 @@ int zpt_zmk_router_executor_flush(struct zpt_zmk_router_executor *executor, uint
     return unlock_with_result(executor, operation_result, deadline_result);
 }
 
+int zpt_zmk_router_executor_lock(struct zpt_zmk_router_executor *executor) {
+    return lock_executor(executor);
+}
+
+int zpt_zmk_router_executor_unlock(struct zpt_zmk_router_executor *executor) {
+    if (executor == NULL || executor->router == NULL) {
+        return -EINVAL;
+    }
+    return k_mutex_unlock(&executor->lock);
+}
+
 static void deadline_work_handler(struct k_work *work) {
     struct k_work_delayable *deadline_work = k_work_delayable_from_work(work);
     struct zpt_zmk_router_executor *executor =
