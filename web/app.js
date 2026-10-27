@@ -28,7 +28,10 @@ import {
   buildSimulatorEvent,
   buildSimulatorFrame,
   buildSimulatorState,
+  buildSimulatorTuningTargets,
 } from "./simulator-model.js";
+import { findCurve } from "./acceleration-curve.js";
+import { CurveEditors } from "./curve-editor.js";
 import {
   createTuningProfile,
   prepareProfileImport,
@@ -74,6 +77,17 @@ const tuningRequests = new ResponseRequestQueue(
   (error) => notice(`Tuning request failed: ${error.message}`, true),
 );
 
+const curveEditors = new CurveEditors({
+  escapeHtml,
+  getCurve: (targetId) => {
+    const target = tuningTargets.get(targetId);
+    return target ? findCurve(target) : null;
+  },
+  onPreview: previewCurve,
+  onRender: renderTuning,
+});
+curveEditors.bind(elements.tuning);
+
 function setStatus(text, live = false) {
   elements.status.textContent = text;
   elements.status.classList.toggle("live", live);
@@ -111,6 +125,11 @@ function setDescription(description) {
 
 
 function renderTuning() {
+  /* Rebuilding the list mid-drag would drop the dragged point. */
+  if (curveEditors.dragging) {
+    curveEditors.renderPending = true;
+    return;
+  }
   const targets = [...tuningTargets.values()];
   const modified = targets.reduce(
     (count, target) => count + target.parameters.filter((parameter) => parameter.current !== parameter.compiled).length,
@@ -132,12 +151,19 @@ function renderTuning() {
   }
 
   elements.tuning.innerHTML = [...tuningTargets.values()]
-    .map((target) => `<article class="tuning-target">
+    .map((target) => {
+      /* An acceleration curve gets the graphical editor; its other
+       * parameters keep the ordinary controls. */
+      const curve = findCurve(target);
+      if (curve) curveEditors.settle(target.id, curve);
+      const parameters = curve ? target.parameters.filter(({ id }) => !curve.ids.has(id)) : target.parameters;
+      return `<article class="tuning-target">
       <div class="tuning-target-heading">
         <div><h3>${escapeHtml(target.label)}</h3><span>${target.stableId ? `<code>${escapeHtml(target.stableId)}</code> · ` : ""}Temporary preview values</span></div>
         <button data-reset-target="${target.id}" ${target.parameters.length ? "" : "disabled"}>Reset target</button>
       </div>
-      ${target.parameters.length ? `<div class="parameters">${target.parameters.map((parameter) => {
+      ${curve ? curveEditors.render(target.id, curve) : ""}
+      ${parameters.length ? `<div class="parameters">${parameters.map((parameter) => {
         const changed = parameter.current !== parameter.compiled;
         const control = parameter.type === TUNING.BOOLEAN
           ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
@@ -150,8 +176,9 @@ function renderTuning() {
           <div class="parameter-control">${control}<button data-preview>Preview</button></div>
           <small>Compiled: ${parameter.compiled}${parameter.unit ? ` ${escapeHtml(parameter.unit)}` : ""}${changed ? " · modified" : ""}</small>
         </div>`;
-      }).join("")}</div>` : '<p class="muted">Loading parameters…</p>'}
-    </article>`)
+      }).join("")}</div>` : (curve ? "" : '<p class="muted">Loading parameters…</p>')}
+    </article>`;
+    })
     .join("");
 }
 
@@ -262,18 +289,41 @@ function setTuningTargets(targets, requestDescriptions = true) {
   }
 }
 
+/* Help text, keys, and devicetree properties are fixed per firmware, so a
+ * refreshed description keeps what earlier responses brought and only asks
+ * for what is still missing. */
 function setTuningDescription(description) {
   const target = tuningTargets.get(description.targetId);
   if (!target) return;
-  target.parameters = description.parameters;
+  const known = new Map(target.parameters.map((parameter) => [parameter.id, parameter]));
+  target.parameters = description.parameters.map((parameter) => {
+    const { description: help, key, devicetreeProperty } = known.get(parameter.id) ?? {};
+    return { ...parameter, ...(help === undefined ? {} : { description: help }),
+      ...(key === undefined ? {} : { key, devicetreeProperty }) };
+  });
   renderTuning();
   stateDirty = true;
-  for (const parameter of target.parameters) {
+  for (const parameter of target.parameters.filter(({ description: help }) => help === undefined)) {
     queueTuningRequest(MESSAGE.TUNING_HELP_REQUEST, Uint8Array.of(target.id, parameter.id));
   }
-  for (const parameter of target.parameters) {
+  for (const parameter of target.parameters.filter(({ key }) => key === undefined)) {
     queueTuningRequest(MESSAGE.TUNING_PARAMETER_METADATA_REQUEST,
       Uint8Array.of(target.id, parameter.id));
+  }
+}
+
+/* Send a whole curve as one batch so the keyboard never runs half of it. */
+function previewCurve(targetId, values) {
+  const target = tuningTargets.get(targetId);
+  if (!target) return;
+  if (simulator) {
+    for (const { parameterId, value } of values) {
+      target.parameters.find(({ id }) => id === parameterId).current = value;
+    }
+    renderTuning();
+    notice(`${target.label} simulator curve updated.`);
+  } else if (writer) {
+    tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(targetId, values));
   }
 }
 
@@ -586,7 +636,7 @@ function startSimulator() {
     return;
   }
   setDescription({ version: PROTOCOL_VERSION });
-  tuningTargets = new Map();
+  tuningTargets = new Map(buildSimulatorTuningTargets().map((target) => [target.id, target]));
   renderTuning();
   setStateStatus(buildSimulatorState());
   let sequence = 0;
@@ -696,6 +746,7 @@ elements.tuning.addEventListener("click", async (event) => {
     }
   } else if (reset) {
     const targetId = Number(reset.dataset.resetTarget);
+    curveEditors.discard(targetId);
     if (simulator) {
       const target = tuningTargets.get(targetId);
       for (const parameter of target.parameters) parameter.current = parameter.compiled;
@@ -708,6 +759,7 @@ elements.tuning.addEventListener("click", async (event) => {
 });
 
 elements["reset-all"].addEventListener("click", async () => {
+  curveEditors.discardAll();
   if (simulator) {
     for (const target of tuningTargets.values()) {
       for (const parameter of target.parameters) parameter.current = parameter.compiled;

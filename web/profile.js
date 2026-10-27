@@ -128,14 +128,26 @@ export function renderDevicetreeSnippet(targets) {
   ];
   for (const target of available) {
     lines.push("", `/* ${target.label} (${target.stableId}) */`, `&{${target.devicetreePath}} {`);
+    /* Integer parameters sharing a property are that array's elements, in
+     * parameter-id order; the array goes where its first element would. */
+    const arrays = new Map();
+    for (const parameter of target.parameters) {
+      if (parameter.type === 1) continue;
+      const elements = arrays.get(parameter.devicetreeProperty) ?? [];
+      elements.push(parameter);
+      arrays.set(parameter.devicetreeProperty, elements);
+    }
     for (const parameter of target.parameters) {
       if (parameter.type === 1) {
         lines.push(parameter.current
           ? `    ${parameter.devicetreeProperty};`
           : `    /delete-property/ ${parameter.devicetreeProperty};`);
-      } else {
-        lines.push(`    ${parameter.devicetreeProperty} = <${parameter.current}>;`);
+        continue;
       }
+      const elements = arrays.get(parameter.devicetreeProperty);
+      if (elements[0] !== parameter) continue;
+      const values = [...elements].sort((left, right) => left.id - right.id).map(({ current }) => current);
+      lines.push(`    ${parameter.devicetreeProperty} = <${values.join(" ")}>;`);
     }
     lines.push("};");
   }

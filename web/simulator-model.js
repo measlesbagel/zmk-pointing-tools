@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 
-import { STATE, TARGET_KIND } from "./protocol.js";
+import { STATE, TARGET_KIND, TUNING } from "./protocol.js";
 
 /* The smoke keymap's pipeline-telemetry stage targets, in registration
  * order: cursor pipeline (normalize, gate, transfer, quantizer), scroll
@@ -21,8 +21,8 @@ export const SIMULATED_STAGES = [
   { id: 11, label: "text-nav" },
 ];
 
-/* A state-status payload shaped like real firmware: no tuning targets,
- * ten observed stage targets with their stable identities. */
+/* A state-status payload shaped like real firmware: twelve observed stage
+ * targets with their stable identities. */
 export function buildSimulatorState() {
   return {
     schemaVersion: 2,
@@ -45,6 +45,55 @@ export function buildSimulatorEvent(targetId, event, flags, timestamp, sequence,
     sequence,
     values,
   };
+}
+
+function parameter(id, key, devicetreeProperty, minimum, maximum, compiled, label, unit, description) {
+  return {
+    id, type: TUNING.INTEGER, minimum, maximum, step: 1, compiled, current: compiled,
+    label, unit, description, key, devicetreeProperty,
+  };
+}
+
+/* The smoke keymap's cursor acceleration and coalescer as fully discovered
+ * tuning targets, mirroring the firmware parameter tables, so the curve
+ * editor can be tried without a keyboard. */
+export function buildSimulatorTuningTargets() {
+  const speeds = [0, 8, 20, 45, 90, 160, 260, 400];
+  const percents = [65, 66, 73, 99, 159, 225, 264, 283];
+  return [
+    {
+      id: 12,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "cursor-acceleration",
+      stableId: "cursor-acceleration",
+      devicetreePath: "/zpt_test_cursor_acceleration",
+      parameters: [
+        ...speeds.map((speed, i) => parameter(i, `curve-speed-${i + 1}`, "curve-speeds-mm-per-s", 0, 10000,
+          speed, `Point ${i + 1} speed`, "mm/s",
+          `Ball speed of curve point ${i + 1}. Point speeds must increase from point 1 to 8.`)),
+        ...percents.map((percent, i) => parameter(8 + i, `curve-sensitivity-${i + 1}`,
+          "curve-sensitivity-percent", 1, 1000, percent, `Point ${i + 1} sensitivity`, "%",
+          `Cursor sensitivity at curve point ${i + 1}, on top of the base gain.`)),
+        parameter(16, "speed-rise", "speed-rise-ms", 1, 200, 10, "Speed rise time", "ms",
+          "How quickly the speed estimate follows the ball speeding up."),
+        parameter(17, "speed-fall", "speed-fall-ms", 1, 200, 5, "Speed fall time", "ms",
+          "How quickly the speed estimate follows the ball slowing down."),
+      ],
+    },
+    {
+      id: 13,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "cursor-coalescer",
+      stableId: "cursor-coalescer",
+      devicetreePath: "/zpt_test_cursor_coalescer",
+      parameters: [
+        parameter(0, "usb-report-interval", "usb-report-interval-ms", 0, 1000, 1, "USB report interval", "ms",
+          "Shortest time between cursor reports over USB."),
+        parameter(1, "ble-report-interval", "ble-report-interval-ms", 0, 1000, 8, "Bluetooth report interval", "ms",
+          "Shortest time between cursor reports over Bluetooth."),
+      ],
+    },
+  ];
 }
 
 const SIMULATED_GESTURE_TICKS = 150;
