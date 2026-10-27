@@ -553,7 +553,8 @@ enum {
 #define ACCELERATION_SPEED(point)                                                                  \
     {                                                                                              \
         ACCELERATION_SPEED_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER, "curve-speed-" #point,   \
-            "curve-speeds-mm-per-s", 0, 10000, 1, "Point " #point " speed", "mm/s",                \
+            "curve-speeds-mm-per-s", 0, ZPT_CURSOR_ACCELERATION_MAX_SPEED_MM_PER_S, 1,             \
+            "Point " #point " speed", "mm/s",                                                      \
             "Ball speed of curve point " #point ". Point speeds must increase from point 1 to 8."  \
     }
 
@@ -562,9 +563,8 @@ enum {
         ACCELERATION_PERCENT_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER,                        \
             "curve-sensitivity-" #point, "curve-sensitivity-percent", 1,                           \
             ZPT_CURSOR_ACCELERATION_MAX_PERCENT, 1, "Point " #point " sensitivity", "%",           \
-            "Cursor sensitivity at curve point " #point                                            \
-            ", on top of the base gain. The curve runs "                                           \
-            "smoothly between points and stays flat beyond the first and last."                    \
+            "Cursor sensitivity at curve point " #point ", on top of the base gain. The curve "    \
+            "runs smoothly between points and stays flat beyond the first and last."               \
     }
 
 static const struct zpt_tuning_parameter acceleration_parameters[] = {
@@ -584,12 +584,12 @@ static const struct zpt_tuning_parameter acceleration_parameters[] = {
     ACCELERATION_PERCENT(6),
     ACCELERATION_PERCENT(7),
     ACCELERATION_PERCENT(8),
-    {ACCELERATION_SPEED_RISE, ZPT_TUNING_VALUE_INTEGER, "speed-rise", "speed-rise-ms", 1, 200, 1,
-     "Speed rise time", "ms",
+    {ACCELERATION_SPEED_RISE, ZPT_TUNING_VALUE_INTEGER, "speed-rise", "speed-rise-ms", 1,
+     ZPT_CURSOR_ACCELERATION_MAX_TIME_CONSTANT_MS, 1, "Speed rise time", "ms",
      "How quickly the speed estimate follows the ball speeding up. Shorter makes flicks "
      "accelerate sooner; longer smooths out jitter."},
-    {ACCELERATION_SPEED_FALL, ZPT_TUNING_VALUE_INTEGER, "speed-fall", "speed-fall-ms", 1, 200, 1,
-     "Speed fall time", "ms",
+    {ACCELERATION_SPEED_FALL, ZPT_TUNING_VALUE_INTEGER, "speed-fall", "speed-fall-ms", 1,
+     ZPT_CURSOR_ACCELERATION_MAX_TIME_CONSTANT_MS, 1, "Speed fall time", "ms",
      "How quickly the speed estimate follows the ball slowing down. Shorter stops the cursor "
      "overshooting when you stop to aim."},
 };

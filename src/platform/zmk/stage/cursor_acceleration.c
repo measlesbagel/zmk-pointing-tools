@@ -40,8 +40,10 @@ ZPT_STAGE_PROVIDER_INIT_TUNABLE(cursor_acceleration, &zpt_cursor_acceleration_st
         DT_INST_PROP_LEN(inst, curve_speeds_mm_per_s) == ZPT_CURSOR_ACCELERATION_POINTS &&         \
             DT_INST_PROP_LEN(inst, curve_sensitivity_percent) == ZPT_CURSOR_ACCELERATION_POINTS,   \
         "curve-speeds-mm-per-s and curve-sensitivity-percent need 8 points each");                 \
-    BUILD_ASSERT(ZPT_CURSOR_ACCELERATION_SPEED(inst, 7) <= UINT16_MAX,                             \
-                 "curve-speeds-mm-per-s must fit in 16 bits");                                     \
+    BUILD_ASSERT(ZPT_CURSOR_ACCELERATION_SPEED(inst, 0) >= 0 &&                                    \
+                     ZPT_CURSOR_ACCELERATION_SPEED(inst, 7) <=                                     \
+                         ZPT_CURSOR_ACCELERATION_MAX_SPEED_MM_PER_S,                               \
+                 "curve-speeds-mm-per-s must lie from 0 to 10000");                                \
     BUILD_ASSERT(                                                                                  \
         ZPT_CURSOR_ACCELERATION_SPEED(inst, 0) < ZPT_CURSOR_ACCELERATION_SPEED(inst, 1) &&         \
             ZPT_CURSOR_ACCELERATION_SPEED(inst, 1) < ZPT_CURSOR_ACCELERATION_SPEED(inst, 2) &&     \
@@ -68,9 +70,11 @@ ZPT_STAGE_PROVIDER_INIT_TUNABLE(cursor_acceleration, &zpt_cursor_acceleration_st
                      IN_RANGE(ZPT_CURSOR_ACCELERATION_PERCENT(inst, 7), 1,                         \
                               ZPT_CURSOR_ACCELERATION_MAX_PERCENT),                                \
                  "curve-sensitivity-percent values must be from 1 to 1000");                       \
-    BUILD_ASSERT(IN_RANGE(DT_INST_PROP(inst, speed_rise_ms), 1, UINT16_MAX) &&                     \
-                     IN_RANGE(DT_INST_PROP(inst, speed_fall_ms), 1, UINT16_MAX),                   \
-                 "speed-rise-ms and speed-fall-ms must fit in 16 bits and be positive");           \
+    BUILD_ASSERT(IN_RANGE(DT_INST_PROP(inst, speed_rise_ms), 1,                                    \
+                          ZPT_CURSOR_ACCELERATION_MAX_TIME_CONSTANT_MS) &&                         \
+                     IN_RANGE(DT_INST_PROP(inst, speed_fall_ms), 1,                                \
+                              ZPT_CURSOR_ACCELERATION_MAX_TIME_CONSTANT_MS),                       \
+                 "speed-rise-ms and speed-fall-ms must be from 1 to 200");                         \
     static struct zpt_cursor_acceleration_provider_data                                            \
         zpt_cursor_acceleration_provider_data_##inst;                                              \
     static const struct zpt_cursor_acceleration_provider_config                                    \
