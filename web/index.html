@@ -171,12 +171,17 @@
       <details class="panel">
         <summary>Connection diagnostics</summary>
         <ul>
-          <li>The page must be served from <code>localhost</code> or HTTPS; opening it as a file will not work.</li>
+          <li>The page must be served from <code>localhost</code> or HTTPS (the hosted tuner is HTTPS); opening it as a file will not work.</li>
           <li>On Arch-derived systems, serial devices normally use the <code>uucp</code> group.</li>
           <li>The central half must produce a <code>/dev/ttyACM*</code> device when connected.</li>
           <li>Only one browser tab or native process can own the serial port.</li>
         </ul>
       </details>
+
+      <footer class="build">
+        <!-- The Pages deploy replaces this line with the deployed commit. -->
+        <span id="build">Local build</span>
+      </footer>
     </main>
     <script type="module" src="app.js"></script>
   </body>
