@@ -58,6 +58,21 @@ Emission is synchronous and streaming. Earlier sink output is not rolled back
 if a later emission fails. A stage must validate an atomic group before its
 first emission when partial output would be invalid.
 
+Stages do not nest on the stack. `zpt_stage_emit()` holds a stage's emission
+and returns 0, and the runtime dispatches it to the next stage once the
+emitting stage returns, so a pipeline needs the stack of one stage at a time
+whatever its length. When a stage emits again in the same call, the held
+emission is first finished downstream and that result is returned, so stages
+see signals in the same order, and a failure stops later emissions, as with
+immediate dispatch. The downstream result of a stage's last emission arrives
+only after the stage returns, so a stage emits as its final step and does not
+act on that result; every built-in stage ends with
+`return zpt_stage_emit(...)`.
+
+On ZMK, pipelines run on Zephyr's input thread. With the pipeline enabled the
+module raises `CONFIG_INPUT_THREAD_STACK_SIZE` to a 2048-byte default; a
+keyboard config can still set it explicitly.
+
 Every push, flush, or deactivation has a bounded dispatch budget. Each stage
 visit and sink visit spends one entry. Exhaustion returns `-E2BIG`, preventing
 an accidental fan-out cycle or unbounded multi-output stage from monopolizing

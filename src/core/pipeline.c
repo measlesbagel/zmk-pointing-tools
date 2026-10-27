@@ -6,11 +6,18 @@
 
 #include <zmk/pointing_tools/core/pipeline.h>
 
+/* A stage's latest emission waits here until the stage returns, and the
+ * operation then dispatches it to the next stage. Stages therefore run one
+ * after another at the same stack depth instead of nesting, so a pipeline's
+ * stack use does not grow with its length. */
 struct zpt_pipeline_operation {
     struct zpt_pipeline *pipeline;
     struct zpt_pipeline_result *result;
     uint32_t now_ms;
     uint32_t remaining_dispatches;
+    struct zpt_signal pending;
+    size_t pending_index;
+    bool has_pending;
 };
 
 struct zpt_stage_context {
@@ -64,20 +71,48 @@ static int dispatch_at(struct zpt_pipeline_operation *operation, size_t stage_in
     return stage->api->process(stage, signal, &context);
 }
 
+/* Dispatch held emissions until none is left or one fails. Each is copied
+ * out first, so the stage that receives it can emit without overwriting its
+ * own input. */
+static int drain(struct zpt_pipeline_operation *operation, int ret) {
+    while (ret == 0 && operation->has_pending) {
+        const struct zpt_signal next = operation->pending;
+        operation->has_pending = false;
+        ret = dispatch_at(operation, operation->pending_index, &next);
+    }
+    operation->has_pending = false;
+    return ret;
+}
+
 int zpt_stage_emit(struct zpt_stage_context *context, const struct zpt_signal *signal) {
     if (context == NULL || context->operation == NULL || signal == NULL ||
         context->stage_index >= context->operation->pipeline->stage_count) {
         return -EINVAL;
     }
 
-    const struct zpt_stage *stage = context->operation->pipeline->stages[context->stage_index];
+    struct zpt_pipeline_operation *operation = context->operation;
+    const struct zpt_stage *stage = operation->pipeline->stages[context->stage_index];
     if (signal->kind != stage->api->output_kind) {
         return -EPROTOTYPE;
     }
     if (stage->observer.frame != NULL) {
-        stage->observer.frame(stage, signal, context->operation->now_ms, stage->observer.user_data);
+        stage->observer.frame(stage, signal, operation->now_ms, stage->observer.user_data);
     }
-    return dispatch_at(context->operation, context->stage_index + 1U, signal);
+    /* A second emission from the same call finishes the first downstream
+     * before it is held, keeping emissions in order and letting a failure
+     * stop the rest, as if each had been dispatched when it was emitted. */
+    if (operation->has_pending) {
+        const struct zpt_signal earlier = operation->pending;
+        operation->has_pending = false;
+        int ret = drain(operation, dispatch_at(operation, operation->pending_index, &earlier));
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    operation->pending = *signal;
+    operation->pending_index = context->stage_index + 1U;
+    operation->has_pending = true;
+    return 0;
 }
 
 int zpt_stage_schedule_flush(struct zpt_stage_context *context, uint32_t deadline_ms) {
@@ -308,7 +343,7 @@ int zpt_pipeline_push(struct zpt_pipeline *pipeline, const struct zpt_signal *si
 
     struct zpt_pipeline_operation operation =
         begin_operation(pipeline, signal->metadata.observed_at_ms, result);
-    return dispatch_at(&operation, 0U, signal);
+    return drain(&operation, dispatch_at(&operation, 0U, signal));
 }
 
 int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
@@ -333,7 +368,7 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
             .operation = &operation,
             .stage_index = index,
         };
-        int ret = stage->api->flush(stage, now_ms, &context);
+        int ret = drain(&operation, stage->api->flush(stage, now_ms, &context));
         if (ret < 0) {
             return ret;
         }
@@ -391,7 +426,7 @@ int zpt_pipeline_deactivate(struct zpt_pipeline *pipeline, uint32_t now_ms,
             .operation = &operation,
             .stage_index = index,
         };
-        int ret = stage->api->deactivate(stage, now_ms, reason, &context);
+        int ret = drain(&operation, stage->api->deactivate(stage, now_ms, reason, &context));
         if (ret < 0 && first_error == 0) {
             first_error = ret;
         }
