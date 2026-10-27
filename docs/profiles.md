@@ -70,7 +70,24 @@ target, using the firmware-advertised node paths and property names:
 ```
 
 Boolean values use a property when enabled and `/delete-property/` when
-disabled. Review the generated overlay and either incorporate its values into
+disabled. Parameters that share a devicetree property are one array, written
+in parameter-id order, so an acceleration curve comes out as:
+
+```dts
+/* cursor-acceleration (cursor-acceleration) */
+&{/zpt_cursor_acceleration} {
+    curve-speeds-mm-per-s = <0 8 20 45 90 160 260 400>;
+    curve-sensitivity-percent = <65 66 73 99 159 225 264 283>;
+    speed-rise-ms = <10>;
+    speed-fall-ms = <5>;
+};
+```
+
+The tuner draws such a curve as a chart with draggable points, preset shapes
+(S-curve, Natural, Power, Classic, Synchronous, Flat) that sample into the
+eight points, and a gain view. Edits stay in the page until **Preview curve**
+sends all sixteen values as one batch. **Simulate** offers the smoke keymap's
+acceleration and coalescer targets, so the editor works without a keyboard. Review the generated overlay and either incorporate its values into
 the original nodes or commit the overlay in the consuming ZMK configuration.
 The generated text is a handoff aid, not an automatic repository edit.
 

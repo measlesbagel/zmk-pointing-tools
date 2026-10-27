@@ -66,3 +66,27 @@ test("renders reviewable devicetree overlays", () => {
 };
 `);
 });
+
+test("renders parameters sharing a property as one array", () => {
+  const curve = [{
+    id: 4,
+    stableId: "cursor-acceleration",
+    kind: 4,
+    label: "cursor-acceleration",
+    devicetreePath: "/zpt_cursor_acceleration",
+    parameters: [
+      { id: 1, key: "curve-speed-2", devicetreeProperty: "curve-speeds-mm-per-s", type: 0, current: 8 },
+      { id: 0, key: "curve-speed-1", devicetreeProperty: "curve-speeds-mm-per-s", type: 0, current: 0 },
+      { id: 2, key: "curve-sensitivity-1", devicetreeProperty: "curve-sensitivity-percent", type: 0, current: 65 },
+      { id: 3, key: "curve-sensitivity-2", devicetreeProperty: "curve-sensitivity-percent", type: 0, current: 70 },
+      { id: 4, key: "speed-rise", devicetreeProperty: "speed-rise-ms", type: 0, current: 10 },
+    ],
+  }];
+  assert.match(renderDevicetreeSnippet(curve), new RegExp([
+    "&\\{/zpt_cursor_acceleration\\} \\{",
+    "    curve-speeds-mm-per-s = <0 8>;",
+    "    curve-sensitivity-percent = <65 70>;",
+    "    speed-rise-ms = <10>;",
+    "\\};",
+  ].join("\n")));
+});

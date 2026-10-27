@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { STATE, TARGET_KIND } from "./protocol.js";
+import { STATE, TARGET_KIND, TUNING } from "./protocol.js";
 import { analyzeCalibration, parseStageFrame } from "./calibration-model.js";
 import {
   buildSimulatorEvent,
   buildSimulatorFrame,
   buildSimulatorState,
+  buildSimulatorTuningTargets,
   SIMULATED_STAGES,
 } from "./simulator-model.js";
 
@@ -44,6 +45,22 @@ test("simulator status enumerates the stage targets at the off level", () => {
     assert.equal(status.levels.get(id), STATE.OFF);
     assert.equal(status.labels.get(id), label);
   }
+});
+
+test("simulator offers the cursor acceleration and coalescer for tuning", () => {
+  const targets = buildSimulatorTuningTargets();
+  assert.deepEqual(targets.map(({ stableId }) => stableId), ["cursor-acceleration", "cursor-coalescer"]);
+  for (const target of targets) {
+    assert.equal(target.kind, TARGET_KIND.PIPELINE_STAGE);
+    assert.ok(!SIMULATED_STAGES.some(({ id }) => id === target.id));
+    for (const parameter of target.parameters) {
+      assert.equal(parameter.type, TUNING.INTEGER);
+      assert.ok(parameter.key && parameter.devicetreeProperty && parameter.description);
+      assert.ok(parameter.compiled >= parameter.minimum && parameter.compiled <= parameter.maximum);
+      assert.equal(parameter.current, parameter.compiled);
+    }
+  }
+  assert.equal(targets[0].parameters.length, 18);
 });
 
 test("simulated normalize frames calibrate like a real recording", () => {
