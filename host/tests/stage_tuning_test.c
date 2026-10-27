@@ -9,6 +9,8 @@
 #include <zmk/pointing_tools/core/signal.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
+#include <zmk/pointing_tools/stage/cursor_acceleration.h>
+#include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/cursor_transfer.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 #include <zmk/pointing_tools/stage/scroll_batcher.h>
@@ -127,6 +129,77 @@ static void test_axis_intent_rejects_release_above_engage(void) {
                                     &failed) == 0);
     assert(candidate.settings.release_ratio_percent == 320);
     assert(candidate.policy == ZPT_AXIS_POLICY_ADAPTIVE);
+}
+
+/* A whole curve moves in one batch; points that would cross are rejected
+ * with the point that failed to move on. Speeds take ids 0-7, sensitivities
+ * 8-15, then rise and fall. */
+static void test_acceleration_curve_moves_as_one_batch(void) {
+    const struct zpt_cursor_acceleration_config current = {
+        .curve_speed_mm_per_s = {0, 8, 20, 45, 90, 160, 260, 400},
+        .curve_percent = {65, 66, 73, 99, 159, 225, 264, 283},
+        .speed_rise_ms = 10,
+        .speed_fall_ms = 5,
+    };
+    const struct zpt_stage_tuning_ops *ops = &zpt_cursor_acceleration_tuning_ops;
+    assert(ops->parameter_count == 2 * ZPT_CURSOR_ACCELERATION_POINTS + 2);
+    assert(strcmp(ops->parameters[0].key, "curve-speed-1") == 0);
+    assert(strcmp(ops->parameters[15].key, "curve-sensitivity-8") == 0);
+    for (size_t i = 0; i < ZPT_CURSOR_ACCELERATION_POINTS; i++) {
+        assert(strcmp(ops->parameters[i].devicetree_property, "curve-speeds-mm-per-s") == 0);
+        assert(strcmp(ops->parameters[ZPT_CURSOR_ACCELERATION_POINTS + i].devicetree_property,
+                      "curve-sensitivity-percent") == 0);
+        assert(get(ops, &current, (uint8_t)i) == current.curve_speed_mm_per_s[i]);
+        assert(get(ops, &current, (uint8_t)(ZPT_CURSOR_ACCELERATION_POINTS + i)) ==
+               current.curve_percent[i]);
+    }
+    assert(get(ops, &current, 16) == 10 && get(ops, &current, 17) == 5);
+
+    struct zpt_cursor_acceleration_config candidate;
+    uint8_t failed = UINT8_MAX;
+    /* Point 3 can't pass point 4 on its own... */
+    const struct zpt_tuning_value crossing[] = {{2, 50}};
+    assert(zpt_stage_tuning_prepare(ops, &current, crossing, 1, &candidate, &failed) == -EINVAL);
+    assert(failed == 3);
+
+    /* ...but a shifted curve arrives whole. */
+    const size_t curve_values = (size_t)2 * ZPT_CURSOR_ACCELERATION_POINTS;
+    struct zpt_tuning_value shifted[2U * ZPT_CURSOR_ACCELERATION_POINTS];
+    for (uint8_t i = 0; i < ZPT_CURSOR_ACCELERATION_POINTS; i++) {
+        shifted[i] = (struct zpt_tuning_value){i, current.curve_speed_mm_per_s[i] * 2};
+        shifted[ZPT_CURSOR_ACCELERATION_POINTS + i] =
+            (struct zpt_tuning_value){(uint8_t)(ZPT_CURSOR_ACCELERATION_POINTS + i), 100};
+    }
+    assert(zpt_stage_tuning_prepare(ops, &current, shifted, curve_values, &candidate, &failed) ==
+           0);
+    assert(candidate.curve_speed_mm_per_s[7] == 800 && candidate.curve_percent[0] == 100);
+    assert(candidate.speed_rise_ms == 10 && zpt_cursor_acceleration_validate(&candidate) == 0);
+}
+
+static enum zpt_cursor_link bluetooth(void) { return ZPT_CURSOR_LINK_BLE; }
+
+/* Both report intervals are tunable; the link query belongs to the platform
+ * and survives tuning and reset. */
+static void test_coalescer_keeps_its_link_query(void) {
+    const struct zpt_cursor_coalescer_config compiled = {
+        .usb_report_interval_ms = 1,
+        .ble_report_interval_ms = 8,
+        .current_link = bluetooth,
+    };
+    struct zpt_cursor_coalescer_config candidate;
+    const struct zpt_tuning_value values[] = {{0, 2}, {1, 15}};
+    uint8_t failed = UINT8_MAX;
+    assert(zpt_stage_tuning_prepare(&zpt_cursor_coalescer_tuning_ops, &compiled, values, 2,
+                                    &candidate, &failed) == 0);
+    assert(candidate.usb_report_interval_ms == 2 && candidate.ble_report_interval_ms == 15);
+    assert(candidate.current_link == bluetooth);
+    assert(zpt_cursor_coalescer_interval_ms(&candidate) == 15);
+
+    struct zpt_cursor_coalescer_config reset;
+    assert(zpt_stage_tuning_prepare_reset(&zpt_cursor_coalescer_tuning_ops, &compiled, &candidate,
+                                          &reset) == 0);
+    assert(reset.usb_report_interval_ms == 1 && reset.ble_report_interval_ms == 8);
+    assert(reset.current_link == bluetooth);
 }
 
 static void test_reset_restores_compiled_tunables_only(void) {
@@ -256,6 +329,8 @@ int main(void) {
     test_devicetree_units_read_back_exactly();
     test_prepare_builds_a_candidate();
     test_axis_intent_rejects_release_above_engage();
+    test_acceleration_curve_moves_as_one_batch();
+    test_coalescer_keeps_its_link_query();
     test_reset_restores_compiled_tunables_only();
     test_binding_drives_a_tuning_target();
     test_binding_rejects_malformed_targets();

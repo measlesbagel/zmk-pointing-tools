@@ -78,12 +78,17 @@ devicetree order:
 | `measlesbagel,zpt-stage-text-nav` | `horizontal-threshold`, `vertical-threshold`, `idle-timeout` |
 | `measlesbagel,zpt-stage-axis-intent` | `engage-ratio`, `release-ratio`, `activation-distance`, `window`, `idle-timeout` |
 | `measlesbagel,zpt-stage-axis-constraint` | `discard-unclassified`, `idle-timeout`, `fold-interval` |
-| `measlesbagel,zpt-stage-cursor-acceleration` | `slow-speed`, `fast-speed`, `slow-gain`, `fast-gain`, `speed-window` |
-| `measlesbagel,zpt-stage-cursor-coalescer` | `report-interval` |
+| `measlesbagel,zpt-stage-cursor-acceleration` | `curve-speed-1` to `curve-speed-8`, `curve-sensitivity-1` to `curve-sensitivity-8`, `speed-rise`, `speed-fall` |
+| `measlesbagel,zpt-stage-cursor-coalescer` | `usb-report-interval`, `ble-report-interval` |
 
 Values use the stage binding's devicetree units (micrometres, millimetres per
 second, steps per metre, milliseconds, percent), and each parameter's devicetree property is the
-binding property it came from. The target's stable id and label are the
+binding property it came from. Parameters that share a devicetree property are
+the elements of that array property, in parameter-id order: the acceleration
+curve's point speeds are ids 0 to 7 of `curve-speeds-mm-per-s` and its
+sensitivities ids 8 to 15 of `curve-sensitivity-percent`. A host moves a whole
+curve in one atomic batch, since firmware rejects point speeds that don't
+strictly increase. The target's stable id and label are the
 stage's `stable-id`. A change lands between frames: firmware holds every router
 while it swaps the stage's settings, so no frame sees half of a batch. Stages
 read their settings on every frame, so nothing else is reset. A stage that

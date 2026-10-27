@@ -15,9 +15,16 @@ static int32_t take_report_axis(int64_t *pending) {
     return (int32_t)value;
 }
 
-static bool interval_elapsed(const struct zpt_cursor_coalescer_config *config,
-                             const struct zpt_cursor_coalescer_state *state, uint32_t now_ms) {
-    return !state->have_report || now_ms - state->last_report_ms >= config->report_interval_ms;
+uint16_t zpt_cursor_coalescer_interval_ms(const struct zpt_cursor_coalescer_config *config) {
+    const enum zpt_cursor_link link =
+        config->current_link != NULL ? config->current_link() : ZPT_CURSOR_LINK_USB;
+    return link == ZPT_CURSOR_LINK_BLE ? config->ble_report_interval_ms
+                                       : config->usb_report_interval_ms;
+}
+
+static bool interval_elapsed(const struct zpt_cursor_coalescer_state *state, uint32_t now_ms,
+                             uint16_t interval_ms) {
+    return !state->have_report || now_ms - state->last_report_ms >= interval_ms;
 }
 
 static int arm(struct zpt_cursor_coalescer_state *state, struct zpt_stage_context *context,
@@ -34,9 +41,8 @@ static int arm(struct zpt_cursor_coalescer_state *state, struct zpt_stage_contex
 
 /* Send what the pending sum allows in one report, and arm a flush for any
  * remainder beyond the HID range. */
-static int send_report(const struct zpt_cursor_coalescer_config *config,
-                       struct zpt_cursor_coalescer_state *state, struct zpt_stage_context *context,
-                       uint32_t now_ms) {
+static int send_report(struct zpt_cursor_coalescer_state *state, struct zpt_stage_context *context,
+                       uint32_t now_ms, uint16_t interval_ms) {
     struct zpt_signal output = {
         .kind = ZPT_SIGNAL_POINTER_DELTA,
         .metadata = state->metadata,
@@ -52,7 +58,7 @@ static int send_report(const struct zpt_cursor_coalescer_config *config,
     state->have_report = true;
 
     if (state->pending_x != 0 || state->pending_y != 0) {
-        int ret = arm(state, context, now_ms + config->report_interval_ms);
+        int ret = arm(state, context, now_ms + interval_ms);
         if (ret < 0) {
             return ret;
         }
@@ -81,7 +87,6 @@ static int cursor_coalescer_stage_process(struct zpt_stage *stage, const struct 
         return -EINVAL;
     }
 
-    const struct zpt_cursor_coalescer_config *config = stage->config;
     struct zpt_cursor_coalescer_state *state = stage->state;
     const uint32_t now = zpt_stage_now_ms(context);
 
@@ -95,10 +100,11 @@ static int cursor_coalescer_stage_process(struct zpt_stage *stage, const struct 
     if (state->pending_x == 0 && state->pending_y == 0) {
         return 0;
     }
-    if (!state->armed && interval_elapsed(config, state, now)) {
-        return send_report(config, state, context, now);
+    const uint16_t interval_ms = zpt_cursor_coalescer_interval_ms(stage->config);
+    if (!state->armed && interval_elapsed(state, now, interval_ms)) {
+        return send_report(state, context, now, interval_ms);
     }
-    return arm(state, context, state->last_report_ms + config->report_interval_ms);
+    return arm(state, context, state->last_report_ms + interval_ms);
 }
 
 static int cursor_coalescer_stage_flush(struct zpt_stage *stage, uint32_t now_ms,
@@ -111,7 +117,7 @@ static int cursor_coalescer_stage_flush(struct zpt_stage *stage, uint32_t now_ms
     if (state->pending_x == 0 && state->pending_y == 0) {
         return 0;
     }
-    return send_report(stage->config, state, context, now_ms);
+    return send_report(state, context, now_ms, zpt_cursor_coalescer_interval_ms(stage->config));
 }
 
 const struct zpt_stage_api zpt_cursor_coalescer_stage_api = {

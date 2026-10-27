@@ -82,6 +82,9 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_DESCRIBE_PAYLOAD 512
+/* A target description carries 24 bytes plus label and unit per parameter;
+ * an acceleration curve's 18 parameters need about 800. */
+#define ZPT_MAX_TUNING_DESCRIPTION_PAYLOAD 1024
 #define ZPT_TUNING_ALL_TARGETS UINT8_MAX
 #define ZPT_TUNING_BATCH_HEADER_SIZE 2
 #define ZPT_TUNING_BATCH_VALUE_SIZE 5
@@ -376,7 +379,9 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         return;
     }
 
-    uint8_t payload[ZPT_MAX_DESCRIBE_PAYLOAD];
+    /* Too large for the worker's stack. Only the worker thread describes
+     * targets, and each description is sent before the next is built. */
+    static uint8_t payload[ZPT_MAX_TUNING_DESCRIPTION_PAYLOAD];
     size_t offset = 0;
     payload[offset++] = target_id;
     payload[offset++] = MIN(target->parameter_count, UINT8_MAX);

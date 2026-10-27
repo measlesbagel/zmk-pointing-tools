@@ -2,15 +2,26 @@
 
 description: |
   Cursor report coalescer over pointer deltas. Sends at most one report per
-  report-interval-ms, summing motion in between; motion after a quiet interval
-  goes out at once. Place it after cursor-quantizer.
+  report interval, summing motion in between; motion after a quiet interval
+  goes out at once. USB and Bluetooth have separate intervals, and the stage
+  follows whichever endpoint ZMK has selected. Place it after cursor-quantizer.
 
 compatible: "measlesbagel,zpt-stage-cursor-coalescer"
 
 include: measlesbagel,zpt-stage-base.yaml
 
 properties:
-  report-interval-ms:
+  usb-report-interval-ms:
     type: int
-    required: true
-    description: Shortest time between cursor reports; 0 sends every frame
+    default: 1
+    description: >
+      Shortest time between cursor reports over USB, which ZMK polls every
+      millisecond; 0 sends every frame
+
+  ble-report-interval-ms:
+    type: int
+    default: 8
+    description: >
+      Shortest time between cursor reports over Bluetooth. Match the
+      connection interval (7.5 to 15 ms with ZMK's defaults) so reports don't
+      queue faster than the link drains them; 0 sends every frame

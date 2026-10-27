@@ -28,10 +28,11 @@
     zpt_test_cursor_acceleration: zpt_test_cursor_acceleration {
         compatible = "measlesbagel,zpt-stage-cursor-acceleration";
         stable-id = "cursor-acceleration";
-        slow-speed-mm-per-s = <20>;
-        fast-speed-mm-per-s = <220>;
-        slow-gain-percent = <80>;
-        fast-gain-percent = <250>;
+        /* Eight curve points: ball speed (mm/s) and sensitivity (percent). */
+        curve-speeds-mm-per-s = <0 8 20 45 90 160 260 400>;
+        curve-sensitivity-percent = <65 66 73 99 159 225 264 283>;
+        speed-rise-ms = <10>;
+        speed-fall-ms = <5>;
     };
 
     zpt_test_cursor_transfer: zpt_test_cursor_transfer {
@@ -49,7 +50,8 @@
     zpt_test_cursor_coalescer: zpt_test_cursor_coalescer {
         compatible = "measlesbagel,zpt-stage-cursor-coalescer";
         stable-id = "cursor-coalescer";
-        report-interval-ms = <8>;
+        usb-report-interval-ms = <1>;
+        ble-report-interval-ms = <8>;
     };
 
     zpt_test_cursor_sink: zpt_test_cursor_sink {

@@ -540,94 +540,107 @@ const struct zpt_stage_tuning_ops zpt_axis_constraint_tuning_ops = {
 
 /* --- Cursor acceleration ------------------------------------------------- */
 
+/* Control point speeds take the first ids and their sensitivities the next,
+ * in point order, so each pair of devicetree arrays maps onto a contiguous
+ * id range. */
 enum {
-    ACCELERATION_SLOW_SPEED = 0,
-    ACCELERATION_FAST_SPEED,
-    ACCELERATION_SLOW_GAIN,
-    ACCELERATION_FAST_GAIN,
-    ACCELERATION_SPEED_WINDOW,
+    ACCELERATION_SPEED_FIRST = 0,
+    ACCELERATION_PERCENT_FIRST = ACCELERATION_SPEED_FIRST + ZPT_CURSOR_ACCELERATION_POINTS,
+    ACCELERATION_SPEED_RISE = ACCELERATION_PERCENT_FIRST + ZPT_CURSOR_ACCELERATION_POINTS,
+    ACCELERATION_SPEED_FALL,
 };
+
+#define ACCELERATION_SPEED(point)                                                                  \
+    {                                                                                              \
+        ACCELERATION_SPEED_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER, "curve-speed-" #point,   \
+            "curve-speeds-mm-per-s", 0, 10000, 1, "Point " #point " speed", "mm/s",                \
+            "Ball speed of curve point " #point ". Point speeds must increase from point 1 to 8."  \
+    }
+
+#define ACCELERATION_PERCENT(point)                                                                \
+    {                                                                                              \
+        ACCELERATION_PERCENT_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER,                        \
+            "curve-sensitivity-" #point, "curve-sensitivity-percent", 1,                           \
+            ZPT_CURSOR_ACCELERATION_MAX_PERCENT, 1, "Point " #point " sensitivity", "%",           \
+            "Cursor sensitivity at curve point " #point                                            \
+            ", on top of the base gain. The curve runs "                                           \
+            "smoothly between points and stays flat beyond the first and last."                    \
+    }
 
 static const struct zpt_tuning_parameter acceleration_parameters[] = {
-    {ACCELERATION_SLOW_SPEED, ZPT_TUNING_VALUE_INTEGER, "slow-speed", "slow-speed-mm-per-s", 0,
-     5000, 1, "Slow speed", "mm/s",
-     "Ball speed at or below which the slow gain applies. Gain ramps between the slow and fast "
-     "speeds."},
-    {ACCELERATION_FAST_SPEED, ZPT_TUNING_VALUE_INTEGER, "fast-speed", "fast-speed-mm-per-s", 1,
-     10000, 1, "Fast speed", "mm/s",
-     "Ball speed at or above which the fast gain applies. Keep it above the slow speed."},
-    {ACCELERATION_SLOW_GAIN, ZPT_TUNING_VALUE_INTEGER, "slow-gain", "slow-gain-percent", 1, 1000, 1,
-     "Slow gain", "%",
-     "Cursor gain for slow, precise movement, on top of the base gain. Below 100 slows fine "
-     "aiming."},
-    {ACCELERATION_FAST_GAIN, ZPT_TUNING_VALUE_INTEGER, "fast-gain", "fast-gain-percent", 1, 1000, 1,
-     "Fast gain", "%",
-     "Cursor gain for fast flicks, on top of the base gain. Equal to the slow gain turns "
-     "acceleration off."},
-    {ACCELERATION_SPEED_WINDOW, ZPT_TUNING_VALUE_INTEGER, "speed-window", "speed-window-ms", 1, 500,
-     1, "Speed window", "ms",
-     "How much recent motion the speed estimate averages. Longer is smoother but reacts later."},
+    ACCELERATION_SPEED(1),
+    ACCELERATION_SPEED(2),
+    ACCELERATION_SPEED(3),
+    ACCELERATION_SPEED(4),
+    ACCELERATION_SPEED(5),
+    ACCELERATION_SPEED(6),
+    ACCELERATION_SPEED(7),
+    ACCELERATION_SPEED(8),
+    ACCELERATION_PERCENT(1),
+    ACCELERATION_PERCENT(2),
+    ACCELERATION_PERCENT(3),
+    ACCELERATION_PERCENT(4),
+    ACCELERATION_PERCENT(5),
+    ACCELERATION_PERCENT(6),
+    ACCELERATION_PERCENT(7),
+    ACCELERATION_PERCENT(8),
+    {ACCELERATION_SPEED_RISE, ZPT_TUNING_VALUE_INTEGER, "speed-rise", "speed-rise-ms", 1, 200, 1,
+     "Speed rise time", "ms",
+     "How quickly the speed estimate follows the ball speeding up. Shorter makes flicks "
+     "accelerate sooner; longer smooths out jitter."},
+    {ACCELERATION_SPEED_FALL, ZPT_TUNING_VALUE_INTEGER, "speed-fall", "speed-fall-ms", 1, 200, 1,
+     "Speed fall time", "ms",
+     "How quickly the speed estimate follows the ball slowing down. Shorter stops the cursor "
+     "overshooting when you stop to aim."},
 };
 
-static int32_t fixed_to_rounded_integer(int64_t value) {
-    const int64_t half = ZPT_FIXED_ONE / 2;
-    const int64_t rounded =
-        value >= 0 ? (value + half) / ZPT_FIXED_ONE : (value - half) / ZPT_FIXED_ONE;
-    return rounded > INT32_MAX ? INT32_MAX : (rounded < INT32_MIN ? INT32_MIN : (int32_t)rounded);
+_Static_assert(ZPT_ARRAY_SIZE(acceleration_parameters) == ACCELERATION_SPEED_FALL + 1,
+               "every curve point needs a speed and a sensitivity parameter");
+
+/* Every acceleration parameter is a uint16 field. */
+static const uint16_t *acceleration_field(const struct zpt_cursor_acceleration_config *config,
+                                          uint8_t parameter_id) {
+    if (parameter_id < ACCELERATION_PERCENT_FIRST) {
+        return &config->curve_speed_mm_per_s[parameter_id - ACCELERATION_SPEED_FIRST];
+    }
+    if (parameter_id < ACCELERATION_SPEED_RISE) {
+        return &config->curve_percent[parameter_id - ACCELERATION_PERCENT_FIRST];
+    }
+    if (parameter_id == ACCELERATION_SPEED_RISE) {
+        return &config->speed_rise_ms;
+    }
+    return parameter_id == ACCELERATION_SPEED_FALL ? &config->speed_fall_ms : NULL;
 }
 
 static int acceleration_get(const void *config, uint8_t parameter_id, int32_t *value) {
-    const struct zpt_cursor_acceleration_config *acceleration = config;
-    switch (parameter_id) {
-    case ACCELERATION_SLOW_SPEED:
-        *value = fixed_to_rounded_integer(acceleration->slow_speed);
-        return 0;
-    case ACCELERATION_FAST_SPEED:
-        *value = fixed_to_rounded_integer(acceleration->fast_speed);
-        return 0;
-    case ACCELERATION_SLOW_GAIN:
-        *value = acceleration->slow_gain_percent;
-        return 0;
-    case ACCELERATION_FAST_GAIN:
-        *value = acceleration->fast_gain_percent;
-        return 0;
-    case ACCELERATION_SPEED_WINDOW:
-        *value = acceleration->speed_window_ms;
-        return 0;
-    default:
+    const uint16_t *field = acceleration_field(config, parameter_id);
+    if (field == NULL) {
         return -ENOENT;
     }
+    *value = *field;
+    return 0;
 }
 
 static int acceleration_put(void *config, uint8_t parameter_id, int32_t value) {
-    struct zpt_cursor_acceleration_config *acceleration = config;
-    switch (parameter_id) {
-    case ACCELERATION_SLOW_SPEED:
-        acceleration->slow_speed = (zpt_fixed_t)value * ZPT_FIXED_ONE;
-        return 0;
-    case ACCELERATION_FAST_SPEED:
-        acceleration->fast_speed = (zpt_fixed_t)value * ZPT_FIXED_ONE;
-        return 0;
-    case ACCELERATION_SLOW_GAIN:
-        acceleration->slow_gain_percent = (uint16_t)value;
-        return 0;
-    case ACCELERATION_FAST_GAIN:
-        acceleration->fast_gain_percent = (uint16_t)value;
-        return 0;
-    case ACCELERATION_SPEED_WINDOW:
-        acceleration->speed_window_ms = (uint16_t)value;
-        return 0;
-    default:
+    /* The field belongs to the writable config passed in. */
+    uint16_t *field = (uint16_t *)acceleration_field(config, parameter_id);
+    if (field == NULL) {
         return -ENOENT;
     }
+    *field = (uint16_t)value;
+    return 0;
 }
 
 static int acceleration_validate(const void *config, uint8_t *failed_parameter_id) {
     const struct zpt_cursor_acceleration_config *acceleration = config;
-    /* The ramp needs a span to interpolate over. */
-    if (acceleration->fast_speed <= acceleration->slow_speed) {
-        *failed_parameter_id = ACCELERATION_FAST_SPEED;
-        return -EINVAL;
+    /* Ranges are checked already; the curve also needs increasing speeds
+     * to interpolate between. Blame the point that fails to move on. */
+    for (uint8_t point = 1; point < ZPT_CURSOR_ACCELERATION_POINTS; point++) {
+        if (acceleration->curve_speed_mm_per_s[point] <=
+            acceleration->curve_speed_mm_per_s[point - 1U]) {
+            *failed_parameter_id = ACCELERATION_SPEED_FIRST + point;
+            return -EINVAL;
+        }
     }
     return 0;
 }
@@ -644,30 +657,45 @@ const struct zpt_stage_tuning_ops zpt_cursor_acceleration_tuning_ops = {
 /* --- Cursor coalescer ---------------------------------------------------- */
 
 enum {
-    COALESCER_REPORT_INTERVAL = 0,
+    COALESCER_USB_REPORT_INTERVAL = 0,
+    COALESCER_BLE_REPORT_INTERVAL,
 };
 
 static const struct zpt_tuning_parameter coalescer_parameters[] = {
-    {COALESCER_REPORT_INTERVAL, ZPT_TUNING_VALUE_INTEGER, "report-interval", "report-interval-ms",
-     0, 1000, 1, "Report interval", "ms",
-     "Shortest time between cursor reports; motion in between is summed. 0 sends every frame."},
+    {COALESCER_USB_REPORT_INTERVAL, ZPT_TUNING_VALUE_INTEGER, "usb-report-interval",
+     "usb-report-interval-ms", 0, 1000, 1, "USB report interval", "ms",
+     "Shortest time between cursor reports over USB; motion in between is summed. 0 sends every "
+     "frame."},
+    {COALESCER_BLE_REPORT_INTERVAL, ZPT_TUNING_VALUE_INTEGER, "ble-report-interval",
+     "ble-report-interval-ms", 0, 1000, 1, "Bluetooth report interval", "ms",
+     "Shortest time between cursor reports over Bluetooth. Match the connection interval, "
+     "usually 7.5 to 15 ms, so reports don't queue up."},
 };
 
+static const uint16_t *coalescer_field(const struct zpt_cursor_coalescer_config *config,
+                                       uint8_t parameter_id) {
+    if (parameter_id == COALESCER_USB_REPORT_INTERVAL) {
+        return &config->usb_report_interval_ms;
+    }
+    return parameter_id == COALESCER_BLE_REPORT_INTERVAL ? &config->ble_report_interval_ms : NULL;
+}
+
 static int coalescer_get(const void *config, uint8_t parameter_id, int32_t *value) {
-    const struct zpt_cursor_coalescer_config *coalescer = config;
-    if (parameter_id != COALESCER_REPORT_INTERVAL) {
+    const uint16_t *field = coalescer_field(config, parameter_id);
+    if (field == NULL) {
         return -ENOENT;
     }
-    *value = coalescer->report_interval_ms;
+    *value = *field;
     return 0;
 }
 
 static int coalescer_put(void *config, uint8_t parameter_id, int32_t value) {
-    struct zpt_cursor_coalescer_config *coalescer = config;
-    if (parameter_id != COALESCER_REPORT_INTERVAL) {
+    /* The field belongs to the writable config passed in. */
+    uint16_t *field = (uint16_t *)coalescer_field(config, parameter_id);
+    if (field == NULL) {
         return -ENOENT;
     }
-    coalescer->report_interval_ms = (uint16_t)value;
+    *field = (uint16_t)value;
     return 0;
 }
 
