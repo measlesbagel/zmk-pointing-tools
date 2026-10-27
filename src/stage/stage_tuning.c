@@ -551,21 +551,29 @@ enum {
 };
 
 #define ACCELERATION_SPEED(point)                                                                  \
-    {                                                                                              \
-        ACCELERATION_SPEED_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER, "curve-speed-" #point,   \
-            "curve-speeds-mm-per-s", 0, ZPT_CURSOR_ACCELERATION_MAX_SPEED_MM_PER_S, 1,             \
-            "Point " #point " speed", "mm/s",                                                      \
-            "Ball speed of curve point " #point ". Point speeds must increase from point 1 to 8."  \
-    }
+    {ACCELERATION_SPEED_FIRST + (point) - 1,                                                       \
+     ZPT_TUNING_VALUE_INTEGER,                                                                     \
+     "curve-speed-" #point,                                                                        \
+     "curve-speeds-mm-per-s",                                                                      \
+     0,                                                                                            \
+     ZPT_CURSOR_ACCELERATION_MAX_SPEED_MM_PER_S,                                                   \
+     1,                                                                                            \
+     "Point " #point " speed",                                                                     \
+     "mm/s",                                                                                       \
+     "Ball speed of curve point " #point ". Point speeds must increase from point 1 to 8."}
 
 #define ACCELERATION_PERCENT(point)                                                                \
-    {                                                                                              \
-        ACCELERATION_PERCENT_FIRST + (point) - 1, ZPT_TUNING_VALUE_INTEGER,                        \
-            "curve-sensitivity-" #point, "curve-sensitivity-percent", 1,                           \
-            ZPT_CURSOR_ACCELERATION_MAX_PERCENT, 1, "Point " #point " sensitivity", "%",           \
-            "Cursor sensitivity at curve point " #point ", on top of the base gain. The curve "    \
-            "runs smoothly between points and stays flat beyond the first and last."               \
-    }
+    {ACCELERATION_PERCENT_FIRST + (point) - 1,                                                     \
+     ZPT_TUNING_VALUE_INTEGER,                                                                     \
+     "curve-sensitivity-" #point,                                                                  \
+     "curve-sensitivity-percent",                                                                  \
+     1,                                                                                            \
+     ZPT_CURSOR_ACCELERATION_MAX_PERCENT,                                                          \
+     1,                                                                                            \
+     "Point " #point " sensitivity",                                                               \
+     "%",                                                                                          \
+     "Cursor sensitivity at curve point " #point ", on top of the base gain. The curve "           \
+     "runs smoothly between points and stays flat beyond the first and last."}
 
 static const struct zpt_tuning_parameter acceleration_parameters[] = {
     ACCELERATION_SPEED(1),
