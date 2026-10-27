@@ -24,6 +24,14 @@ config ZMK_POINTING_TOOLS_PIPELINE
       stages, with a keypress suppression guard participating in every
       pass/buffer/drop decision.
 
+# Pipelines run on Zephyr's input thread, next to the input listener, the
+# processors before them, the router, and telemetry observers. Stages run one
+# after another rather than nested, so pipeline length does not add stack, but
+# Zephyr's 1 KiB default leaves no headroom; an overflow there silently
+# corrupts neighbouring thread stacks such as the Bluetooth controller's.
+config INPUT_THREAD_STACK_SIZE
+    default 2048 if ZMK_POINTING_TOOLS_PIPELINE
+
 config ZMK_POINTING_TOOLS_ROUTE_BEHAVIOR
     bool "Momentary pointing pipeline route behavior"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_ROUTE_BEHAVIOR))

@@ -123,6 +123,36 @@ static const struct zpt_stage_api duplicate_api = {
     .process = duplicate_process,
 };
 
+/* Records where each stage runs and in what order, then passes the signal
+ * on, or passes it on twice when the stage's state asks for it. */
+#define TRACE_CAPACITY 16U
+
+struct trace_state {
+    char visits[TRACE_CAPACITY + 1U];
+    size_t visit_count;
+    uintptr_t frames[TRACE_CAPACITY];
+};
+
+static struct trace_state trace;
+
+static int trace_process(struct zpt_stage *stage, const struct zpt_signal *signal,
+                         struct zpt_stage_context *context) {
+    if (trace.visit_count < TRACE_CAPACITY) {
+        trace.frames[trace.visit_count] = (uintptr_t)__builtin_frame_address(0);
+        trace.visits[trace.visit_count++] = stage->stable_id[0];
+    }
+    const bool *twice = stage->state;
+    int ret = zpt_stage_emit(context, signal);
+    return ret < 0 || twice == NULL || !*twice ? ret : zpt_stage_emit(context, signal);
+}
+
+static const struct zpt_stage_api trace_api = {
+    .strategy_id = "test-trace",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
+    .output_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+    .process = trace_process,
+};
+
 static int wrong_kind_process(struct zpt_stage *stage, const struct zpt_signal *signal,
                               struct zpt_stage_context *context) {
     (void)stage;
@@ -523,6 +553,92 @@ static void test_runtime_rejects_wrong_stage_output(void) {
     assert(result.outputs == 0 && sink_state.output_count == 0);
 }
 
+/* Each stage runs after the previous one returns, at the same stack depth,
+ * so a long pipeline needs no more stack than a short one. */
+static void test_stages_run_one_after_another(void) {
+    struct zpt_stage stage_storage[] = {
+        {.stable_id = "a", .api = &trace_api}, {.stable_id = "b", .api = &trace_api},
+        {.stable_id = "c", .api = &trace_api}, {.stable_id = "d", .api = &trace_api},
+        {.stable_id = "e", .api = &trace_api}, {.stable_id = "f", .api = &trace_api},
+    };
+    struct zpt_stage *stages[ARRAY_SIZE(stage_storage)];
+    for (size_t i = 0; i < ARRAY_SIZE(stages); i++) {
+        stages[i] = &stage_storage[i];
+    }
+    struct capture_sink_state sink_state = {0};
+    struct zpt_sink sink = {
+        .stable_id = "normalized-sink",
+        .api = &normalized_sink_api,
+        .state = &sink_state,
+    };
+    struct zpt_pipeline pipeline = {
+        .stable_id = "trace-pipeline",
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .stages = stages,
+        .stage_count = ARRAY_SIZE(stages),
+        .sink = &sink,
+        .dispatch_budget = 16,
+    };
+    assert(zpt_pipeline_validate(&pipeline) == 0);
+    assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+
+    trace = (struct trace_state){0};
+    struct zpt_signal input = normalized_signal(10, 1, 2);
+    struct zpt_pipeline_result result;
+    assert(zpt_pipeline_push(&pipeline, &input, &result) == 0);
+    assert(strcmp(trace.visits, "abcdef") == 0);
+    assert(sink_state.output_count == 1 && result.outputs == 1);
+    /* The first stage runs from the push itself; every later one runs from
+     * the same dispatch loop frame. */
+    for (size_t i = 2; i < ARRAY_SIZE(stages); i++) {
+        assert(trace.frames[i] == trace.frames[1]);
+    }
+}
+
+/* A stage that emits twice still sees the first emission finished
+ * downstream before its second, so stages visit in the same order as
+ * nested dispatch would. */
+static void test_repeated_emissions_keep_their_order(void) {
+    bool twice = true;
+    struct zpt_stage stage_storage[] = {
+        {.stable_id = "a", .api = &trace_api, .state = &twice},
+        {.stable_id = "b", .api = &trace_api, .state = &twice},
+        {.stable_id = "c", .api = &trace_api},
+    };
+    struct zpt_stage *stages[] = {&stage_storage[0], &stage_storage[1], &stage_storage[2]};
+    struct capture_sink_state sink_state = {0};
+    struct zpt_sink sink = {
+        .stable_id = "normalized-sink",
+        .api = &normalized_sink_api,
+        .state = &sink_state,
+    };
+    struct zpt_pipeline pipeline = {
+        .stable_id = "fan-out-pipeline",
+        .input_kind = ZPT_SIGNAL_NORMALIZED_MOTION,
+        .stages = stages,
+        .stage_count = ARRAY_SIZE(stages),
+        .sink = &sink,
+        .dispatch_budget = 16,
+    };
+    assert(zpt_pipeline_validate(&pipeline) == 0);
+    assert(zpt_pipeline_activate(&pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+
+    trace = (struct trace_state){0};
+    struct zpt_signal input = normalized_signal(10, 1, 2);
+    struct zpt_pipeline_result result;
+    assert(zpt_pipeline_push(&pipeline, &input, &result) == 0);
+    assert(strcmp(trace.visits, "abccbcc") == 0);
+    assert(sink_state.output_count == 4 && result.outputs == 4 && result.dispatches == 11);
+
+    /* Running out of budget inside the first emission stops the second. */
+    trace = (struct trace_state){0};
+    sink_state.output_count = 0;
+    pipeline.dispatch_budget = 4;
+    assert(zpt_pipeline_push(&pipeline, &input, &result) == -E2BIG);
+    assert(strcmp(trace.visits, "abc") == 0);
+    assert(sink_state.output_count == 1 && result.outputs == 1);
+}
+
 int main(void) {
     test_typed_pipeline_and_metadata();
     test_validation_rejects_incompatible_and_shared_state();
@@ -530,6 +646,8 @@ int main(void) {
     test_deadline_flush_and_wrap();
     test_lifecycle_emits_then_resets();
     test_runtime_rejects_wrong_stage_output();
+    test_stages_run_one_after_another();
+    test_repeated_emissions_keep_their_order();
     puts("pipeline tests passed");
     return 0;
 }
