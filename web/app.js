@@ -399,13 +399,15 @@ function renderDevices() {
             ${described.values.map((value) => `<option value="${value}" ${value === described.currentCpi ? "selected" : ""}>${value} CPI</option>`).join("")}
           </select>`
         : `<input type="number" data-device-value value="${described.currentCpi}" min="${described.range.min}" max="${described.range.max}" step="${described.range.step}">`;
-      body = `<div class="parameter ${modified ? "changed" : ""}" data-device="${device.id}">
+      body = `<div class="parameter ${modified ? "changed" : ""}">
         <label><span>Sensor resolution <small>(CPI)</small></span></label>
         <div class="parameter-control">${control}<button data-device-preview>Preview</button></div>
         <small>Compiled: ${described.defaultCpi} CPI${modified ? " · modified" : ""}</small>
       </div>`;
     }
-    return `<article class="tuning-target">
+    /* The whole card carries the id: Reset default sits in the heading,
+     * outside the resolution row. */
+    return `<article class="tuning-target" data-device="${device.id}">
       <div class="tuning-target-heading">
         <div><h3>${escapeHtml(device.label)}</h3><span>${badge}</span></div>
         <button data-device-reset ${device.settable ? "" : "disabled"}>Reset default</button>
@@ -774,16 +776,16 @@ elements["reset-all"].addEventListener("click", async () => {
 elements.devices.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-device-preview]");
   const reset = event.target.closest("[data-device-reset]");
-  const row = event.target.closest("[data-device]");
-  if (!row || (!preview && !reset)) return;
-  const deviceId = Number(row.dataset.device);
+  const card = event.target.closest("[data-device]");
+  if (!card || (!preview && !reset)) return;
+  const deviceId = Number(card.dataset.device);
   const device = devices.get(deviceId);
   if (!device?.description) return;
 
   /* Device previews reuse the preview message for resets too: sending the
    * compiled default restores it without a dedicated wire message. */
   const requested = preview
-    ? Number(row.querySelector("[data-device-value]")?.value ?? device.description.currentCpi)
+    ? Number(card.querySelector("[data-device-value]")?.value ?? device.description.currentCpi)
     : device.description.defaultCpi;
   if (!Number.isInteger(requested)) {
     notice("Enter a whole CPI value.", true);
