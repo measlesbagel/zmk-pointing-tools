@@ -2,6 +2,7 @@
 
 import { STATE, TARGET_KIND } from "./protocol.js";
 import { PROFILE_SCHEMA, PROFILE_VERSION } from "./profile.js";
+import { curvePoints, findCurve, sensitivityFunction } from "./acceleration-curve.js";
 
 /*
  * Repeated-gesture calibration over every-frame stage samples.
@@ -33,6 +34,7 @@ export const SIGNAL_FLAG = Object.freeze({
   CLIPPED: 1 << 4,
   SEQUENCE_GAP: 1 << 5,
   DISCONTINUITY: 1 << 6,
+  SAMPLE_SPAN_CLIPPED: 1 << 7,
 });
 
 const Q16 = 65536;
@@ -75,7 +77,7 @@ export const MODES = Object.freeze({
   }),
 });
 
-const ACCELERATION_KEYS = ["slow-speed", "fast-speed", "slow-gain", "fast-gain", "speed-window"];
+const ACCELERATION_TIME_KEYS = ["speed-rise", "speed-fall"];
 
 function asTargets(targets) {
   return targets instanceof Map ? [...targets.values()] : [...targets];
@@ -87,6 +89,10 @@ function hasKeys(target, keys) {
 
 function parameterByKey(target, key) {
   return target?.parameters?.find((parameter) => parameter.key === key);
+}
+
+function isAccelerationTarget(target) {
+  return hasKeys(target, ACCELERATION_TIME_KEYS) && findCurve(target) !== null;
 }
 
 /* Every tuning target a calibration mode can set, in discovery order. */
@@ -101,7 +107,7 @@ export function calibrationTargets(targets) {
 }
 
 export function accelerationTargets(targets) {
-  return asTargets(targets).filter((target) => hasKeys(target, ACCELERATION_KEYS));
+  return asTargets(targets).filter(isAccelerationTarget);
 }
 
 /* The acceleration target most likely to share a pipeline with the
@@ -124,15 +130,12 @@ export function matchAccelerationTarget(transfer, candidates) {
 
 /* An acceleration target's current values in the stage's own units. */
 export function accelerationConfig(target) {
-  if (!target || !hasKeys(target, ACCELERATION_KEYS)) return undefined;
-  const value = (key) => parameterByKey(target, key).current;
+  if (!target || !isAccelerationTarget(target)) return undefined;
   return {
     stableId: target.stableId,
-    slowSpeed: value("slow-speed"),
-    fastSpeed: value("fast-speed"),
-    slowGainPercent: value("slow-gain"),
-    fastGainPercent: value("fast-gain"),
-    speedWindowMs: value("speed-window"),
+    points: curvePoints(findCurve(target)),
+    speedRiseMs: parameterByKey(target, "speed-rise").current,
+    speedFallMs: parameterByKey(target, "speed-fall").current,
   };
 }
 
@@ -203,24 +206,42 @@ function mode(values) {
   return best;
 }
 
-/* Mirror of the firmware cursor-acceleration stage over millimetres: a
- * linearly decaying distance window gives speed, and the gain ramps
- * linearly between the slow and fast speeds. */
-function createAccelerationModel(config) {
-  let window = 0;
+const ACCELERATION_RESTART_MS = 40;
+const ACCELERATION_MIN_INTERVAL_MS = 1;
+const ACCELERATION_SPEED_LIMIT = 65535;
+
+/* The time a frame's displacement covers, as the firmware stage times it:
+ * the sample span when there is one, otherwise the time since the previous
+ * frame. A clipped span, a first frame, or a long gap is a restart. */
+function accelerationInterval(frame, last) {
+  if (frame.flags & SIGNAL_FLAG.SAMPLE_SPAN_CLIPPED) return ACCELERATION_RESTART_MS;
+  let interval = ACCELERATION_RESTART_MS;
+  if (frame.spanUs) {
+    interval = frame.spanUs / 1000;
+  } else if (last !== undefined && elapsed(last, frame.timestamp) < ACCELERATION_RESTART_MS) {
+    interval = elapsed(last, frame.timestamp);
+  }
+  return Math.min(Math.max(interval, ACCELERATION_MIN_INTERVAL_MS), ACCELERATION_RESTART_MS);
+}
+
+/* Mirror of the firmware cursor-acceleration stage over millimetres: each
+ * frame's speed over its own interval is smoothed with the rise and fall
+ * time constants, and the gain is the curve's sensitivity at that speed. */
+export function createAccelerationModel(config) {
+  const sensitivity = sensitivityFunction(config.points);
+  let speed = 0;
   let last;
-  return (dx, dy, timestamp) => {
-    const span = config.speedWindowMs;
-    const since = last === undefined ? span : elapsed(last, timestamp);
-    window = since >= span ? 0 : window * (span - since) / span;
-    window += Math.hypot(dx, dy);
-    last = timestamp;
-    const speed = window * 1000 / span;
-    const slow = config.slowGainPercent / 100;
-    const fast = config.fastGainPercent / 100;
-    if (speed <= config.slowSpeed) return slow;
-    if (speed >= config.fastSpeed) return fast;
-    return slow + (fast - slow) * (speed - config.slowSpeed) / (config.fastSpeed - config.slowSpeed);
+  return (dx, dy, frame) => {
+    const interval = accelerationInterval(frame, last);
+    const instant = Math.min(Math.hypot(dx, dy) * 1000 / interval, ACCELERATION_SPEED_LIMIT);
+    if (interval >= ACCELERATION_RESTART_MS) {
+      speed = instant;
+    } else {
+      const timeConstant = instant > speed ? config.speedRiseMs : config.speedFallMs;
+      speed += (instant - speed) * (1 - Math.exp(-interval / timeConstant));
+    }
+    last = frame.timestamp;
+    return sensitivity(speed) / 100;
   };
 }
 
@@ -259,7 +280,7 @@ export function measureGesture(frames, accelerate) {
     const dy = frame.y / Q16;
     x += dx;
     y += dy;
-    const gain = accelerate ? accelerate(dx, dy, frame.timestamp) : 1;
+    const gain = accelerate ? accelerate(dx, dy, frame) : 1;
     acceleratedX += dx * gain;
     acceleratedY += dy * gain;
     magnitudes.push(Math.hypot(dx, dy));

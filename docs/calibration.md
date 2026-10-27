@@ -82,8 +82,9 @@ The cursor quantizer emits `CPI / 25.4` pointer units per millimetre at unity
 gain, so cursor gain is relative to the CPI recorded during calibration and
 cursor speed still scales if CPI changes later. With an acceleration stage
 selected, each frame is weighted by the gain that stage's current
-parameters would apply, using the same linear-decay speed window and ramp, so
-`D` is the accelerated distance. The multiplier/divisor pair is the one with
+parameters would apply, using the same speed estimate (each frame timed by
+its sample span, smoothed with the rise and fall times, restarted after a
+pause) and the same curve, so `D` is the accelerated distance. The multiplier/divisor pair is the one with
 the smallest divisor within 0.1 % of the ideal gain.
 
 Values are clamped to the parameter's advertised range, and the panel says

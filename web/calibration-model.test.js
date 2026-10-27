@@ -10,12 +10,14 @@ import {
   analyzeCalibration,
   calibrationTargets,
   countSequenceGaps,
+  createAccelerationModel,
   createCalibrationExport,
   matchAccelerationTarget,
   parseStageFrame,
   rationalGain,
   segmentGestures,
 } from "./calibration-model.js";
+import { SHAPE_SPEEDS, sensitivityFunction } from "./acceleration-curve.js";
 import { prepareProfileImport } from "./profile.js";
 import { STATE, TARGET_KIND } from "./protocol.js";
 
@@ -85,7 +87,10 @@ const text = {
     parameter(2, "idle-timeout", 300, 1, 5000),
   ],
 };
-function acceleration(stableId, slowGain, fastGain) {
+/* The default trackball S-curve. */
+const S_CURVE = [65, 66, 73, 99, 159, 225, 264, 283];
+
+function acceleration(stableId, percents) {
   return {
     id: 2,
     kind: 4,
@@ -93,11 +98,10 @@ function acceleration(stableId, slowGain, fastGain) {
     stableId,
     devicetreePath: `/${stableId}`,
     parameters: [
-      parameter(0, "slow-speed", 25, 0, 5000),
-      parameter(1, "fast-speed", 250, 1, 10000),
-      parameter(2, "slow-gain", slowGain),
-      parameter(3, "fast-gain", fastGain),
-      parameter(4, "speed-window", 32, 1, 500),
+      ...SHAPE_SPEEDS.map((speed, i) => parameter(i, `curve-speed-${i + 1}`, speed, 0, 10000)),
+      ...percents.map((percent, i) => parameter(8 + i, `curve-sensitivity-${i + 1}`, percent)),
+      parameter(16, "speed-rise", 10, 1, 200),
+      parameter(17, "speed-fall", 5, 1, 200),
     ],
   };
 }
@@ -179,20 +183,50 @@ test("recommends cursor gain from CPI and the modelled acceleration", () => {
     mode: "cursor",
     desiredOutput: 1600,
     target: transfer,
-    acceleration: accelerationConfig(acceleration("left-cursor-acceleration", 50, 50)),
+    acceleration: accelerationConfig(acceleration("left-cursor-acceleration", new Array(8).fill(50))),
   });
   assert.deepEqual(halved.recommendation.parameters.map(({ value }) => value), [4, 1]);
 
-  /* 1.27 mm every 8 ms settles near 159 mm/s, between the ramp speeds, so
-   * the modelled gain sits between the slow and fast gains. */
-  const ramped = analyzeCalibration(recording, {
+  /* 1.27 mm every 8 ms is 158.75 mm/s. The estimate settles there within
+   * the first gesture, so the median gesture is scaled by the curve's
+   * sensitivity at that speed. */
+  const curved = analyzeCalibration(recording, {
     mode: "cursor",
     desiredOutput: 1600,
     target: transfer,
-    acceleration: accelerationConfig(acceleration("left-cursor-acceleration", 100, 200)),
+    acceleration: accelerationConfig(acceleration("left-cursor-acceleration", S_CURVE)),
   });
-  const ratio = ramped.summary.distanceMm.median / flat.summary.distanceMm.median;
-  assert.ok(ratio > 1.3 && ratio < 1.6, `ratio ${ratio}`);
+  const ratio = curved.summary.distanceMm.median / flat.summary.distanceMm.median;
+  const expected = sensitivityFunction(SHAPE_SPEEDS.map((speed, i) => ({ speed, percent: S_CURVE[i] })))(158.75) / 100;
+  assert.ok(Math.abs(ratio - expected) < 0.005, `ratio ${ratio}, expected ${expected}`);
+});
+
+test("models the acceleration stage's speed estimate", () => {
+  const config = accelerationConfig(acceleration("cursor-acceleration", S_CURVE));
+  assert.deepEqual(config.points[3], { speed: 45, percent: 99 });
+  assert.equal(config.speedRiseMs, 10);
+  assert.equal(config.speedFallMs, 5);
+
+  /* The S-curve rises strictly, so each gain pins down one speed. */
+  const curve = sensitivityFunction(config.points);
+  const gainAt = (speed) => curve(speed) / 100;
+  const close = (actual, speed) => assert.ok(Math.abs(actual - gainAt(speed)) < 1e-9, `${actual} vs ${speed} mm/s`);
+  const step = (model, mm, extra) => model(mm, 0, frame(extra.timestamp, mm, 0, extra));
+
+  /* One 10 ms span covering one rise time closes 1 - 1/e of the gap to
+   * 100 mm/s, as the firmware test of the same name expects. */
+  let model = createAccelerationModel(config);
+  close(step(model, 1, { timestamp: 10, spanUs: 10000 }), 100 * (1 - Math.exp(-1)));
+
+  /* Without spans the first frame restarts over the 40 ms interval, and a
+   * pause restarts again instead of carrying the old speed. */
+  model = createAccelerationModel(config);
+  close(step(model, 2, { timestamp: 0, spanUs: 0 }), 50);
+  assert.ok(step(model, 2, { timestamp: 8, spanUs: 0 }) > gainAt(50));
+  close(step(model, 1, { timestamp: 400, spanUs: 0 }), 25);
+
+  /* A clipped span is a restart even when a span is present. */
+  close(step(model, 4, { timestamp: 404, spanUs: 30000, flags: SIGNAL_FLAG.SAMPLE_SPAN_CLIPPED }), 100);
 });
 
 test("analysis is reproducible from the recording alone", () => {
@@ -233,8 +267,8 @@ test("calibrates the busiest source and ignores the other ball", () => {
 });
 
 test("finds calibratable targets and the matching acceleration stage", () => {
-  const left = acceleration("left-cursor-acceleration", 80, 250);
-  const right = acceleration("right-cursor-acceleration", 80, 250);
+  const left = acceleration("left-cursor-acceleration", S_CURVE);
+  const right = acceleration("right-cursor-acceleration", S_CURVE);
   const targets = new Map([[3, transfer], [7, scroll], [11, text], [2, left], [12, right]]);
   assert.deepEqual(calibrationTargets(targets).map(({ mode, target }) => `${mode}:${target.stableId}`), [
     "cursor:left-cursor-transfer",
