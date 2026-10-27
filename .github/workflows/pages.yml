@@ -1,0 +1,60 @@
+name: Deploy tuner to GitHub Pages
+
+# Publishes web/ as a static site at
+# https://measlesbagel.github.io/zmk-pointing-tools/. web/ has no build step:
+# the deploy copies it as is, minus the tests, and stamps the commit into the
+# page footer so the open version is identifiable.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push supersedes a queued one, but never
+# cancels a deploy that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run web tests
+        run: node --test web/*.test.js
+      - name: Assemble site
+        run: |
+          cp -r web _site
+          find _site -name '*.test.js' -delete
+          short=${GITHUB_SHA::7}
+          date=$(git log -1 --format=%cs)
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+          sed -i "s|<span id=\"build\">Local build</span>|<span id=\"build\">Build <a href=\"$url\">$short</a> · $date</span>|" _site/index.html
+          grep -q "Build <a" _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

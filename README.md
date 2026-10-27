@@ -75,7 +75,16 @@ subsystem.
 See [`docs/build.md`](docs/build.md) for host checks and the firmware smoke
 build.
 
+## Hosted tuner
+
+The tuner is published from `main` at
+<https://measlesbagel.github.io/zmk-pointing-tools/>. Open it in desktop Chrome
+or Edge to connect over Web Serial, simulate, or calibrate without cloning the
+repository. The commit it was built from is shown at the bottom of the page.
+
 ## Local tuner
+
+For offline use and development, serve `web/` locally.
 
 With Devenv 2.2 installed:
 
