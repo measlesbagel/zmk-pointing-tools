@@ -83,6 +83,8 @@ zpt_host_executable(source_ingress_test tests/source_ingress_test.c)
 zpt_host_executable(sensor_control_session_test tests/sensor_control_session_test.c)
 zpt_host_executable(stage_tuning_test tests/stage_tuning_test.c)
 zpt_host_executable(cursor_acceleration_test tests/cursor_acceleration_test.c)
+# The test checks the integer curve against a floating-point reference.
+target_link_libraries(cursor_acceleration_test PRIVATE m)
 zpt_host_executable(cursor_coalescer_test tests/cursor_coalescer_test.c)
 zpt_host_executable(zpt_noise_pipeline_replay runners/noise_pipeline_replay.c)
 zpt_host_executable(zpt_scroll_pipeline_replay runners/scroll_pipeline_replay.c)

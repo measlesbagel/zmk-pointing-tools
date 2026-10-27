@@ -37,8 +37,17 @@ struct fixture {
     struct zpt_pipeline pipeline;
 };
 
-static void fixture_init(struct fixture *fixture, uint16_t interval_ms) {
-    *fixture = (struct fixture){.config = {.report_interval_ms = interval_ms}};
+static enum zpt_cursor_link link_now = ZPT_CURSOR_LINK_USB;
+
+static enum zpt_cursor_link current_link(void) { return link_now; }
+
+/* USB and Bluetooth get the same interval unless a test says otherwise. */
+static void fixture_init_links(struct fixture *fixture, uint16_t usb_interval_ms,
+                               uint16_t ble_interval_ms) {
+    link_now = ZPT_CURSOR_LINK_USB;
+    *fixture = (struct fixture){.config = {.usb_report_interval_ms = usb_interval_ms,
+                                           .ble_report_interval_ms = ble_interval_ms,
+                                           .current_link = current_link}};
     fixture->stage = (struct zpt_stage){
         .stable_id = "cursor-coalescer",
         .api = &zpt_cursor_coalescer_stage_api,
@@ -61,6 +70,10 @@ static void fixture_init(struct fixture *fixture, uint16_t interval_ms) {
     };
     assert(zpt_pipeline_validate(&fixture->pipeline) == 0);
     assert(zpt_pipeline_activate(&fixture->pipeline, ZPT_RESET_PIPELINE_ENTERED) == 0);
+}
+
+static void fixture_init(struct fixture *fixture, uint16_t interval_ms) {
+    fixture_init_links(fixture, interval_ms, interval_ms);
 }
 
 static void push(struct fixture *fixture, uint32_t now_ms, int32_t x, int32_t y) {
@@ -188,6 +201,44 @@ static void test_reset_drops_pending_motion(void) {
     assert(fixture.capture.reports[1].data.delta.x == 4);
 }
 
+/* Each link keeps its own interval, and a switch applies from the next
+ * report on. */
+static void test_each_link_has_its_own_interval(void) {
+    struct fixture fixture;
+    fixture_init_links(&fixture, 1, 8);
+    for (uint32_t now = 0; now < 4; now++) {
+        advance(&fixture, now);
+        push(&fixture, now, 1, 0);
+    }
+    assert(fixture.capture.count == 4);
+
+    link_now = ZPT_CURSOR_LINK_BLE;
+    for (uint32_t now = 4; now < 20; now++) {
+        advance(&fixture, now);
+        push(&fixture, now, 1, 0);
+    }
+    advance(&fixture, 28);
+    /* The first frame after the switch waits out 8 ms from the last USB
+     * report at 3, so Bluetooth reports go at 11, 19, and 28. */
+    int64_t sent_x = 0;
+    for (uint32_t i = 0; i < fixture.capture.count; i++) {
+        sent_x += fixture.capture.reports[i].data.delta.x;
+        if (i > 4) {
+            assert(fixture.capture.reports[i].metadata.observed_at_ms -
+                       fixture.capture.reports[i - 1].metadata.observed_at_ms >=
+                   8);
+        }
+    }
+    assert(sent_x == 20);
+    assert(fixture.capture.count == 7);
+
+    /* Without a link query the stage uses the USB interval. */
+    fixture.config.current_link = NULL;
+    assert(zpt_cursor_coalescer_interval_ms(&fixture.config) == 1);
+    fixture.config.current_link = current_link;
+    assert(zpt_cursor_coalescer_interval_ms(&fixture.config) == 8);
+}
+
 int main(void) {
     test_leading_frame_goes_out_at_once();
     test_frames_within_an_interval_are_summed();
@@ -196,6 +247,7 @@ int main(void) {
     test_zero_frames_send_nothing();
     test_zero_interval_passes_every_frame();
     test_reset_drops_pending_motion();
+    test_each_link_has_its_own_interval();
     puts("cursor coalescer tests passed");
     return 0;
 }

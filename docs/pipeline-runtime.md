@@ -120,28 +120,45 @@ physical distance as the ball at its CPI and the transfer gain scales on top;
 with identity gain the composed path reproduces the count-domain cursor
 behavior within one sub-count unit.
 
-The cursor acceleration stage multiplies each frame by a gain that depends
-on ball speed: the slow gain at or below the slow speed, the fast gain at or
-above the fast speed, and linear in between. Speeds are millimetres per
-second and gains are percentages on top of the transfer gain, so a curve
-means the same thing at any CPI; equal gains turn it off, which is the
-binding default. Speed is the Euclidean distance within a sliding window that
-decays linearly (32 ms by default), divided by the window. That keeps the
-estimate steady when frames arrive unevenly or with millisecond timestamps,
-makes the first frame after a pause count as slow, and lets one gain scale
-both axes, so diagonals keep their direction and accelerate exactly like
-cardinal motion. Magnitudes round to nearest, so negative and positive
-motion scale symmetrically. The stage annotates each frame with its speed
-estimate.
+The cursor acceleration stage multiplies each frame by a sensitivity read
+from a curve through eight control points, each a ball speed in millimetres
+per second and a sensitivity in percent of the transfer gain, so a curve means
+the same thing at any CPI. Between points the curve is a monotone cubic
+(Fritsch-Carlson PCHIP): it passes through every point, never overshoots one,
+and has no corners, so the gain (how fast cursor speed grows with ball speed)
+changes smoothly as well. Before the first point and after the last it stays
+flat. The binding default suits a 684 CPI trackball, from 65 percent for
+aiming, through 100 percent near 45 mm/s, to 283 percent above 400 mm/s; a
+curve with every point at 100 turns acceleration off. Firmware evaluates the
+curve in Q16 integer arithmetic and agrees with the web tuner's
+floating-point drawing to within 0.05 percent.
+
+Speed is measured per frame: the distance (Euclidean, so diagonals accelerate
+exactly like cardinal motion and one sensitivity scales both axes) over the
+frame's own interval. Frames relayed from a split half carry the peripheral's
+sample span, which times them exactly even when several arrive together;
+local frames are timed from the previous arrival. The per-frame speed is
+smoothed with separate time constants for speeding up (10 ms by default) and
+slowing down (5 ms), so a flick reaches 90 percent of its speed in about
+23 ms and the cursor stops overshooting as soon as the ball slows to aim.
+After a gap of 40 ms or more, or a span too long for the split codec, the
+estimate restarts from the new frame judged over 40 ms, which makes the first
+frame after a pause count as slow. Magnitudes round to nearest, so negative
+and positive motion scale symmetrically. The stage annotates each frame with
+its speed estimate.
 
 The cursor coalescer sits after the quantizer and sends at most one report
 per report interval. A frame that arrives after a quiet interval goes out at
 once, so coalescing adds no latency to the start of a movement; later frames
 are summed and sent when the interval ends, flagged as coalesced. Sub-unit
 frames that quantize to zero send nothing, and a sum beyond the 16-bit HID
-range is carried into the next report instead of being dropped. Matching the
-interval to the host's report rate keeps a fast sensor from queueing reports
-faster than Bluetooth or USB can deliver them.
+range is carried into the next report instead of being dropped. USB and
+Bluetooth have separate intervals (1 ms and 8 ms by default) because ZMK polls
+USB every millisecond while a Bluetooth connection event comes every 7.5 to
+15 ms; the stage reads the endpoint ZMK selected on every frame, so switching
+output switches the interval from the next report on. Matching each interval
+to its link keeps a fast sensor from queueing reports faster than the link
+can deliver them.
 
 Stages carry an optional observer slot that receives generic decision
 events (suppression, discard, qualification, intent changes, flushes, and

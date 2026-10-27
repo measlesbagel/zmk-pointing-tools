@@ -2,37 +2,48 @@
 
 description: |
   Cursor acceleration stage over normalized motion. Scales each frame by a
-  gain that depends on ball speed: slow-gain-percent at or below
-  slow-speed-mm-per-s, fast-gain-percent at or above fast-speed-mm-per-s, and
-  linear in between. The defaults leave both gains at 100, which turns
-  acceleration off. Place it before cursor-transfer so speeds are ball speeds.
+  sensitivity read from a curve through eight control points: point N pairs
+  curve-speeds-mm-per-s[N] with curve-sensitivity-percent[N]. Between points
+  the curve is a smooth monotone cubic that never overshoots a point; before
+  the first point and after the last it stays flat. Sensitivities are percent
+  of the cursor-transfer gain, so a curve with every point at 100 turns
+  acceleration off. The defaults suit a 684 CPI trackball: 65 percent for slow
+  aiming, rising through 100 percent around 45 mm/s to 283 percent for fast
+  flicks.
+
+  Ball speed is measured per frame and smoothed with speed-rise-ms while the
+  ball speeds up and speed-fall-ms while it slows down. Place the stage
+  before cursor-transfer so speeds are ball speeds.
 
 compatible: "measlesbagel,zpt-stage-cursor-acceleration"
 
 include: measlesbagel,zpt-stage-base.yaml
 
 properties:
-  slow-speed-mm-per-s:
-    type: int
-    default: 25
-    description: Ball speed at or below which slow-gain-percent applies
+  curve-speeds-mm-per-s:
+    type: array
+    default: [0, 8, 20, 45, 90, 160, 260, 400]
+    description: >
+      Ball speed of each of the eight curve points, strictly increasing and
+      fitting a u16. The first may be 0.
 
-  fast-speed-mm-per-s:
-    type: int
-    default: 250
-    description: Ball speed at or above which fast-gain-percent applies; must exceed the slow speed
+  curve-sensitivity-percent:
+    type: array
+    default: [65, 66, 73, 99, 159, 225, 264, 283]
+    description: >
+      Sensitivity at each of the eight curve points, from 1 to 1000 percent of
+      the cursor-transfer gain.
 
-  slow-gain-percent:
+  speed-rise-ms:
     type: int
-    default: 100
-    description: Gain for slow movement, on top of the cursor-transfer base gain
+    default: 10
+    description: >
+      Time constant with which the speed estimate follows the ball speeding
+      up. Shorter makes flicks accelerate sooner; longer smooths jitter.
 
-  fast-gain-percent:
+  speed-fall-ms:
     type: int
-    default: 100
-    description: Gain for fast movement, on top of the cursor-transfer base gain
-
-  speed-window-ms:
-    type: int
-    default: 32
-    description: How much recent motion the speed estimate averages
+    default: 5
+    description: >
+      Time constant with which the speed estimate follows the ball slowing
+      down. Shorter stops the cursor overshooting when you stop to aim.

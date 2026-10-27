@@ -49,8 +49,8 @@ signed sensor counts to Q16 fixed-point millimetres using the frame's
 compiled CPI. The smoke keymap then composes three pipelines:
 
 - the cursor pipeline runs normalization, the coherent-displacement motion
-  gate, speed-based acceleration, a unit cursor transfer, the sub-pixel
-  cursor quantizer, and the report coalescer;
+  gate, an eight-point acceleration curve, a unit cursor transfer, the
+  sub-pixel cursor quantizer, and the report coalescer;
 - the scroll pipeline runs normalization, the axis-intent estimator, the
   axis-constraint, and the steps-per-metre scroll batcher, with a shared
   `measlesbagel,zpt-keypress-suppression` guard on the stateful stages;
@@ -62,7 +62,8 @@ compiled CPI. The smoke keymap then composes three pipelines:
 The cursor quantizer clamps each frame to the signed 16-bit HID movement
 range the cursor sink accepts; whole units beyond the range are dropped,
 while the fractional part stays in the remainder for later frames. The
-coalescer then sends at most one report per report interval and splits a sum
+coalescer then sends at most one report per report interval, using the
+USB or Bluetooth interval for whichever endpoint is selected, and splits a sum
 beyond that range over several reports, so nothing past the quantizer is
 dropped. The sink
 performs no scaling, clipping, accumulation, or cadence selection. After validating both axes, it emits `REL_X` followed by a
@@ -95,10 +96,9 @@ the cursor path is:
     my_cursor_acceleration: my_cursor_acceleration {
         compatible = "measlesbagel,zpt-stage-cursor-acceleration";
         stable-id = "cursor-acceleration";
-        slow-speed-mm-per-s = <20>;
-        fast-speed-mm-per-s = <220>;
-        slow-gain-percent = <80>;
-        fast-gain-percent = <250>;
+        /* Eight points: ball speed (mm/s) and sensitivity (percent). */
+        curve-speeds-mm-per-s = <0 8 20 45 90 160 260 400>;
+        curve-sensitivity-percent = <65 66 73 99 159 225 264 283>;
     };
 
     my_cursor_transfer: my_cursor_transfer {
@@ -116,7 +116,8 @@ the cursor path is:
     my_cursor_coalescer: my_cursor_coalescer {
         compatible = "measlesbagel,zpt-stage-cursor-coalescer";
         stable-id = "cursor-coalescer";
-        report-interval-ms = <8>;
+        usb-report-interval-ms = <1>;
+        ble-report-interval-ms = <8>;
     };
 
     my_cursor_sink: my_cursor_sink {
