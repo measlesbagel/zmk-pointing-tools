@@ -24,8 +24,8 @@ properties:
     type: array
     default: [0, 8, 20, 45, 90, 160, 260, 400]
     description: >
-      Ball speed of each of the eight curve points, strictly increasing and
-      fitting a u16. The first may be 0.
+      Ball speed of each of the eight curve points, strictly increasing,
+      from 0 to 10000.
 
   curve-sensitivity-percent:
     type: array
@@ -39,11 +39,13 @@ properties:
     default: 10
     description: >
       Time constant with which the speed estimate follows the ball speeding
-      up. Shorter makes flicks accelerate sooner; longer smooths jitter.
+      up, from 1 to 200. Shorter makes flicks accelerate sooner; longer
+      smooths jitter.
 
   speed-fall-ms:
     type: int
     default: 5
     description: >
       Time constant with which the speed estimate follows the ball slowing
-      down. Shorter stops the cursor overshooting when you stop to aim.
+      down, from 1 to 200. Shorter stops the cursor overshooting when you stop
+      to aim.
