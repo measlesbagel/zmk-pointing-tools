@@ -3,10 +3,21 @@
 description: >
   Split sensor-control agent. On a peripheral half, serves CPI requests the
   central relays through ZMK's split behavior invocation, and reports each
-  outcome as a packed relative input event from this behavior device. A
-  zmk,input-split node with this behavior as its device carries the reports
-  to the central proxy. The node name must be eight characters or fewer.
+  outcome as a packed relative input event on the split-input channel, where
+  the central proxy listens. The node name must be eight characters or fewer.
 
 compatible: "measlesbagel,zpt-sensor-control"
 
 include: zero_param.yaml
+
+properties:
+  split-input:
+    type: phandle
+    required: true
+    description: >
+      The zmk,input-split node whose channel carries the agent's answers.
+      Use the one the peripheral already sends its sensor motion on: ZMK's
+      central only subscribes reliably to one input-split channel per
+      peripheral, so answers on a second channel never arrive. The answers
+      skip that channel's input processors and use INPUT_REL_MISC, so motion
+      on the channel must not use that code.

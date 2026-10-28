@@ -105,8 +105,15 @@ back.
 ## 3. Split tunnel
 
 The central sends requests with ZMK's existing `INVOKE_BEHAVIOR` split
-command, so no ZMK changes are needed. Peripherals answer through an ordinary
-`zmk,input-split` channel.
+command, so no ZMK changes are needed. Peripherals answer on the
+`zmk,input-split` channel they already send their sensor's motion on.
+
+The answers share that channel because ZMK's central only subscribes
+reliably to one input-split characteristic per peripheral. Its discovery
+reads every input characteristic's CCC descriptor in one response, takes the
+second one for the first characteristic's format descriptor, and treats a
+slot with reg 0 as unfinished, so a second channel is never subscribed. The
+peripheral's notifications on it go nowhere and every request times out.
 
 ### Wiring
 
@@ -116,37 +123,33 @@ Shared devicetree, compiled into every half:
 zpt_cpi: zpt_cpi {
     compatible = "measlesbagel,zpt-sensor-control";
     #binding-cells = <0>;
-};
-
-split_inputs {
-    #address-cells = <1>;
-    #size-cells = <0>;
-
-    /* Use a reg no other split input uses. */
-    zpt_cpi_split: zpt_cpi_split@1 {
-        compatible = "zmk,input-split";
-        reg = <1>;
-        device = <&zpt_cpi>;
-    };
+    /* The channel the peripheral's sensor motion already uses. */
+    split-input = <&trackball_peripheral_split>;
 };
 
 zpt_cpi_proxy {
     compatible = "measlesbagel,zpt-sensor-control-proxy";
     agent = <&zpt_cpi>;
-    input = <&zpt_cpi_split>;
 };
 ```
 
 With `CONFIG_ZMK_POINTING_TOOLS_SENSOR_TUNNEL` (on by default when the agent
 node exists), peripherals build the agent and the central builds the proxy.
-The proxy listens on the split device directly, so no input listener is
-needed. Two rules are checked at build time:
+The agent hands its answers straight to the split transport, so they skip the
+channel's input processors. The proxy listens on the channel's split device
+directly, so no input listener is needed. Answers use `INPUT_REL_MISC`, which
+the channel's motion must not use; a listener on the channel ignores them.
+Two rules are checked at build time:
 
 - The agent's node name must be at most 8 characters, because ZMK's split
   relay truncates longer behavior names and the peripheral would never find
   it.
-- Some `zmk,input-split` node must name the agent as its device. Without one
-  the peripheral never forwards answers and every request times out.
+- `split-input` must name a `zmk,input-split` node.
+
+A peripheral without a sensor of its own can give the agent a dedicated
+channel, as long as it is that peripheral's only input-split channel. Its
+`device` can't be the agent, which would be a devicetree cycle; name any
+device that reports no input events, such as the kscan.
 
 ### Wire format
 
