@@ -3,8 +3,8 @@
 description: >
   Central-side relay for split sensor control. Sends CPI requests for
   peripheral-owned pointing devices to the agent behavior on the owning half
-  and listens for the agent's packed responses on a zmk,input-split device.
-  Built on the central only; declare at most one.
+  and listens for the agent's packed responses on the agent's split-input
+  channel. Built on the central only; declare at most one.
 
 compatible: "measlesbagel,zpt-sensor-control-proxy"
 
@@ -16,10 +16,3 @@ properties:
       The measlesbagel,zpt-sensor-control behavior to invoke on the owning
       half. ZMK's split relay carries at most eight characters of behavior
       name, so the agent's node name must be eight characters or fewer.
-
-  input:
-    type: phandle
-    required: true
-    description: >
-      The zmk,input-split node whose device is the agent behavior. Give it a
-      reg that no other split input uses.

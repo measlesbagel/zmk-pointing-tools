@@ -26,7 +26,7 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .4; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #07120e; font-weight: 700; }
 .notice { color: var(--muted); }
-.notice.error { color: var(--warning); }
+.notice.error, .device-error { color: var(--warning); }
 .build { margin-top: 28px; color: var(--muted); font-size: 12px; }
 .build a { color: inherit; }
 .panel { margin-top: 20px; padding: 18px; border: 1px solid var(--line); background: var(--panel); }

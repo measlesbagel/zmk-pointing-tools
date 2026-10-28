@@ -403,6 +403,7 @@ function renderDevices() {
         <label><span>Sensor resolution <small>(CPI)</small></span></label>
         <div class="parameter-control">${control}<button data-device-preview>Preview</button></div>
         <small>Compiled: ${described.defaultCpi} CPI${modified ? " · modified" : ""}</small>
+        ${device.error ? `<small class="device-error">${escapeHtml(device.error)}</small>` : ""}
       </div>`;
     }
     /* The whole card carries the id: Reset default sits in the heading,
@@ -508,13 +509,18 @@ function handleFrame(frame) {
       const device = devices.get(result.parameterId);
       if (result.status !== TUNING.STATUS_OK) {
         const messages = ["success", "unknown device", "unknown parameter", "not applicable to this device", "internal error", "the half that owns it didn't answer"];
-        if (device && result.status === DEVICE.STATUS_UNREACHABLE) {
-          device.reachable = false;
+        const reason = messages[result.status] ?? `status ${result.status}`;
+        if (device) {
+          /* The page notice sits far above this panel, so the card says it
+           * too. */
+          device.error = `Preview rejected: ${reason}.`;
+          if (result.status === DEVICE.STATUS_UNREACHABLE) device.reachable = false;
           renderDevices();
         }
-        notice(`Device preview rejected: ${messages[result.status] ?? `status ${result.status}`}.`, true);
+        notice(`Device preview rejected: ${reason}.`, true);
       } else if (device) {
         device.reachable = true;
+        device.error = undefined;
         if (device.description) device.description.currentCpi = result.value;
         renderDevices();
         notice(`${device.label} resolution preview updated. Changes remain temporary until reboot.`);

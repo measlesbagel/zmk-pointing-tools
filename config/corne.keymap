@@ -308,14 +308,17 @@
         compatible = "measlesbagel,zpt-telemetry";
     };
 
-    /* Split sensor-control tunnel, wired as a real keyboard would be. The
-     * peripheral builds the agent behavior, which serves CPI requests and
-     * reports each answer from its own device; the split input carries
-     * those reports to the central, where the proxy matches them to its
-     * requests. The agent's node name must stay within 8 characters. */
+    /* Split sensor-control tunnel. The peripheral builds the agent
+     * behavior, which serves CPI requests and answers on its split-input
+     * channel; the central's proxy listens there and matches answers to its
+     * requests. This smoke build has no peripheral sensor, so the tunnel
+     * gets a channel of its own; a real keyboard points split-input at the
+     * channel its sensor already uses. The agent's node name must stay
+     * within 8 characters. */
     zpt_cpi: zpt_cpi {
         compatible = "measlesbagel,zpt-sensor-control";
         #binding-cells = <0>;
+        split-input = <&zpt_cpi_split>;
     };
 
     split_inputs {
@@ -332,7 +335,6 @@
     zpt_cpi_proxy {
         compatible = "measlesbagel,zpt-sensor-control-proxy";
         agent = <&zpt_cpi>;
-        input = <&zpt_cpi_split>;
     };
 
     zpt_telemetry_pipeline {

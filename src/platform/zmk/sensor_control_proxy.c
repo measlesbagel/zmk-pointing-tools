@@ -25,10 +25,10 @@
 LOG_MODULE_REGISTER(zpt_sensor_proxy, CONFIG_ZMK_LOG_LEVEL);
 
 /* Central-half counterpart of the sensor-control agent: relays requests to
- * the owning peripheral through INVOKE_BEHAVIOR, listens on the
- * zmk,input-split device that carries the agent's packed responses, and
- * correlates them by sequence number. One request is outstanding at a time;
- * the host protocol's flow control already serializes callers. */
+ * the owning peripheral through INVOKE_BEHAVIOR, listens on the agent's
+ * split-input device for its packed responses, and correlates them by
+ * sequence number. One request is outstanding at a time; the host protocol's
+ * flow control already serializes callers. */
 
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
              "one sensor-control proxy serves every peripheral");
@@ -177,7 +177,7 @@ int zpt_sensor_control_get_remote(const struct zpt_pointing_device *device, uint
         return 0;                                                                                  \
     }                                                                                              \
     SYS_INIT(zpt_sensor_proxy_init_##inst, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);         \
-    INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_INST_PHANDLE(inst, input)), zpt_sensor_proxy_receive,   \
-                          NULL);
+    INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_PHANDLE(DT_INST_PHANDLE(inst, agent), split_input)),    \
+                          zpt_sensor_proxy_receive, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(ZPT_SENSOR_PROXY_DEFINE)
