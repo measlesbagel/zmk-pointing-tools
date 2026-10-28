@@ -313,7 +313,9 @@
      * channel; the central's proxy listens there and matches answers to its
      * requests. This smoke build has no peripheral sensor, so the tunnel
      * gets a channel of its own; a real keyboard points split-input at the
-     * channel its sensor already uses. The agent's node name must stay
+     * channel its sensor already uses. The channel needs some device, and
+     * naming the agent would be a devicetree cycle, so it names the kscan,
+     * which never reports input events. The agent's node name must stay
      * within 8 characters. */
     zpt_cpi: zpt_cpi {
         compatible = "measlesbagel,zpt-sensor-control";
@@ -328,7 +330,7 @@
         zpt_cpi_split: zpt_cpi_split@0 {
             compatible = "zmk,input-split";
             reg = <0>;
-            device = <&zpt_cpi>;
+            device = <&kscan0>;
         };
     };
 

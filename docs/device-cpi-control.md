@@ -147,8 +147,9 @@ Two rules are checked at build time:
 - `split-input` must name a `zmk,input-split` node.
 
 A peripheral without a sensor of its own can give the agent a dedicated
-channel whose `device` is the agent, as long as it is that peripheral's only
-input-split channel.
+channel, as long as it is that peripheral's only input-split channel. Its
+`device` can't be the agent, which would be a devicetree cycle; name any
+device that reports no input events, such as the kscan.
 
 ### Wire format
 
