@@ -149,7 +149,7 @@ export class CurveEditors {
     const shape = SHAPES.find(({ id }) => id === editor.shape);
     const shapeControls = shape
       ? `<div class="curve-shape">
-          <p class="muted">${esc(shape.summary)} Sampled into the eight points at fixed speeds.</p>
+          <p class="muted">${esc(shape.summary)} Sampled into the eight points at ${shape.speeds ? "speeds that follow its options" : "fixed speeds"}.</p>
           <div class="curve-options">${shape.options.map((option) => {
             const value = editor.shapeValues[option.id] ?? option.value;
             return `<label title="${esc(option.help)}"><span>${esc(option.label)} <output data-curve-option-value="${option.id}">${value}${option.unit ? ` ${esc(option.unit)}` : ""}</output></span>

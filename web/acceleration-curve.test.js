@@ -105,3 +105,21 @@ test("every preset samples into a valid curve", () => {
   const extreme = sampleShape(power, { base: 200, start: 1, exponent: 1.2, cap: 800 }, 500);
   assert.ok(extreme.every(({ percent }) => percent >= 1 && percent <= 500));
 });
+
+test("the precision preset dips below 1:1 for slow aiming and keeps fast gain", () => {
+  const curve = findCurve(accelerationTarget);
+  const precision = SHAPES.find(({ id }) => id === "precision");
+  const points = sampleShape(precision, shapeDefaults(precision));
+  assert.deepEqual(points.map(({ speed }) => speed), [0, 4, 10, 25, 54, 116, 250, 400]);
+  assert.deepEqual(points.map(({ percent }) => percent), [35, 35, 68, 100, 126, 174, 200, 200]);
+  const sensitivity = sensitivityFunction(points);
+  assert.ok(sensitivity(3) < 40);
+  assert.equal(sensitivity(25), 100);
+  /* Corners squeezed together still sample into a valid curve. */
+  for (const values of [
+    { floor: 15, floorUntil: 20, unity: 5, fast: 100, fastFrom: 50 },
+    { floor: 100, floorUntil: 1, unity: 100, fast: 600, fastFrom: 800 },
+  ]) {
+    assert.equal(validatePoints(sampleShape(precision, values), curve), null);
+  }
+});

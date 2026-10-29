@@ -1,15 +1,45 @@
 import {
   ACTIVITIES,
+  PRECISION_LAYOUT,
+  PRECISION_START,
   createRun,
   exportRun,
+  finishPrecisionTrial,
   finishRun,
+  observePrecisionPointer,
+  precisionTrials,
   recordArrow,
   recordClick,
   recordDrag,
   recordPointer,
   recordSelection,
   recordWheel,
+  startPrecisionTrial,
+  summarizePrecision,
 } from "./playground-model.js";
+
+const PRECISION_DWELL_MS = 500;
+const PRECISION_HISTORY_KEY = "zpt-precision-runs";
+const PRECISION_HISTORY_LIMIT = 20;
+
+/* Saved precision summaries live in this browser only; storage can be
+ * missing or full, and the test still runs without it. */
+function loadPrecisionHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PRECISION_HISTORY_KEY) ?? "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePrecisionHistory(history) {
+  try {
+    localStorage.setItem(PRECISION_HISTORY_KEY, JSON.stringify(history.slice(-PRECISION_HISTORY_LIMIT)));
+  } catch {
+    /* Comparison is lost on reload, nothing else. */
+  }
+}
 
 const TARGET_POSITIONS = [
   [12, 18], [82, 78], [22, 70], [74, 20], [48, 48], [88, 42],
@@ -37,6 +67,19 @@ export class PointingPlayground {
     this.resetButton = root.querySelector("[data-playground-reset]");
     this.finishButton = root.querySelector("[data-playground-finish]");
     this.exportButton = root.querySelector("[data-playground-export]");
+    this.precisionFields = root.querySelectorAll("[data-playground-precision]");
+    this.label = root.querySelector("[data-playground-label]");
+    this.acquire = root.querySelector("[data-playground-acquire]");
+    this.results = root.querySelector("[data-playground-results]");
+    this.acquire.addEventListener("change", () => {
+      this.run = undefined;
+      this.renderActivity();
+    });
+    this.results.addEventListener("click", (event) => {
+      if (!event.target.matches("[data-precision-clear]")) return;
+      savePrecisionHistory([]);
+      this.renderPrecisionResults();
+    });
 
     for (const category of [...new Set(ACTIVITIES.map(({ category }) => category))]) {
       const group = document.createElement("optgroup");
@@ -72,6 +115,7 @@ export class PointingPlayground {
 
   stop() {
     clearInterval(this.timer);
+    clearTimeout(this.dwellTimer);
     this.listeners?.abort();
     document.body.classList.remove("playground-running");
   }
@@ -85,6 +129,7 @@ export class PointingPlayground {
     this.renderActivity();
     this.startButton.disabled = true;
     this.activity.disabled = true;
+    this.acquire.disabled = true;
     this.resetButton.disabled = false;
     this.finishButton.disabled = false;
     this.exportButton.disabled = false;
@@ -101,6 +146,8 @@ export class PointingPlayground {
     document.body.classList.remove("playground-running");
     this.startButton.disabled = false;
     this.activity.disabled = false;
+    this.acquire.disabled = false;
+    clearTimeout(this.dwellTimer);
     this.finishButton.disabled = true;
     this.status.textContent = completed ? "Completed" : "Stopped";
     this.renderMetrics();
@@ -129,14 +176,17 @@ export class PointingPlayground {
     this.resetButton.disabled = !this.run;
     this.finishButton.disabled = !this.running;
     this.exportButton.disabled = !this.run;
+    const precision = this.activity.value === "cursor-precision";
+    for (const field of this.precisionFields) field.hidden = !precision;
+    this.results.hidden = !precision;
 
     switch (this.activity.value) {
     case "scroll-vertical": this.renderScroll("vertical"); break;
     case "scroll-horizontal": this.renderScroll("horizontal"); break;
     case "scroll-two-axis": this.renderScroll("both"); break;
     case "text-selection": this.renderText(); break;
-    case "cursor-targets": this.renderTargets(false); break;
-    case "cursor-precision": this.renderTargets(true); break;
+    case "cursor-targets": this.renderTargets(); break;
+    case "cursor-precision": this.renderPrecision(); break;
     case "cursor-path": this.renderPath(); break;
     case "click-drag": this.renderDrag(); break;
     }
@@ -146,6 +196,17 @@ export class PointingPlayground {
     if (!this.run) return;
     const metrics = this.run.metrics;
     const elapsed = this.run.durationMs ?? Date.now() - this.run.startedMs;
+    if (this.run.precision) {
+      const { trials, total, current } = this.run.precision;
+      const done = trials.length;
+      this.metrics.textContent = [
+        `${(elapsed / 1000).toFixed(1)} s`,
+        done >= total ? `${total} targets done` : current ? `Target ${done + 1} of ${total} · ${current} px` : "Acquire START to begin",
+        `${trials.reduce((sum, { corrections }) => sum + corrections, 0)} corrections`,
+        `${metrics.errors} misses`,
+      ].join(" · ");
+      return;
+    }
     this.metrics.textContent = [
       `${(elapsed / 1000).toFixed(1)} s`,
       `${metrics.wheelEvents} wheel frames`,
@@ -240,13 +301,11 @@ export class PointingPlayground {
     });
   }
 
-  renderTargets(precision) {
-    this.instructions.textContent = precision
-      ? "Click each small target in order. Misses and pointer path length are recorded."
-      : "Click each target in order. Misses, elapsed time, and pointer path length are recorded.";
-    const area = element("div", `playground-pointer-area ${precision ? "precision" : ""}`);
+  renderTargets() {
+    this.instructions.textContent = "Click each target in order. Misses, elapsed time, and pointer path length are recorded.";
+    const area = element("div", "playground-pointer-area");
     area.tabIndex = 0;
-    area.setAttribute("aria-label", precision ? "Precision cursor targets" : "Cursor targets");
+    area.setAttribute("aria-label", "Cursor targets");
     this.surface.append(area);
     let targetIndex = 0;
     let previous;
@@ -280,6 +339,164 @@ export class PointingPlayground {
       if (!this.running) return;
       previous = recordPointer(this.run, previous, { x: event.clientX, y: event.clientY });
     });
+  }
+
+  /* Shrinking targets acquired by holding still or clicking. Each trial is
+   * timed from the moment the previous target was acquired, so every run
+   * makes the same moves. */
+  renderPrecision() {
+    const hover = this.acquire.value === "hover";
+    this.instructions.textContent = `${hover ? "Hold the pointer still inside" : "Click inside"} START, then each target as it appears; they shrink from 32 to 4 px. ` +
+      "Label each run (say, Sniper held, then a curve) to compare them below. Set the computer's own pointer acceleration to flat first, or it adds its own curve.";
+    this.renderPrecisionResults();
+    this.surface.classList.add("precision");
+    const area = element("div", "playground-pointer-area precision");
+    area.tabIndex = 0;
+    area.setAttribute("aria-label", "Small-target precision test");
+    const box = element("div", "playground-precision-box");
+    box.style.width = `${PRECISION_LAYOUT.width}px`;
+    box.style.height = `${PRECISION_LAYOUT.height}px`;
+    const marker = element("div", "playground-precision-target");
+    box.append(marker);
+    area.append(box);
+    this.surface.append(area);
+
+    const trials = precisionTrials();
+    const results = [];
+    const start = { ...PRECISION_START, index: -1, distance: 0 };
+    let index = -1;
+    let state = startPrecisionTrial(start, start, performance.now());
+    let previous;
+    const target = () => (index < 0 ? start : trials[index]);
+    const show = () => {
+      const { x, y, size } = target();
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      marker.style.width = `${size}px`;
+      marker.style.height = `${size}px`;
+      marker.textContent = index < 0 ? "START" : "";
+      marker.classList.remove("inside");
+    };
+    show();
+    if (this.run && this.running) {
+      this.run.precision = {
+        label: this.label.value.trim() || `Run ${loadPrecisionHistory().length + 1}`,
+        acquire: this.acquire.value,
+        dwellMs: hover ? PRECISION_DWELL_MS : 0,
+        total: trials.length,
+        current: undefined,
+        trials: results,
+      };
+    }
+
+    const acquired = (now) => {
+      clearTimeout(this.dwellTimer);
+      if (index >= 0) {
+        results.push(finishPrecisionTrial(state, now, hover));
+        recordClick(this.run, true);
+      }
+      index += 1;
+      if (index >= trials.length) {
+        marker.remove();
+        this.finishPrecision(results);
+        return;
+      }
+      this.run.precision.current = trials[index].size;
+      state = startPrecisionTrial(trials[index], index === 0 ? start : trials[index - 1], now);
+      show();
+      this.renderMetrics();
+    };
+    const point = (event) => {
+      const bounds = box.getBoundingClientRect();
+      return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+    };
+
+    this.listen(area, "pointermove", (event) => {
+      if (!this.running || index >= trials.length) return;
+      for (const sample of event.getCoalescedEvents?.() ?? [event]) {
+        const position = point(sample);
+        previous = recordPointer(this.run, previous, position);
+        const wasInside = state.inside;
+        const inside = observePrecisionPointer(state, position, sample.timeStamp);
+        marker.classList.toggle("inside", inside);
+        if (!hover || inside === wasInside) continue;
+        clearTimeout(this.dwellTimer);
+        if (inside) {
+          const entered = state.enteredMs;
+          this.dwellTimer = setTimeout(() => acquired(entered + PRECISION_DWELL_MS), PRECISION_DWELL_MS);
+        }
+      }
+    });
+    this.listen(area, "click", (event) => {
+      if (!this.running || hover || index >= trials.length) return;
+      const position = point(event);
+      observePrecisionPointer(state, position, event.timeStamp);
+      if (state.inside) {
+        acquired(event.timeStamp);
+      } else {
+        if (index >= 0) state.misses += 1;
+        recordClick(this.run, false);
+        this.renderMetrics();
+      }
+    });
+    queueMicrotask(() => { if (this.dialog.open) area.focus(); });
+  }
+
+  finishPrecision(results) {
+    const { label, acquire } = this.run.precision;
+    const summary = summarizePrecision(results);
+    this.run.precision.summary = summary;
+    this.run.precision.current = undefined;
+    const history = loadPrecisionHistory();
+    history.push({ label, acquire, at: new Date().toISOString(), summary });
+    savePrecisionHistory(history);
+    this.complete();
+    this.renderPrecisionResults(history);
+  }
+
+  /* Saved runs side by side: per target size, the median time to land,
+   * how often the pointer left the target and came back, and the median
+   * overshoot past its far edge. */
+  renderPrecisionResults(history = loadPrecisionHistory()) {
+    if (!history.length) {
+      this.results.innerHTML = '<p class="muted">Finished runs appear here for comparison.</p>';
+      return;
+    }
+    const sizes = [...new Set(history.flatMap(({ summary }) => summary.sizes.map(({ size }) => size)))]
+      .sort((a, b) => b - a);
+    const table = element("table");
+    const head = table.createTHead().insertRow();
+    for (const heading of ["Run", "Acquire", "Total", "Throughput", ...sizes.map((size) => `${size} px`)]) {
+      head.append(element("th", undefined, heading));
+    }
+    const body = table.createTBody();
+    for (const { label, acquire, summary } of history.slice().reverse()) {
+      const row = body.insertRow();
+      row.insertCell().textContent = label;
+      row.insertCell().textContent = acquire === "click" ? "Click" : "Hold";
+      row.insertCell().textContent = `${(summary.totalTimeMs / 1000).toFixed(1)} s`;
+      row.insertCell().textContent = `${summary.throughput.toFixed(2)} bit/s`;
+      for (const size of sizes) {
+        const block = summary.sizes.find((item) => item.size === size);
+        row.insertCell().textContent = block
+          ? [
+            `${(block.medianTimeMs / 1000).toFixed(2)} s`,
+            `${block.corrections} fix`,
+            `${block.medianOvershootPx} px over`,
+            ...(block.misses ? [`${block.misses} miss`] : []),
+          ].join(" · ")
+          : "–";
+      }
+    }
+    const heading = element("div", "playground-results-heading");
+    heading.append(
+      element("span", undefined, "Saved runs, newest first. Times are medians per size; fix counts times the pointer left the target and came back."),
+    );
+    const clear = element("button", undefined, "Clear runs");
+    clear.type = "button";
+    clear.dataset.precisionClear = "";
+    heading.append(clear);
+    this.results.replaceChildren(heading, table);
   }
 
   renderPath() {

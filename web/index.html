@@ -49,6 +49,17 @@
               Activity
               <select data-playground-activity></select>
             </label>
+            <label data-playground-precision hidden>
+              Run label
+              <input type="text" data-playground-label placeholder="Sniper, Precision curve…" maxlength="40">
+            </label>
+            <label data-playground-precision hidden>
+              Acquire by
+              <select data-playground-acquire>
+                <option value="hover">Holding still 0.5 s</option>
+                <option value="click">Clicking</option>
+              </select>
+            </label>
             <button type="button" class="primary" data-playground-start>Start</button>
             <button type="button" data-playground-reset disabled>Reset</button>
             <button type="button" data-playground-finish disabled>Finish</button>
@@ -61,6 +72,7 @@
             Start the activity to collect measurements.
           </div>
           <div class="playground-surface" data-playground-surface></div>
+          <div class="playground-results" data-playground-results hidden></div>
           <p class="muted playground-note">
             Starting or resetting always restores the same activity state. While a run is active,
             the modal contains scrolling so the tuner page cannot move accidentally.
