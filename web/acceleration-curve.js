@@ -131,9 +131,55 @@ export function curveBatch(curve, points) {
 
 const option = (id, label, unit, min, max, step, value, help) => ({ id, label, unit, min, max, step, value, help });
 
+/* t eased in and out, held to 0..1. */
+const smoothstep = (t) => {
+  const u = Math.min(Math.max(t, 0), 1);
+  return u * u * (3 - 2 * u);
+};
+
+/* x/a as a 0..1 fraction of the way from a to b in log speed. */
+const logFraction = (x, a, b) => Math.log(x / a) / Math.log(b / a);
+
+/* The precision shape's corner speeds, kept apart so its segments exist. */
+function precisionCorners(p) {
+  const low = p.floorUntil;
+  const unity = Math.max(p.unity, low * 1.5);
+  const high = Math.max(p.fastFrom, unity * 1.5);
+  return { low, unity, high };
+}
+
 /* Preset shapes, from the curve families of libinput, RawAccel, and the
- * proposed trackball default. Each maps speed in mm/s to percent. */
+ * proposed trackball default. Each maps speed in mm/s to percent. A shape
+ * with speeds() samples at its own speeds instead of SHAPE_SPEEDS. */
 export const SHAPES = [
+  {
+    id: "precision",
+    label: "Precision",
+    summary: "Slows well below 1:1 for slow aiming, holds about 1:1 at working speed, and speeds up flicks. A starting point for replacing a Sniper layer, which runs at a flat 25 %.",
+    options: [
+      option("floor", "Floor", "%", 15, 100, 1, 35, "Sensitivity for fine aiming."),
+      option("floorUntil", "Floor until", "mm/s", 1, 20, 1, 4, "Speed below which the floor holds."),
+      option("unity", "1:1 at", "mm/s", 5, 100, 1, 25, "Speed where the curve crosses 100 %."),
+      option("fast", "Fast", "%", 100, 600, 5, 200, "Ceiling for flicks."),
+      option("fastFrom", "Fast from", "mm/s", 50, 800, 10, 250, "Speed where the ceiling is reached."),
+    ],
+    /* Eased in log speed from the floor to 100 % and from 100 % to the
+     * ceiling. */
+    percent: (v, p) => {
+      const { low, unity, high } = precisionCorners(p);
+      if (v <= low) return p.floor;
+      if (v < unity) return p.floor + (100 - p.floor) * smoothstep(logFraction(v, low, unity));
+      return 100 + (p.fast - 100) * smoothstep(logFraction(Math.min(v, high), unity, high));
+    },
+    /* Points at both corners, at 1:1, and spread in log speed between them,
+     * so the slow end gets as many points as the fast end. */
+    speeds: (p) => {
+      const { low, unity, high } = precisionCorners(p);
+      const between = (a, b, t) => a * (b / a) ** t;
+      return [0, low, between(low, unity, 0.5), unity, between(unity, high, 1 / 3),
+        between(unity, high, 2 / 3), high, high * 1.6];
+    },
+  },
   {
     id: "s-curve",
     label: "Smooth S-curve",
@@ -216,9 +262,20 @@ export function shapeDefaults(shape) {
   return Object.fromEntries(shape.options.map(({ id, value }) => [id, value]));
 }
 
+/* The speeds a shape samples at, whole and strictly increasing. */
+export function shapeSpeeds(shape, values) {
+  if (!shape.speeds) return SHAPE_SPEEDS;
+  const speeds = [];
+  for (const speed of shape.speeds(values)) {
+    const whole = Math.round(speed);
+    speeds.push(speeds.length && whole <= speeds.at(-1) ? speeds.at(-1) + 1 : whole);
+  }
+  return speeds;
+}
+
 /* Points sampling a shape, rounded and held to the firmware's range. */
 export function sampleShape(shape, values, maximumPercent = 1000) {
-  return SHAPE_SPEEDS.map((speed) => ({
+  return shapeSpeeds(shape, values).map((speed) => ({
     speed,
     percent: Math.min(Math.max(Math.round(shape.percent(speed, values)), 1), maximumPercent),
   }));
