@@ -67,6 +67,7 @@ let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new 
 let stateDirty = true;
 let decoder = new FrameDecoder();
 let calibration;
+let agentBridge;
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
     if (!transport) throw new Error("The keyboard connection is unavailable");
@@ -143,6 +144,7 @@ function renderTuning() {
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
   calibration?.refresh();
+  agentBridge?.renderState();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
     return;
@@ -375,6 +377,7 @@ function locationLabel(location) {
 }
 
 function renderDevices() {
+  agentBridge?.renderState();
   const supported = protocolReady || simulator;
   if (!supported || devices.size === 0) {
     elements.devices.innerHTML = supported
@@ -748,8 +751,9 @@ elements.tuning.addEventListener("click", async (event) => {
   }
 });
 
-function resetTarget(targetId) {
-  curveEditors.discard(targetId);
+/* The agent keeps unsaved curve drafts; the panel's buttons drop them. */
+function resetTarget(targetId, discardDraft = true) {
+  if (discardDraft) curveEditors.discard(targetId);
   if (simulator) {
     const target = tuningTargets.get(targetId);
     for (const parameter of target.parameters) parameter.current = parameter.compiled;
@@ -760,8 +764,8 @@ function resetTarget(targetId) {
   }
 }
 
-function resetAllTargets() {
-  curveEditors.discardAll();
+function resetAllTargets(discardDrafts = true) {
+  if (discardDrafts) curveEditors.discardAll();
   if (simulator) {
     for (const target of tuningTargets.values()) {
       for (const parameter of target.parameters) parameter.current = parameter.compiled;
@@ -773,7 +777,7 @@ function resetAllTargets() {
   }
 }
 
-elements["reset-all"].addEventListener("click", resetAllTargets);
+elements["reset-all"].addEventListener("click", () => resetAllTargets());
 
 elements.devices.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-device-preview]");
@@ -805,6 +809,18 @@ function previewDevice(deviceId, cpi) {
   } else if (transport) {
     tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST, encodeDevicePreview(deviceId, cpi));
   }
+}
+
+/* Names the current link, so agent captures from the simulator, another
+ * keyboard or an earlier connection are never sent to this one. A
+ * keyboard restart closes the port and makes a new transport. */
+const connectionIds = new WeakMap();
+function connectionId() {
+  if (transport) {
+    if (!connectionIds.has(transport)) connectionIds.set(transport, `keyboard-${crypto.randomUUID()}`);
+    return connectionIds.get(transport);
+  }
+  return simulator ? `simulator-${simulator}` : null;
 }
 
 /* Resolves once the keyboard has answered every queued request, or false
@@ -882,7 +898,7 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   },
 });
 
-new AgentBridge(document.getElementById("agent"), {
+agentBridge = new AgentBridge(document.getElementById("agent"), {
   notice,
   context: {
     session: () => {
@@ -910,10 +926,11 @@ new AgentBridge(document.getElementById("agent"), {
     precisionHistory: loadPrecisionHistory,
     profile: () => createTuningProfile(tuningTargets),
     devicetree: () => renderDevicetreeSnippet(tuningTargets),
+    connection: connectionId,
     previewValues,
     previewDevice,
-    resetTarget,
-    resetAll: resetAllTargets,
+    resetTarget: (targetId) => resetTarget(targetId, false),
+    resetAll: () => resetAllTargets(false),
     settled: requestsSettled,
   },
 });

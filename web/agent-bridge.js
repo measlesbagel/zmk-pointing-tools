@@ -1,10 +1,10 @@
 /* Lets the user hand the tuner's agent tools to an AI agent (#115). Allowing
- * access starts an agent session, registers its tools with the browser's
- * WebMCP model context and opens the local relay's widget, which forwards
- * them to a coding agent running @mcp-b/webmcp-local-relay on this
- * computer. Turning access off unregisters the tools and closes the widget
- * but leaves values as they are: Revert agent changes stays available until
- * the next session starts.
+ * access registers the agent tools with the browser's WebMCP model context
+ * and opens the local relay's widget, which forwards them to a coding agent
+ * running @mcp-b/webmcp-local-relay on this computer. Turning access off
+ * unregisters the tools and closes the widget but leaves values as they
+ * are. The revert point and snapshots belong to the connection, not to one
+ * access session, so they outlast turning access off and on.
  *
  * The widget is the relay's own, vendored and pinned. It is loaded here
  * rather than with the relay's embed.js, which reloads the page when the
@@ -52,8 +52,7 @@ export class AgentBridge {
     this.context = context;
     this.notice = notice;
     this.log = [];
-    this.session = undefined;
-    this.shownQuestions = "";
+    this.session = new AgentSession(context, () => this.render());
     this.toggle = root.querySelector("[data-agent-toggle]");
     this.status = root.querySelector("[data-agent-status]");
     this.logList = root.querySelector("[data-agent-log]");
@@ -72,7 +71,7 @@ export class AgentBridge {
       const id = event.target.closest("[data-question]")?.dataset.question;
       if (choice) this.answer(id, choice.dataset.choice);
       else if (dismiss) {
-        this.session?.dismiss(id);
+        this.session.dismiss(id);
         this.record("Dismissed a question");
       }
     });
@@ -100,15 +99,13 @@ export class AgentBridge {
     const controller = new AbortController();
     this.controller = controller;
     this.toggle.disabled = true;
-    this.session?.close();
-    this.session = new AgentSession(this.context, () => this.render());
     try {
       for (const tool of this.session.tools) {
         await context.registerTool({ ...tool, execute: (input) => this.call(tool, input) },
           { signal: controller.signal });
       }
       await this.openRelay();
-      this.notice("Agent access is on. The agent can preview settings; Revert agent changes undoes them.");
+      this.notice("Agent access is on. The agent can preview settings; Revert to pre-agent values undoes them.");
     } catch (error) {
       this.disable();
       this.notice(`Could not turn on agent access: ${error.message}`, true);
@@ -123,8 +120,8 @@ export class AgentBridge {
     this.controller = undefined;
     this.widget?.remove();
     this.widget = undefined;
-    this.session?.close();
-    if (this.session?.changed) this.notice("Agent access is off. The agent's changes stay until you revert them.");
+    this.session.close();
+    if (this.session.changed) this.notice("Agent access is off. The agent's changes stay until you revert them.");
     this.render();
   }
 
@@ -159,16 +156,19 @@ export class AgentBridge {
   }
 
   async revert() {
-    if (!this.session) return;
     this.revertButton.disabled = true;
     try {
-      const { changes, remaining } = await this.session.revert();
-      this.record(`Reverted agent changes: ${describeChanges(changes)}`);
-      this.notice(remaining.length
-        ? `Some values didn't revert: ${describeChanges(remaining)}. Try again.`
-        : "Restored the values from before the agent's first change.", remaining.length > 0);
+      const { changes, remaining, confirmed } = await this.session.revert();
+      this.record(`Reverted to pre-agent values: ${describeChanges(changes)}`);
+      if (!confirmed) {
+        this.notice("The keyboard hasn't confirmed every reverted value yet. Check the values, then revert again if needed.", true);
+      } else if (remaining.length) {
+        this.notice(`Some values didn't revert: ${describeChanges(remaining)}. Try again.`, true);
+      } else {
+        this.notice("Restored the values from before the agent's first change.");
+      }
     } catch (error) {
-      this.notice(`Could not revert agent changes: ${error.message}`, true);
+      this.notice(`Could not revert: ${error.message}`, true);
     } finally {
       this.revertButton.disabled = false;
       this.render();
@@ -185,7 +185,7 @@ export class AgentBridge {
   }
 
   answer(id, text) {
-    this.session?.answer(id, text);
+    this.session.answer(id, text);
     this.record(`Answered: ${text}`);
   }
 
@@ -227,16 +227,7 @@ export class AgentBridge {
     this.toggle.textContent = on ? "Turn off agent access" : "Allow agent";
     this.toggle.classList.toggle("primary", !on);
     if (!supported) this.toggle.disabled = true;
-    const calls = this.log.filter(({ kind }) => kind !== "user").length;
-    const changed = Boolean(this.session?.changed);
-    this.status.textContent = !supported
-      ? "This browser has no WebMCP. In Chrome, enable chrome://flags/#enable-webmcp-testing and relaunch."
-      : `${on ? `Agent access on · ${calls} tool call${calls === 1 ? "" : "s"}` : "Agent access off"}${
-        changed ? ` · agent changes ${on ? "applied" : "still applied"}` : ""}`;
-    this.status.classList.toggle("live", on);
-    this.status.classList.toggle("changed", changed);
-    this.revertButton.hidden = !changed;
-    this.renderSnapshots();
+    this.renderState();
     this.renderQuestions();
     this.logList.replaceChildren(...this.log.map(({ at, name, kind, ok, text, error }) => {
       const item = document.createElement("li");
@@ -253,36 +244,65 @@ export class AgentBridge {
     }));
   }
 
-  renderSnapshots() {
-    const names = [...(this.session?.snapshots.keys() ?? [])];
-    this.snapshotList.hidden = names.length === 0;
-    const label = document.createElement("span");
-    label.textContent = "Snapshots";
-    this.snapshotList.replaceChildren(label, ...names.map((name) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.snapshot = name;
-      button.textContent = name;
-      button.title = `Preview snapshot "${name}"`;
-      button.setAttribute("aria-pressed", String(this.session.snapshotMatches(name)));
-      return button;
-    }));
+  /* The parts that follow the tuner's values. The tuning and device
+   * panels call this whenever they render, so the status keeps up with
+   * edits by hand and disconnects. */
+  renderState() {
+    const supported = Boolean(modelContext());
+    const on = Boolean(this.controller);
+    const calls = this.log.filter(({ kind }) => kind !== "user").length;
+    const changed = this.session.changed;
+    this.status.textContent = !supported
+      ? "This browser has no WebMCP. In Chrome, enable chrome://flags/#enable-webmcp-testing and relaunch."
+      : `${on ? `Agent access on · ${calls} tool call${calls === 1 ? "" : "s"}` : "Agent access off"}${
+        changed ? " · values differ from before the agent" : ""}`;
+    this.status.classList.toggle("live", on);
+    this.status.classList.toggle("changed", changed);
+    this.revertButton.hidden = !changed;
+    this.renderSnapshots();
   }
 
-  /* Rebuilt only when the open questions change, so typing isn't lost. */
+  /* Rebuilt only when the names change, so focus stays on a button. */
+  renderSnapshots() {
+    const names = this.session.snapshots;
+    this.snapshotList.hidden = names.length === 0;
+    if (names.join("\n") !== [...this.snapshotList.querySelectorAll("[data-snapshot]")].map((button) => button.dataset.snapshot).join("\n")) {
+      const label = document.createElement("span");
+      label.textContent = "Snapshots";
+      this.snapshotList.replaceChildren(label, ...names.map((name) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.snapshot = name;
+        button.textContent = name;
+        return button;
+      }));
+    }
+    /* Marks the snapshot that matches the current values; not a toggle. */
+    for (const button of this.snapshotList.querySelectorAll("[data-snapshot]")) {
+      const current = this.session.snapshotMatches(button.dataset.snapshot);
+      button.classList.toggle("current", current);
+      button.setAttribute("aria-label", `Preview snapshot ${button.dataset.snapshot}${current ? " (matches the current values)" : ""}`);
+    }
+  }
+
+  /* Adds and removes cards one by one, so typing in another card isn't
+   * lost. */
   renderQuestions() {
-    const open = [...(this.session?.questions.values() ?? [])].filter(({ status }) => status === "pending");
-    const shown = open.map(({ id }) => id).join(",");
-    if (shown === this.shownQuestions) return;
-    const asked = open.some(({ id }) => !this.shownQuestions.split(",").includes(id));
-    this.shownQuestions = shown;
-    this.questionList.replaceChildren(...open.map(({ id, question, choices }) => {
+    const open = new Map([...this.session.questions.values()]
+      .filter(({ status }) => status === "pending").map((entry) => [entry.id, entry]));
+    for (const card of [...this.questionList.children]) {
+      if (!open.has(card.dataset.question)) card.remove();
+    }
+    const shown = new Set([...this.questionList.children].map((card) => card.dataset.question));
+    const asked = [...open.values()].filter(({ id }) => !shown.has(id));
+    for (const { id, question, choices } of asked) {
       const form = document.createElement("form");
       form.className = "agent-question";
       form.dataset.question = id;
       const heading = document.createElement("strong");
       heading.textContent = "Your agent asks";
       const text = document.createElement("p");
+      text.id = `agent-question-${id}`;
       text.textContent = question;
       const actions = document.createElement("div");
       actions.className = "agent-question-actions";
@@ -297,7 +317,7 @@ export class AgentBridge {
       input.type = "text";
       input.maxLength = 500;
       input.placeholder = "Type an answer";
-      input.setAttribute("aria-label", "Answer");
+      input.setAttribute("aria-labelledby", text.id);
       const send = document.createElement("button");
       send.type = "submit";
       send.className = "primary";
@@ -308,8 +328,8 @@ export class AgentBridge {
       dismiss.textContent = "Dismiss";
       actions.append(input, send, dismiss);
       form.append(heading, text, actions);
-      return form;
-    }));
-    if (asked) this.notice("Your agent asked you a question in Agent access.");
+      this.questionList.append(form);
+    }
+    if (asked.length) this.notice("Your agent asked you a question in Agent access.");
   }
 }

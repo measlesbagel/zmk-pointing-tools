@@ -34,7 +34,7 @@
           </div>
           <div class="panel-actions">
             <span class="status" data-agent-status role="status">Agent access off</span>
-            <button type="button" data-agent-revert hidden>Revert agent changes</button>
+            <button type="button" data-agent-revert hidden title="Restores every value to what it was before the agent's first change, including values you changed since.">Revert to pre-agent values</button>
             <button type="button" class="primary" data-agent-toggle>Allow agent</button>
           </div>
         </div>
@@ -44,7 +44,7 @@
             Add this MCP server to Claude Code, Amp, Codex, Cursor or another agent on this computer,
             then select <strong>Allow agent</strong>. The agent can preview values, like the Preview
             buttons do; it can't save them, flash or change telemetry levels.
-            <strong>Revert agent changes</strong> restores the values from before its first change.
+            <strong>Revert to pre-agent values</strong> restores the values from before its first change.
           </p>
           <pre data-agent-config></pre>
           <button type="button" data-agent-copy>Copy MCP config</button>

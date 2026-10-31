@@ -15,17 +15,20 @@ const makeTarget = () => ({
   ],
 });
 
+const makeDevices = () => [
+  [0, { id: 0, label: "right-ball", location: 0, reachable: true, settable: true,
+    description: { currentCpi: 2052, defaultCpi: 684, stale: false, devicetreePath: "/zpt_right_ball",
+      discrete: false, range: { min: 608, max: 4826, step: 38 } } }],
+  [1, { id: 1, label: "left-ball", location: 1, reachable: false, settable: true, description: undefined }],
+];
+
 /* A connected keyboard: previews change values unless the firmware is set
- * to reject them, and every request is answered at once. */
+ * to reject them, and every request is answered at once unless it's set to
+ * answer late. disconnect() and connect() clear and refill the tuner like
+ * the app does. */
 function context(overrides = {}) {
-  const target = makeTarget();
-  const targets = new Map([[3, target]]);
-  const devices = new Map([
-    [0, { id: 0, label: "right-ball", location: 0, reachable: true, settable: true,
-      description: { currentCpi: 2052, defaultCpi: 684, stale: false, devicetreePath: "/zpt_right_ball",
-        discrete: false, range: { min: 608, max: 4826, step: 38 } } }],
-    [1, { id: 1, label: "left-ball", location: 1, reachable: false, settable: true, description: undefined }],
-  ]);
+  const targets = new Map([[3, makeTarget()]]);
+  const devices = new Map(makeDevices());
   /* Frozen: the tools must never reorder or trim the tuner's live timeline. */
   const events = Object.freeze(Array.from({ length: 8 }, (_, index) => ({
     targetId: index % 2 ? 3 : 4, timestamp: index * 10, sequence: index, values: [index],
@@ -40,23 +43,36 @@ function context(overrides = {}) {
     precisionHistory: () => [],
     profile: () => ({ schema: "profile" }),
     devicetree: () => "/ { };",
+    link: "keyboard-1",
+    connection() { return this.link; },
+    disconnect() { this.link = null; targets.clear(); devices.clear(); },
+    connect(link) {
+      this.link = link;
+      targets.set(3, makeTarget());
+      for (const [id, device] of makeDevices()) devices.set(id, device);
+    },
     reject: false,
+    late: false,
+    unanswered: [],
     batches: [],
+    answer(apply) { if (this.late) this.unanswered.push(apply); else apply(); },
+    answerLate() { for (const apply of this.unanswered.splice(0)) apply(); },
     previewValues(targetId, values) {
       this.batches.push({ targetId, values });
       /* Like a refreshed description, new parameter objects replace the old. */
-      if (!this.reject) {
+      this.answer(() => {
         const item = targets.get(targetId);
+        if (this.reject || !item) return;
         item.parameters = item.parameters.map((parameter) => {
           const update = values.find(({ parameterId }) => parameterId === parameter.id);
           return update ? { ...parameter, current: update.value } : parameter;
         });
-      }
+      });
     },
-    previewDevice: (deviceId, cpi) => { devices.get(deviceId).description.currentCpi = cpi; },
+    previewDevice(deviceId, cpi) { this.answer(() => { devices.get(deviceId).description.currentCpi = cpi; }); },
     resetTarget: (targetId) => targets.get(targetId).parameters.forEach((parameter) => { parameter.current = parameter.compiled; }),
     resetAll() { for (const id of targets.keys()) this.resetTarget(id); },
-    settled: async () => true,
+    async settled() { return !this.late; },
     ...overrides,
   };
 }
@@ -156,10 +172,104 @@ test("revert restores the values from before the agent's first change", async ()
   const { changes, remaining } = await session.revert();
   assert.deepEqual([values(fake), cpi(fake), session.changed, remaining], [[30, 5], 2052, false, []]);
   assert.equal(changes.length, 3);
-  /* Changing back by hand also leaves nothing to revert. */
+});
+
+test("values set back by hand leave nothing to revert", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
   await call(session.tools, "preview_device_cpi", { device: "right-ball", cpi: 1216 });
-  await call(session.tools, "preview_device_cpi", { device: "right-ball", cpi: 2052 });
+  assert.equal(session.changed, true);
+  /* The user's own Preview, outside the agent tools. */
+  fake.devices().get(0).description.currentCpi = 2052;
   assert.equal(session.changed, false);
+  assert.equal((await call(session.tools, "get_session")).agent.changedValues, false);
+});
+
+test("revert after a disconnect fails instead of reporting success", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  fake.disconnect();
+  assert.equal(session.changed, false);
+  await assert.rejects(session.revert(), /Connect the keyboard/);
+  await assert.rejects(call(session.tools, "set_tuning_values", { target: "x", values: { a: 1 } }), /Connect the keyboard/);
+});
+
+test("a change whose connection goes away while waiting is unconfirmed", async () => {
+  const fake = context({ async settled() { this.disconnect(); return true; } });
+  const result = await call(new AgentSession(fake).tools, "set_tuning_values",
+    { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  assert.match(result.warning, /hasn't confirmed/);
+  assert.deepEqual(result.values.map(({ previous, current }) => [previous, current]), [[30, null]]);
+});
+
+test("a change the keyboard confirms late can still be reverted", async () => {
+  const fake = context({ late: true });
+  const session = new AgentSession(fake);
+  const result = await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  assert.match(result.warning, /hasn't confirmed/);
+  fake.answerLate();
+  assert.deepEqual([values(fake), session.changed], [[50, 5], true]);
+  /* An unconfirmed revert keeps the revert point too. */
+  const unconfirmed = await session.revert();
+  assert.equal(unconfirmed.confirmed, false);
+  fake.late = false;
+  const reverted = await session.revert();
+  assert.deepEqual([values(fake), reverted.confirmed, session.changed], [[30, 5], true, false]);
+});
+
+test("revert keeps its point while a target's values are still loading", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  const target = fake.targets().get(3);
+  const loaded = target.parameters;
+  target.parameters = [];
+  await session.revert();
+  target.parameters = loaded;
+  assert.equal(session.changed, true);
+  await session.revert();
+  assert.deepEqual([values(fake), session.changed], [[30, 5], false]);
+});
+
+test("a revert point and snapshots never reach another connection", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await call(session.tools, "save_snapshot", { name: "A" });
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  /* Same ids, other keyboard (or the simulator, or a restart). */
+  fake.connect("simulator-7");
+  fake.targets().get(3).parameters[0].current = 120;
+  const sent = fake.batches.length;
+  const reverted = await session.revert();
+  assert.deepEqual([reverted.changes, fake.batches.length, values(fake), session.changed], [[], sent, [120, 5], false]);
+  await assert.rejects(call(session.tools, "apply_snapshot", { name: "A" }), /No snapshot "A"/);
+  assert.deepEqual((await call(session.tools, "list_snapshots")).snapshots, []);
+});
+
+test("parallel changes report the values each one replaced", async () => {
+  const fake = context();
+  const tools = createAgentTools(fake);
+  const [first, second] = await Promise.all([50, 70].map((value) =>
+    call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": value } })));
+  assert.deepEqual([first.values[0].previous, second.values[0].previous, values(fake)[0]], [30, 50, 70]);
+});
+
+test("set_tuning_values rejects arrays and parameters named twice", async () => {
+  const fake = context();
+  const tools = createAgentTools(fake);
+  await assert.rejects(call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: [20] }), /object keyed/);
+  await assert.rejects(call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50, 0: 70 } }), /twice/);
+  /* Parameters without a key yet are listed by id. */
+  await assert.rejects(call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { x: 1 } }), /speed-rise-ms, 1 \(Speed fall\)/);
+  assert.equal(fake.batches.length, 0);
+});
+
+test("an earlier device error only fails a confirmed preview", async () => {
+  const fake = context({ late: true });
+  fake.devices().get(0).error = "Preview rejected: internal error.";
+  const result = await call(createAgentTools(fake), "preview_device_cpi", { device: "right-ball", cpi: 1216 });
+  assert.match(result.warning, /hasn't confirmed/);
 });
 
 test("snapshots switch between saved values", async () => {
@@ -202,7 +312,9 @@ test("ask_user returns at once and the answer arrives through polling", async ()
   const waiting = call(session.tools, "get_user_answer", { questionId: asked.questionId, waitSeconds: 30 });
   session.answer(asked.questionId, "4, a bit floaty");
   assert.deepEqual(await waiting, { questionId: asked.questionId, question: "Rate smoothness 1-5", status: "answered", answer: "4, a bit floaty" });
-  const second = await call(session.tools, "ask_user", { question: "Again?" });
+  const open = [];
+  for (const question of ["Again?", "And?", "More?"]) open.push(await call(session.tools, "ask_user", { question }));
+  await assert.rejects(call(session.tools, "ask_user", { question: "One too many?" }), /3 questions are already waiting/);
   session.close();
-  assert.equal((await call(session.tools, "get_user_answer", { questionId: second.questionId })).status, "cancelled");
+  assert.equal((await call(session.tools, "get_user_answer", { questionId: open[0].questionId })).status, "cancelled");
 });

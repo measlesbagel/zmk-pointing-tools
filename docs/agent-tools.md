@@ -66,18 +66,28 @@ keyboard validates each value, and the panels update as usual. Each call waits
 until the keyboard has answered and returns the values it accepted. With the
 simulator, values change in the tuner only.
 
-- The status shows **agent changes applied** while values differ from those
-  before the agent's first change in this access session.
-- **Revert agent changes** restores those values, including previews you set
-  by hand after that first change. It stays available after you turn access
-  off; turning access off leaves values as they are. Allowing access again
-  starts a new session, with its own starting values.
+- The agent's first change sets a revert point: every value as it was just
+  before. The status shows **values differ from before the agent** while the
+  current values differ from it, whoever changed them.
+- **Revert to pre-agent values** restores the revert point. That includes
+  previews you set by hand after the agent's first change, so set those again
+  afterwards if you want to keep them. Revert stays available after you turn
+  access off, which leaves values as they are, and turning access on again
+  keeps the same revert point. If the keyboard doesn't confirm every value,
+  the revert point stays so you can try again.
+- The revert point and snapshots belong to the connection. Disconnecting,
+  restarting the keyboard, or switching between the simulator and a keyboard
+  drops them, so values saved from one are never sent to another. The values
+  on the keyboard stay as they are until it restarts.
 - Snapshots the agent saves appear as buttons in the panel. Select one to
   switch to it yourself, so you can compare "A" and "B" while you use the
-  keyboard. The pressed button matches the current values.
+  keyboard. The highlighted button matches the current values. Switching
+  snapshots yourself sets the revert point too if the agent hasn't yet.
+- `reset_previews` leaves unsaved curve edits in the panel as drafts. The
+  panel's own reset buttons still discard them.
 - Questions from `ask_user` appear in the panel with any answer choices the
   agent offered and a text field. You can dismiss one instead of answering.
-  Turning access off cancels open questions.
+  At most three wait at once. Turning access off cancels open questions.
 
 ## Tools
 
@@ -110,7 +120,7 @@ repository: match nodes by stable id against your keymap before committing.
   drop every preview at once, is also marked `consequentialHint`. Run labels
   and your answers are text you typed and are marked as untrusted content.
 - Nothing the agent does persists: previews last until the keyboard restarts,
-  and **Revert agent changes** undoes them sooner.
+  and **Revert to pre-agent values** undoes them sooner.
 - The relay binds to loopback only.
 - The relay adds a few tools of its own. One, `webmcp_open_page`, can open a
   web page in your default browser. Its request to reload the tuner is ignored

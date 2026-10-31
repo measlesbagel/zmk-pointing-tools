@@ -12,6 +12,7 @@ const LEVELS = ["off", "decisions", "every-frame"];
 const ANSWER_WAIT_DEFAULT = 20;
 const ANSWER_WAIT_LIMIT = 45;
 const SNAPSHOT_LIMIT = 10;
+const QUESTION_LIMIT = 3;
 const SUMMARY_CHANGES = 3;
 
 /* Every result is a JSON object: the relay widget passes an object on as
@@ -114,7 +115,10 @@ function findDevice(context, reference) {
 }
 
 /* Every value a preview can change, by target and parameter id and by
- * device id. */
+ * device id, tagged with the connection it came from. Ids are only
+ * meaningful on that connection: the simulator, another keyboard or the
+ * same keyboard after a restart can reuse them for something else, and a
+ * restart always ends the connection. */
 function captureValues(context) {
   const targets = {};
   for (const target of context.targets().values()) {
@@ -124,7 +128,7 @@ function captureValues(context) {
   for (const device of context.devices().values()) {
     if (device.settable && device.description) devices[device.id] = device.description.currentCpi;
   }
-  return { targets, devices };
+  return { connection: context.connection(), targets, devices };
 }
 
 /* What differs between two captures, for values the tuner still has. */
@@ -149,6 +153,17 @@ function diffValues(context, from, to) {
   return changes;
 }
 
+/* Whether the tuner still has every value in a capture, so a diff against
+ * it covers all of them. */
+function covers(context, capture) {
+  const targets = context.targets();
+  const devices = context.devices();
+  return Object.entries(capture.targets).every(([id, values]) => {
+    const parameters = targets.get(Number(id))?.parameters ?? [];
+    return Object.keys(values).every((parameterId) => parameters.some(({ id: known }) => String(known) === parameterId));
+  }) && Object.keys(capture.devices).every((id) => devices.get(Number(id))?.description);
+}
+
 export function describeChanges(changes) {
   if (!changes.length) return "no values changed";
   const shown = changes.slice(0, SUMMARY_CHANGES)
@@ -157,33 +172,55 @@ export function describeChanges(changes) {
   return `${shown.join(", ")}${more ? ` and ${more} more` : ""}`;
 }
 
-/* One access session's agent state: the values from before the agent's
- * first change, named snapshots, and questions for the user. Changes run
- * one at a time and wait until the keyboard has answered, so each result
- * reports the values the keyboard accepted. */
+function requireConnection(context) {
+  if (context.connection() === null) throw new Error("Connect the keyboard or start the simulator in the tuner first.");
+}
+
+/* The agent's state for the current connection: the values from before
+ * the agent's first change (the revert point), named snapshots, and
+ * questions for the user. Turning agent access off and on keeps the revert
+ * point and snapshots; disconnecting, or connecting something else, drops
+ * them. Changes run one at a time and wait until the keyboard has answered,
+ * so each result reports the values the keyboard accepted. */
 export class AgentSession {
   #queue = Promise.resolve();
   #nextQuestion = 1;
+  #baseline;
+  #snapshots = new Map();
 
   constructor(context, onUpdate = () => {}) {
     this.context = context;
     this.onUpdate = onUpdate;
-    this.baseline = undefined;
-    this.snapshots = new Map();
     this.questions = new Map();
     this.tools = createAgentTools(context, this);
   }
 
-  /* True while values differ from those before the agent's first change. */
+  /* Drops captures that belong to an earlier connection. */
+  #prune() {
+    const connection = this.context.connection();
+    if (this.#baseline && this.#baseline.connection !== connection) this.#baseline = undefined;
+    for (const [name, snapshot] of this.#snapshots) {
+      if (snapshot.connection !== connection) this.#snapshots.delete(name);
+    }
+  }
+
+  /* True while values differ from those before the agent's first change,
+   * whoever changed them since. */
   get changed() {
-    return Boolean(this.baseline);
+    this.#prune();
+    return Boolean(this.#baseline) && diffValues(this.context, this.#baseline, captureValues(this.context)).length > 0;
+  }
+
+  get snapshots() {
+    this.#prune();
+    return [...this.#snapshots.keys()];
   }
 
   status() {
     return {
       changedValues: this.changed,
-      snapshots: [...this.snapshots.keys()],
-      openQuestions: [...this.questions.values()].filter(({ status }) => status === "pending").length,
+      snapshots: this.snapshots,
+      openQuestions: this.#openQuestions().length,
     };
   }
 
@@ -193,21 +230,25 @@ export class AgentSession {
     return result.finally(() => this.onUpdate());
   }
 
-  /* Sends one change and reports what it changed. The values before the
-   * first change become the baseline Revert restores; once values match it
-   * again there's nothing to revert. */
+  /* Sends requests and waits for the keyboard. Confirmed only if it
+   * answered everything on the same connection. */
+  async #send(send) {
+    const before = captureValues(this.context);
+    send(before);
+    const settled = await this.context.settled();
+    const confirmed = settled && this.context.connection() === before.connection;
+    return { before, confirmed, changes: diffValues(this.context, before, captureValues(this.context)) };
+  }
+
+  /* Sends one change. send gets the values from just before it, read in
+   * turn with other changes. The values before the first change become
+   * the revert point, which stays until Revert restores it. */
   change(send) {
     return this.#serial(async () => {
-      const before = captureValues(this.context);
-      this.baseline ??= before;
-      let confirmed = false;
-      try {
-        send();
-        confirmed = await this.context.settled();
-      } finally {
-        if (!diffValues(this.context, this.baseline, captureValues(this.context)).length) this.baseline = undefined;
-      }
-      return { changes: diffValues(this.context, before, captureValues(this.context)), confirmed };
+      requireConnection(this.context);
+      this.#prune();
+      this.#baseline ??= captureValues(this.context);
+      return this.#send(send);
     });
   }
 
@@ -227,40 +268,54 @@ export class AgentSession {
   }
 
   snapshotMatches(name) {
-    const snapshot = this.snapshots.get(name);
+    this.#prune();
+    const snapshot = this.#snapshots.get(name);
     return Boolean(snapshot) && !diffValues(this.context, snapshot, captureValues(this.context)).length;
   }
 
   saveSnapshot(name) {
-    if (!this.snapshots.has(name) && this.snapshots.size >= SNAPSHOT_LIMIT) {
+    requireConnection(this.context);
+    this.#prune();
+    if (!this.#snapshots.has(name) && this.#snapshots.size >= SNAPSHOT_LIMIT) {
       throw new Error(`The tuner keeps at most ${SNAPSHOT_LIMIT} snapshots. Reuse a name to replace one.`);
     }
-    this.snapshots.set(name, captureValues(this.context));
+    this.#snapshots.set(name, captureValues(this.context));
     this.onUpdate();
   }
 
   applySnapshot(name) {
-    const snapshot = this.snapshots.get(name);
-    if (!snapshot) throw new Error(`No snapshot "${name}". Saved: ${[...this.snapshots.keys()].join(", ") || "none"}.`);
+    requireConnection(this.context);
+    this.#prune();
+    const snapshot = this.#snapshots.get(name);
+    if (!snapshot) {
+      throw new Error(`No snapshot "${name}". Saved: ${this.snapshots.join(", ") || "none"}. Snapshots end when the tuner disconnects or connects something else.`);
+    }
     return this.change(() => this.#restore(snapshot));
   }
 
-  /* Restores the baseline. Values the keyboard didn't take keep it, so
-   * Revert can be tried again. */
+  /* Restores the revert point. It stays until the keyboard has confirmed
+   * every value in it, so Revert can be tried again. */
   revert() {
     return this.#serial(async () => {
-      if (!this.baseline) return { changes: [], remaining: [] };
-      const before = captureValues(this.context);
-      this.#restore(this.baseline);
-      await this.context.settled();
-      const after = captureValues(this.context);
-      const remaining = diffValues(this.context, this.baseline, after);
-      if (!remaining.length) this.baseline = undefined;
-      return { changes: diffValues(this.context, before, after), remaining };
+      requireConnection(this.context);
+      this.#prune();
+      const baseline = this.#baseline;
+      if (!baseline) return { changes: [], remaining: [], confirmed: true };
+      const { changes, confirmed } = await this.#send(() => this.#restore(baseline));
+      const remaining = diffValues(this.context, baseline, captureValues(this.context));
+      if (confirmed && !remaining.length && covers(this.context, baseline)) this.#baseline = undefined;
+      return { changes, remaining, confirmed };
     });
   }
 
+  #openQuestions() {
+    return [...this.questions.values()].filter(({ status }) => status === "pending");
+  }
+
   ask(question, choices = []) {
+    if (this.#openQuestions().length >= QUESTION_LIMIT) {
+      throw new Error(`${QUESTION_LIMIT} questions are already waiting for the user. Get their answers first.`);
+    }
     const id = `q${this.#nextQuestion++}`;
     this.questions.set(id, { id, question, choices, status: "pending", answer: null, askedAt: new Date(), waiters: [] });
     this.onUpdate();
@@ -309,19 +364,15 @@ function changeResult(summary, { changes, confirmed }, extra = {}) {
     summary,
     ...extra,
     changes,
-    ...(confirmed ? {} : { warning: "The keyboard hasn't answered every request yet. list_tuning_targets shows the values it has reported." }),
+    ...(confirmed ? {} : { warning: "The keyboard hasn't confirmed this change, or the connection changed while waiting. list_tuning_targets shows the values it has reported." }),
   };
-}
-
-function requireConnection(context) {
-  if (context.session().connection === "none") throw new Error("Connect the keyboard or start the simulator in the tuner first.");
 }
 
 export function createAgentTools(context, session) {
   return [
     {
       name: "get_session",
-      description: "Start here. Says whether a keyboard or the simulator is connected, over which transport and protocol version, and how many tuning targets, pointing devices, modified previews and captured telemetry events the tuner has. agent says whether your changes are still applied, which snapshots you saved, and how many questions wait for the user. Every value the tuner shows is a temporary preview until the user commits it to their own keyboard config.",
+      description: "Start here. Says whether a keyboard or the simulator is connected, over which transport and protocol version, and how many tuning targets, pointing devices, modified previews and captured telemetry events the tuner has. agent says whether values still differ from before your first change, which snapshots you saved, and how many questions wait for the user. Every value the tuner shows is a temporary preview until the user commits it to their own keyboard config.",
       inputSchema: noInput,
       annotations: { readOnlyHint: true },
       execute: async () => json({ ...context.session(), agent: session.status() }),
@@ -369,7 +420,7 @@ export function createAgentTools(context, session) {
     },
     {
       name: "set_tuning_values",
-      description: "Preview one or more parameters of one tuning target, sent to the keyboard as one atomic batch that its firmware validates. Values are temporary: they last until the keyboard restarts, and the user can undo every change you made with Revert agent changes in the tuner. Returns each parameter's previous, requested and accepted value; fails without changing anything if the keyboard rejects the batch.",
+      description: "Preview one or more parameters of one tuning target, sent to the keyboard as one atomic batch that its firmware validates. Values are temporary: they last until the keyboard restarts, and the user can return to the values from before your first change with one click in the tuner. Returns each parameter's previous, requested and accepted value; fails without changing anything if the keyboard rejects the batch.",
       inputSchema: {
         type: "object",
         properties: {
@@ -386,25 +437,34 @@ export function createAgentTools(context, session) {
       execute: async ({ target: reference, values } = {}) => {
         requireConnection(context);
         const target = findTarget(context, reference);
-        const entries = Object.entries(values ?? {});
+        if (!values || typeof values !== "object" || Object.getPrototypeOf(values) !== Object.prototype) {
+          throw new Error("values must be an object keyed by parameter key.");
+        }
+        const entries = Object.entries(values);
         if (!entries.length) throw new Error("values needs at least one parameter.");
+        const seen = new Set();
         const updates = entries.map(([name, raw]) => {
           const parameter = target.parameters.find((candidate) => candidate.key === name || String(candidate.id) === name);
           if (!parameter) {
-            throw new Error(`${targetName(target)} has no parameter "${name}". Its keys: ${target.parameters.map(parameterName).join(", ")}.`);
+            const known = target.parameters.map(({ id, key, label }) => key ?? `${id} (${label})`);
+            throw new Error(`${targetName(target)} has no parameter "${name}". It has: ${known.join(", ")}.`);
           }
+          if (seen.has(parameter.id)) throw new Error(`values names ${parameterName(parameter)} twice.`);
+          seen.add(parameter.id);
           const value = typeof raw === "boolean" ? Number(raw) : raw;
           if (!Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum) {
             throw new Error(`${parameterName(parameter)} takes a whole value from ${parameter.minimum} to ${parameter.maximum}, not ${raw}.`);
           }
-          return { parameter, previous: parameter.current, value };
+          return { parameter, value };
         }).sort((a, b) => a.parameter.id - b.parameter.id);
         const outcome = await session.change(() => context.previewValues(target.id,
           updates.map(({ parameter, value }) => ({ parameterId: parameter.id, value }))));
         /* A refreshed description replaces the parameter objects. */
         const reported = context.targets().get(target.id)?.parameters ?? [];
-        const results = updates.map(({ parameter, previous, value }) => ({
-          parameter: parameterName(parameter), previous, requested: value,
+        const results = updates.map(({ parameter, value }) => ({
+          parameter: parameterName(parameter),
+          previous: outcome.before.targets[target.id]?.[parameter.id] ?? null,
+          requested: value,
           current: reported.find(({ id }) => id === parameter.id)?.current ?? null,
         }));
         /* A batch is atomic: if no requested change took, the keyboard
@@ -419,7 +479,7 @@ export function createAgentTools(context, session) {
     },
     {
       name: "preview_device_cpi",
-      description: "Preview a pointing sensor's resolution (CPI) through the keyboard, which validates it. Temporary like every preview, and undone by Revert agent changes. Use a value from the device's supportedCpi or cpiRange in list_pointing_devices.",
+      description: "Preview a pointing sensor's resolution (CPI) through the keyboard, which validates it. Temporary like every preview, and undone by the tuner's revert button. Use a value from the device's supportedCpi or cpiRange in list_pointing_devices.",
       inputSchema: {
         type: "object",
         properties: {
@@ -441,17 +501,19 @@ export function createAgentTools(context, session) {
             ? description.values.join(", ")
             : `${description.range.min} to ${description.range.max} in steps of ${description.range.step}`} CPI, not ${cpi}.`);
         }
-        const previous = description.currentCpi;
         const outcome = await session.change(() => context.previewDevice(device.id, cpi));
         const reported = context.devices().get(device.id);
-        if (reported?.error) throw new Error(`${device.label}: ${reported.error}`);
-        return json(changeResult(`Set ${describeChanges(outcome.changes)}`, outcome,
-          { device: device.label, previous, requested: cpi, current: reported?.description?.currentCpi ?? null }));
+        /* Only a confirmed answer sets or clears the card's error. */
+        if (outcome.confirmed && reported?.error) throw new Error(`${device.label}: ${reported.error}`);
+        return json(changeResult(`Set ${describeChanges(outcome.changes)}`, outcome, {
+          device: device.label, previous: outcome.before.devices[device.id] ?? null, requested: cpi,
+          current: reported?.description?.currentCpi ?? null,
+        }));
       },
     },
     {
       name: "reset_previews",
-      description: "Restore compiled defaults: one tuning target, one device's CPI, or with neither, every target and every device. This also drops previews the user set by hand; Revert agent changes in the tuner brings back the values from before your first change.",
+      description: "Restore compiled defaults: one tuning target, one device's CPI, or with neither, every target and every device. This also drops previews the user set by hand; the tuner's revert button brings back the values from before your first change. Unsaved curve edits in the tuner stay as drafts.",
       inputSchema: {
         type: "object",
         properties: {
@@ -482,7 +544,7 @@ export function createAgentTools(context, session) {
     },
     {
       name: "save_snapshot",
-      description: `Save every current target value and device CPI under a name, such as "A" or "B", to switch back to later with apply_snapshot. Saving changes nothing on the keyboard. Snapshots last for this agent access session; the tuner keeps ${SNAPSHOT_LIMIT}, and saving an existing name replaces it.`,
+      description: `Save every current target value and device CPI under a name, such as "A" or "B", to switch back to later with apply_snapshot. Saving changes nothing on the keyboard. Snapshots last until the tuner disconnects or connects something else; the tuner keeps ${SNAPSHOT_LIMIT}, and saving an existing name replaces it.`,
       inputSchema: {
         type: "object",
         properties: { name: { type: "string", minLength: 1, maxLength: 40 } },
@@ -494,7 +556,7 @@ export function createAgentTools(context, session) {
         const label = String(name ?? "").trim().slice(0, 40);
         if (!label) throw new Error("A snapshot needs a name.");
         session.saveSnapshot(label);
-        return json({ summary: `Saved snapshot "${label}"`, snapshots: [...session.snapshots.keys()] });
+        return json({ summary: `Saved snapshot "${label}"`, snapshots: session.snapshots });
       },
     },
     {
@@ -508,8 +570,9 @@ export function createAgentTools(context, session) {
       annotations: { readOnlyHint: false, consequentialHint: false },
       execute: async ({ name } = {}) => {
         requireConnection(context);
-        const outcome = await session.applySnapshot(String(name ?? "").trim());
-        return json(changeResult(`Applied snapshot "${name}": ${describeChanges(outcome.changes)}`, outcome));
+        const label = String(name ?? "").trim();
+        const outcome = await session.applySnapshot(label);
+        return json(changeResult(`Applied snapshot "${label}": ${describeChanges(outcome.changes)}`, outcome));
       },
     },
     {
@@ -518,12 +581,12 @@ export function createAgentTools(context, session) {
       inputSchema: noInput,
       annotations: { readOnlyHint: true },
       execute: async () => json({
-        snapshots: [...session.snapshots.keys()].map((name) => ({ name, matchesCurrent: session.snapshotMatches(name) })),
+        snapshots: session.snapshots.map((name) => ({ name, matchesCurrent: session.snapshotMatches(name) })),
       }),
     },
     {
       name: "ask_user",
-      description: "Show the user a question in the tuner, such as \"Try a few slow aims, then rate smoothness 1–5\", optionally with answer choices. Returns at once with a question id; call get_user_answer to wait for the answer.",
+      description: `Show the user a question in the tuner, such as "Try a few slow aims, then rate smoothness 1–5", optionally with answer choices. Returns at once with a question id; call get_user_answer to wait for the answer. At most ${QUESTION_LIMIT} questions can wait at once.`,
       inputSchema: {
         type: "object",
         properties: {
