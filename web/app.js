@@ -554,11 +554,15 @@ function receive(bytes) {
 
 async function disconnect() {
   const link = transport;
+  /* Detach first so late responses can't send more requests on a closing
+   * link. */
   transport = undefined;
+  tuningRequests.clear();
+  elements.connect.disabled = true;
   try { if (link && protocolReady) await link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
   await link?.close();
+  elements.connect.disabled = false;
   protocolReady = false;
-  tuningRequests.clear();
   calibration.cancel();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
@@ -578,11 +582,12 @@ async function connect() {
     notice("Web Serial is unavailable. Use current desktop Chrome or the simulator.", true);
     return;
   }
+  elements.connect.disabled = true;
   try {
     if (simulator) startSimulator();
     decoder = new FrameDecoder();
     const link = new SerialTransport({
-      onData: receive,
+      onData: (bytes) => { if (transport === link) receive(bytes); },
       onError: (error) => notice(`${link.label} read failed: ${error.message}`, true),
       onClose: () => { if (transport === link) disconnect(); },
     });
@@ -603,6 +608,8 @@ async function connect() {
   } catch (error) {
     notice(`Connection failed: ${error.message}`, true);
     await disconnect();
+  } finally {
+    elements.connect.disabled = false;
   }
 }
 

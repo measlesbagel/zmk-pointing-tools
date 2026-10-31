@@ -56,6 +56,8 @@ export class SerialTransport {
         this.reader = undefined;
       }
     }
+    /* A fatal read error ends the loop without an unplug event. */
+    if (this.active) this.onClose();
   }
 
   async close() {
