@@ -38,10 +38,12 @@ import {
   renderDevicetreeSnippet,
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
-import { PointingPlayground } from "./playground.js";
+import { PointingPlayground, loadPrecisionHistory } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
 import { SerialTransport } from "./transport.js";
+import { AgentBridge } from "./agent-bridge.js";
+import { createAgentTools } from "./agent-tools.js";
 
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
@@ -862,5 +864,35 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   },
 });
 
+new AgentBridge(document.getElementById("agent"), {
+  notice,
+  tools: createAgentTools({
+    session: () => {
+      const targets = [...tuningTargets.values()];
+      return {
+        connection: transport ? "keyboard" : simulator ? "simulator" : "none",
+        transport: transport?.label ?? null,
+        protocolVersion: protocolReady ? PROTOCOL_VERSION : null,
+        tuningTargets: targets.length,
+        modifiedParameters: targets.reduce((count, target) =>
+          count + target.parameters.filter(({ current, compiled }) => current !== compiled).length, 0),
+        pointingDevices: devices.size,
+        telemetry: {
+          capturedEvents: stateEvents.length,
+          droppedByFirmware: stateStatus.dropped,
+          queueCapacity: stateStatus.queueCapacity,
+        },
+      };
+    },
+    targets: () => tuningTargets,
+    devices: () => devices,
+    stateEvents: () => stateEvents,
+    stateStatus: () => stateStatus,
+    describeEvent: describeStateEvent,
+    precisionHistory: loadPrecisionHistory,
+    profile: () => createTuningProfile(tuningTargets),
+    devicetree: () => renderDevicetreeSnippet(tuningTargets),
+  }),
+});
 renderLoop();
 renderTuning();

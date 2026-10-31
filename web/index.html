@@ -26,6 +26,30 @@
         Connect the central half over USB using desktop Chrome, or use the simulator without hardware.
       </p>
 
+      <section id="agent" class="panel agent-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Agent access</h2>
+            <span>Let your own AI agent read this session's settings, devices, telemetry and playground results.</span>
+          </div>
+          <div class="panel-actions">
+            <span class="status" data-agent-status role="status">Agent access off</span>
+            <button type="button" class="primary" data-agent-toggle>Allow agent</button>
+          </div>
+        </div>
+        <details class="agent-setup">
+          <summary>Set up your agent</summary>
+          <p class="muted">
+            Add this MCP server to Claude Code, Amp, Codex, Cursor or another agent on this computer,
+            then select <strong>Allow agent</strong>. The agent can only read for now; it can't change
+            previews, telemetry or the keyboard.
+          </p>
+          <pre data-agent-config></pre>
+          <button type="button" data-agent-copy>Copy MCP config</button>
+        </details>
+        <ol class="state-timeline agent-log" data-agent-log aria-label="Agent tool calls"></ol>
+      </section>
+
       <section id="playground" class="panel playground-panel">
         <div class="panel-heading">
           <div>
