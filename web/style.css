@@ -58,6 +58,15 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .agent-setup p { margin: 8px 0; max-width: 760px; }
 .agent-setup pre { margin: 0 0 8px; padding: 10px 12px; overflow-x: auto; border: 1px solid var(--line); background: #0a0c0f; color: var(--accent); font: 12px ui-monospace, monospace; }
 .agent-log li { grid-template-columns: 110px minmax(160px, .45fr) 1fr; }
+.agent-log li.agent-change span { color: var(--warning); }
+.agent-log li.agent-user span { color: var(--text); }
+.status.changed { color: var(--warning); border-color: var(--warning); }
+.agent-question { margin-bottom: 10px; border-left: 3px solid var(--accent); padding: 10px 12px; background: #121a17; }
+.agent-question p { margin: 4px 0 10px; white-space: pre-wrap; }
+.agent-question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.agent-question-actions input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); background: #090b0e; color: var(--text); padding: 8px; font: inherit; }
+.agent-snapshots:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+.agent-snapshots button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .playground-dialog { width: min(1050px, calc(100vw - 24px)); max-width: none; height: min(820px, calc(100vh - 24px)); max-height: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 18px; }
 .playground-dialog::backdrop { background: #05070bd9; backdrop-filter: blur(3px); }
 .playground-dialog-heading, .playground-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

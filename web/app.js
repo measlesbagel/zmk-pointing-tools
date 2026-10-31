@@ -43,7 +43,6 @@ import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
 import { SerialTransport } from "./transport.js";
 import { AgentBridge } from "./agent-bridge.js";
-import { createAgentTools } from "./agent-tools.js";
 
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
@@ -82,7 +81,7 @@ const curveEditors = new CurveEditors({
     const target = tuningTargets.get(targetId);
     return target ? findCurve(target) : null;
   },
-  onPreview: previewCurve,
+  onPreview: (targetId, values) => previewValues(targetId, values, "curve"),
   onRender: renderTuning,
 });
 curveEditors.bind(elements.tuning);
@@ -311,8 +310,8 @@ function setTuningDescription(description) {
   }
 }
 
-/* Send a whole curve as one batch so the keyboard never runs half of it. */
-function previewCurve(targetId, values) {
+/* Send values as one batch so the keyboard never runs half of a curve. */
+function previewValues(targetId, values, what = "preview") {
   const target = tuningTargets.get(targetId);
   if (!target) return;
   if (simulator) {
@@ -320,7 +319,7 @@ function previewCurve(targetId, values) {
       target.parameters.find(({ id }) => id === parameterId).current = value;
     }
     renderTuning();
-    notice(`${target.label} simulator curve updated.`);
+    notice(`${target.label} simulator ${what} updated.`);
   } else if (transport) {
     tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(targetId, values));
   }
@@ -745,20 +744,23 @@ elements.tuning.addEventListener("click", async (event) => {
       tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
     }
   } else if (reset) {
-    const targetId = Number(reset.dataset.resetTarget);
-    curveEditors.discard(targetId);
-    if (simulator) {
-      const target = tuningTargets.get(targetId);
-      for (const parameter of target.parameters) parameter.current = parameter.compiled;
-      renderTuning();
-      notice(`${target.label} simulator defaults restored.`);
-    } else {
-      queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
-    }
+    resetTarget(Number(reset.dataset.resetTarget));
   }
 });
 
-elements["reset-all"].addEventListener("click", async () => {
+function resetTarget(targetId) {
+  curveEditors.discard(targetId);
+  if (simulator) {
+    const target = tuningTargets.get(targetId);
+    for (const parameter of target.parameters) parameter.current = parameter.compiled;
+    renderTuning();
+    notice(`${target.label} simulator defaults restored.`);
+  } else {
+    queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
+  }
+}
+
+function resetAllTargets() {
   curveEditors.discardAll();
   if (simulator) {
     for (const target of tuningTargets.values()) {
@@ -769,7 +771,9 @@ elements["reset-all"].addEventListener("click", async () => {
   } else {
     queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
   }
-});
+}
+
+elements["reset-all"].addEventListener("click", resetAllTargets);
 
 elements.devices.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-device-preview]");
@@ -789,16 +793,30 @@ elements.devices.addEventListener("click", async (event) => {
     notice("Enter a whole CPI value.", true);
     return;
   }
+  previewDevice(deviceId, requested);
+});
 
+function previewDevice(deviceId, cpi) {
+  const device = devices.get(deviceId);
   if (simulator) {
-    device.description.currentCpi = requested;
+    device.description.currentCpi = cpi;
     renderDevices();
     notice(`${device.label} simulator resolution updated.`);
   } else if (transport) {
-    tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST,
-      encodeDevicePreview(deviceId, requested));
+    tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST, encodeDevicePreview(deviceId, cpi));
   }
-});
+}
+
+/* Resolves once the keyboard has answered every queued request, or false
+ * after a few seconds without that. */
+async function requestsSettled(timeout = 5_000) {
+  const deadline = Date.now() + timeout;
+  while (tuningRequests.pending) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return true;
+}
 
 function playgroundContext() {
   let tuningProfile;
@@ -866,7 +884,7 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
 
 new AgentBridge(document.getElementById("agent"), {
   notice,
-  tools: createAgentTools({
+  context: {
     session: () => {
       const targets = [...tuningTargets.values()];
       return {
@@ -892,7 +910,12 @@ new AgentBridge(document.getElementById("agent"), {
     precisionHistory: loadPrecisionHistory,
     profile: () => createTuningProfile(tuningTargets),
     devicetree: () => renderDevicetreeSnippet(tuningTargets),
-  }),
+    previewValues,
+    previewDevice,
+    resetTarget,
+    resetAll: resetAllTargets,
+    settled: requestsSettled,
+  },
 });
 renderLoop();
 renderTuning();
