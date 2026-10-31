@@ -6,14 +6,13 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/ring_buffer.h>
 #include <zephyr/sys/util.h>
 
+#include <zmk/pointing_tools/service/host_transport.h>
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 #include <zmk/pointing_tools/service/tuning.h>
 #endif
@@ -44,10 +43,6 @@ LOG_MODULE_REGISTER(zpt_telemetry, ZPT_TELEMETRY_LOG_LEVEL);
 
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
              "exactly one measlesbagel,zpt-telemetry node is supported");
-
-#if !DT_HAS_CHOSEN(measlesbagel_zpt_telemetry_uart)
-#error "measlesbagel,zpt-telemetry-uart chosen node is required"
-#endif
 
 #define ZPT_PROTOCOL_VERSION 7
 #define ZPT_FRAME_MAGIC_0 0x5a
@@ -107,13 +102,24 @@ enum zpt_tuning_status {
     ZPT_TUNING_STATUS_UNREACHABLE = 5,
 };
 
-#define ZPT_UART_NODE DT_CHOSEN(measlesbagel_zpt_telemetry_uart)
-static const struct device *const zpt_uart = DEVICE_DT_GET(ZPT_UART_NODE);
+/* Every link the protocol runs over. Each has its own parser, so frames
+ * arriving on different links never interleave. */
+static const struct zpt_host_transport *const zpt_transports[] = {
+    &zpt_uart_transport,
+};
 
-/* The ring buffer handle is documented as `extern struct ring_buf
- * <name>` (the storage is already static); the one-line macro has no
- * static variant. */
-RING_BUF_DECLARE(zpt_rx_ring, 128); // NOLINT(misc-use-internal-linkage)
+struct zpt_frame_parser {
+    enum { MAGIC_0, MAGIC_1, TYPE, LENGTH_0, LENGTH_1, PAYLOAD } state;
+    uint8_t type;
+    uint16_t length;
+    uint16_t received;
+    uint8_t payload[ZPT_MAX_REQUEST_PAYLOAD];
+};
+
+static struct zpt_frame_parser zpt_parsers[ARRAY_SIZE(zpt_transports)];
+
+/* The link that sent the latest request. Only the worker thread uses it. */
+static const struct zpt_host_transport *zpt_host_link = &zpt_uart_transport;
 
 enum zpt_record_kind {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -227,14 +233,17 @@ static void zpt_state_disable_all(void) {
 
 #endif
 
-static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length) {
+static int zpt_send_frame_on_link(uint8_t type, const uint8_t *payload, uint16_t length,
+                                  bool droppable) {
     const uint8_t header[] = {ZPT_FRAME_MAGIC_0, ZPT_FRAME_MAGIC_1, type, (uint8_t)(length & 0xff),
                               (uint8_t)(length >> 8)};
-    for (size_t i = 0; i < ARRAY_SIZE(header); i++) {
-        uart_poll_out(zpt_uart, header[i]);
-    }
-    for (uint16_t i = 0; i < length; i++) {
-        uart_poll_out(zpt_uart, payload[i]);
+    return zpt_host_link->send(header, sizeof(header), payload, length, droppable);
+}
+
+static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length) {
+    const int ret = zpt_send_frame_on_link(type, payload, length, false);
+    if (ret < 0) {
+        LOG_WRN("Response 0x%02x not sent over %s (%d)", type, zpt_host_link->name, ret);
     }
 }
 
@@ -267,7 +276,11 @@ static void zpt_send_state(const struct zpt_state_sample *sample) {
     for (size_t i = 0; i < ZPT_STATE_VALUE_COUNT; i++) {
         sys_put_le32((uint32_t)sample->values[i], &payload[14 + i * sizeof(int32_t)]);
     }
-    zpt_send_frame(ZPT_EVENT_STATE, payload, sizeof(payload));
+    /* A link without room refuses the whole sample; the drop counter
+     * reports it like a queue overflow. */
+    if (zpt_send_frame_on_link(ZPT_EVENT_STATE, payload, sizeof(payload), true) < 0) {
+        atomic_inc(&zpt_state_dropped);
+    }
 }
 
 static void zpt_send_state_status(void) {
@@ -869,86 +882,72 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
     }
 }
 
-static void zpt_parse_byte(uint8_t byte) {
-    static enum { MAGIC_0, MAGIC_1, TYPE, LENGTH_0, LENGTH_1, PAYLOAD } state = MAGIC_0;
-    static uint8_t type;
-    static uint16_t length;
-    static uint16_t received;
-    static uint8_t payload[ZPT_MAX_REQUEST_PAYLOAD];
+static void zpt_dispatch_frame(size_t link, const uint8_t *payload, uint16_t length) {
+    /* Requests are answered on the link they arrived on, and state samples
+     * follow the latest request. */
+    zpt_host_link = zpt_transports[link];
+    zpt_dispatch(zpt_parsers[link].type, payload, length);
+}
 
-    switch (state) {
+static void zpt_parse_byte(size_t link, uint8_t byte) {
+    struct zpt_frame_parser *parser = &zpt_parsers[link];
+
+    switch (parser->state) {
     case MAGIC_0:
         if (byte == ZPT_FRAME_MAGIC_0) {
-            state = MAGIC_1;
+            parser->state = MAGIC_1;
         }
         break;
     case MAGIC_1:
-        state = byte == ZPT_FRAME_MAGIC_1 ? TYPE : (byte == ZPT_FRAME_MAGIC_0 ? MAGIC_1 : MAGIC_0);
+        parser->state =
+            byte == ZPT_FRAME_MAGIC_1 ? TYPE : (byte == ZPT_FRAME_MAGIC_0 ? MAGIC_1 : MAGIC_0);
         break;
     case TYPE:
-        type = byte;
-        state = LENGTH_0;
+        parser->type = byte;
+        parser->state = LENGTH_0;
         break;
     case LENGTH_0:
-        length = byte;
-        state = LENGTH_1;
+        parser->length = byte;
+        parser->state = LENGTH_1;
         break;
     case LENGTH_1:
-        length |= (uint16_t)byte << 8;
-        received = 0;
-        if (length > sizeof(payload)) {
-            state = MAGIC_0;
-        } else if (length == 0) {
-            zpt_dispatch(type, NULL, 0);
-            state = MAGIC_0;
+        parser->length |= (uint16_t)byte << 8;
+        parser->received = 0;
+        if (parser->length > sizeof(parser->payload)) {
+            parser->state = MAGIC_0;
+        } else if (parser->length == 0) {
+            zpt_dispatch_frame(link, NULL, 0);
+            parser->state = MAGIC_0;
         } else {
-            state = PAYLOAD;
+            parser->state = PAYLOAD;
         }
         break;
     case PAYLOAD:
-        payload[received++] = byte;
-        if (received == length) {
-            zpt_dispatch(type, payload, length);
-            state = MAGIC_0;
+        parser->payload[parser->received++] = byte;
+        if (parser->received == parser->length) {
+            zpt_dispatch_frame(link, parser->payload, parser->length);
+            parser->state = MAGIC_0;
         }
         break;
     }
 }
 
-static void zpt_uart_callback(const struct device *dev, void *user_data) {
-    ARG_UNUSED(user_data);
+void zpt_host_protocol_wake(void) { k_sem_give(&zpt_wake); }
 
-    /* uart_irq_update() re-runs the driver's pending-interrupt state
-     * machine and reports whether work is pending. Drivers without that
-     * operation (e.g. the vnd,serial unit-test mock) return -ENOSYS; for
-     * those, the ready checks below are sufficient. */
-    const int updated = uart_irq_update(dev);
-    if (updated == 0 || (updated < 0 && !uart_irq_rx_ready(dev))) {
-        return;
-    }
-
-    while (uart_irq_rx_ready(dev)) {
-        uint8_t bytes[32];
-        const int count = uart_fifo_read(dev, bytes, sizeof(bytes));
-        if (count <= 0) {
-            break;
-        }
-        const uint32_t written = ring_buf_put(&zpt_rx_ring, bytes, count);
-        if (written < (uint32_t)count) {
-            LOG_WRN("Dropped %u serial input bytes", (unsigned int)(count - written));
+static void zpt_receive(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(zpt_transports); i++) {
+        uint8_t byte;
+        while (ring_buf_get(zpt_transports[i]->rx, &byte, 1) == 1) {
+            zpt_parse_byte(i, byte);
         }
     }
-    k_sem_give(&zpt_wake);
 }
 
 static void zpt_thread(void) {
     for (;;) {
         k_sem_take(&zpt_wake, K_FOREVER);
 
-        uint8_t byte;
-        while (ring_buf_get(&zpt_rx_ring, &byte, 1) == 1) {
-            zpt_parse_byte(byte);
-        }
+        zpt_receive();
 
         struct zpt_telemetry_record record;
         while (k_msgq_get(&zpt_record_queue, &record, K_NO_WAIT) == 0) {
@@ -979,19 +978,3 @@ static void zpt_thread(void) {
 // NOLINTNEXTLINE(bugprone-branch-clone,misc-misplaced-const,misc-use-internal-linkage)
 K_THREAD_DEFINE(zpt_thread_id, CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_THREAD_STACK_SIZE, zpt_thread,
                 NULL, NULL, NULL, K_PRIO_PREEMPT(10), 0, 0);
-
-static int zpt_telemetry_init(void) {
-    if (!device_is_ready(zpt_uart)) {
-        return -ENODEV;
-    }
-
-    const int error = uart_irq_callback_user_data_set(zpt_uart, zpt_uart_callback, NULL);
-    if (error < 0) {
-        return error;
-    }
-    uart_irq_rx_enable(zpt_uart);
-    LOG_INF("Pointing telemetry ready");
-    return 0;
-}
-
-SYS_INIT(zpt_telemetry_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

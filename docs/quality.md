@@ -298,8 +298,8 @@ harness cannot reach (they call Zephyr APIs); the pure pipeline/stage logic
 remains covered by the host harness (the `host:test` task), and BSim is not
 used — `native_posix` is the fast local/CI baseline.
 
-- **UART under test** — the telemetry service talks to a `vnd,serial`
-  virtual UART (`zephyr/drivers/serial/serial_test.c`, auto-enabled when a
+- **UART under test** — the telemetry service's USB serial transport
+  (`src/service/transport/uart.c`) talks to a `vnd,serial` virtual UART (`zephyr/drivers/serial/serial_test.c`, auto-enabled when a
   node with that compatible is present): test code injects host frames into
   its RX queue with `serial_vnd_queue_in_data()` and reads service
   responses from its TX buffer. The firmware callback tolerates drivers
