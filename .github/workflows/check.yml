@@ -30,6 +30,20 @@ jobs:
         run: devenv tasks run repository:check --no-tui
       - name: Run host tests with sanitizers
         run: devenv tasks run host:test:asan --no-tui
+      # Scores the trace benchmark against host/bench/baseline.json and adds
+      # the table to the job summary (docs/trace-benchmark.md). A score
+      # change never fails the job; only a benchmark that can't run does.
+      - name: Report trace benchmark scores
+        run: |
+          devenv shell -- bash -c 'cmake -S host -B build/host -G Ninja &&
+            cmake --build build/host &&
+            node host/replay/bench.js --build-dir build/host --markdown bench.md --json bench.json'
+          cat bench.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload trace benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-benchmark
+          path: bench.json
 
   zephyr-compliance:
     runs-on: ubuntu-24.04

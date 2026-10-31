@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
+import { durationMs } from "./fixture.js";
+
 const INTENTS = ["undecided", "free", "horizontal", "vertical"];
 
 function axisMetrics(outputs, index) {
@@ -27,7 +29,7 @@ function outputCadence(outputs) {
   };
 }
 
-function parseLines(output, fixture, decisionLength, outputLength) {
+export function parseLines(output, fixture, decisionLength, outputLength) {
   const decisions = [];
   const outputs = [];
   for (const line of output.trim().split("\n")) {
@@ -51,7 +53,7 @@ export function parseScrollMetrics(output, fixture) {
   }
   return {
     inputFrames: decisions.length,
-    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    durationMs: durationMs(fixture),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),
@@ -73,7 +75,7 @@ export function parseTextMetrics(output, fixture) {
   steps.total = outputs.length;
   return {
     inputFrames: decisions.length,
-    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    durationMs: durationMs(fixture),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     steps,
@@ -84,10 +86,10 @@ export function parseTextMetrics(output, fixture) {
 }
 
 export function parseCursorMetrics(output, fixture) {
-  const { decisions, outputs } = parseLines(output, fixture, 6, 3);
+  const { decisions, outputs } = parseLines(output, fixture, 9, 4);
   return {
     inputFrames: decisions.length,
-    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    durationMs: durationMs(fixture),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),
@@ -103,7 +105,7 @@ export function parseNoiseFilterMetrics(output, fixture) {
   for (const decision of decisions) phaseFrames[phaseNames[decision[1]]] += 1;
   return {
     inputFrames: decisions.length,
-    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
+    durationMs: durationMs(fixture),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),
