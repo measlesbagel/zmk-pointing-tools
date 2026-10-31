@@ -5,6 +5,7 @@ export const FIXTURE_VERSIONS = [1, 2];
 export const PROFILE_SCHEMA = "zmk-pointing-tools/tuning-profile";
 export const PROFILE_VERSION = 1;
 
+const MAX_TRACE_US = 0xffffffff;
 const POLICIES = { free: 0, adaptive: 1, horizontal: 2, vertical: 3 };
 const KINDS = ["composed-scroll", "composed-text", "composed-noise", "cursor-pipeline"];
 export const CURSOR_STAGE_TYPES = ["orientation", "normalize", "gate", "acceleration",
@@ -85,12 +86,22 @@ export function validateProfile(profile, path = "profile") {
       !Array.isArray(profile.targets)) {
     throw new Error(`${path}: expected ${PROFILE_SCHEMA} v${PROFILE_VERSION}`);
   }
+  const targets = new Set();
   for (const target of profile.targets) {
     if (typeof target?.stableId !== "string" || !Array.isArray(target.parameters)) {
       throw new Error(`${path}: malformed target`);
     }
+    if (targets.has(target.stableId)) {
+      throw new Error(`${path}: duplicate target ${target.stableId}`);
+    }
+    targets.add(target.stableId);
+    const keys = new Set();
     for (const parameter of target.parameters) {
       if (typeof parameter?.key !== "string") throw new Error(`${path}: malformed parameter`);
+      if (keys.has(parameter.key)) {
+        throw new Error(`${path}: duplicate parameter ${target.stableId}.${parameter.key}`);
+      }
+      keys.add(parameter.key);
       requireInteger(parameter.value, `${path}: ${target.stableId}.${parameter.key}`);
     }
   }
@@ -170,6 +181,11 @@ function validateEvents(fixture, path) {
       throw new Error(`${path}: keypress event ${index} only accepts delta`);
     }
   }
+  /* Runners read times as 32-bit microseconds: about 71.6 minutes. */
+  const times = eventTimesUs(fixture);
+  if (times[times.length - 1] > MAX_TRACE_US) {
+    throw new Error(`${path}: traces must be shorter than ${MAX_TRACE_US} µs; split the recording`);
+  }
 }
 
 function validateTruth(truth, path) {
@@ -189,6 +205,14 @@ function validateTruth(truth, path) {
     }
     if (stroke.axis !== undefined && !["horizontal", "vertical"].includes(stroke.axis)) {
       throw new Error(`${name} axis must be horizontal or vertical`);
+    }
+    if (stroke.path !== undefined) {
+      const { intervalUs, points } = stroke.path;
+      requireInteger(intervalUs, `${name} path.intervalUs`, 1);
+      if (!Array.isArray(points) || points.length < 2 || !points.every((point) =>
+        Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))) {
+        throw new Error(`${name} path.points must be at least two [x, y] positions`);
+      }
     }
     if (stroke.intendedOutput !== undefined && (!Array.isArray(stroke.intendedOutput) ||
         stroke.intendedOutput.length !== 2 ||

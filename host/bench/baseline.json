@@ -3,12 +3,12 @@
   "version": 1,
   "sets": {
     "tune": {
-      "speedErrorPercent": 15.55,
-      "slowJitterPercent": 12.96,
-      "sensitivityStepPercent": 2.8,
+      "speedErrorPercent": 15.26,
+      "slowJitterPercent": 12.92,
+      "sensitivityStepPercent": 2.71,
       "flickLagMs": 1.28,
-      "distanceErrorPercent": 4.5,
-      "unintendedOutput": 22.39,
+      "outputErrorPercent": 5.58,
+      "unintendedOutput": 23.24,
       "axisLockPercent": 94.76,
       "sidewaysLeakPercent": 2.45,
       "axisSwitches": 0.29
@@ -18,11 +18,11 @@
       "slowJitterPercent": 4.11,
       "sensitivityStepPercent": 0,
       "flickLagMs": 5.77,
-      "distanceErrorPercent": 0.49,
-      "unintendedOutput": 0.25,
-      "axisLockPercent": 99.54,
+      "outputErrorPercent": 0.86,
+      "unintendedOutput": 0,
+      "axisLockPercent": 99.08,
       "sidewaysLeakPercent": 0.25,
-      "axisSwitches": 0.5
+      "axisSwitches": 0.75
     }
   }
 }

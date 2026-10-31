@@ -28,7 +28,7 @@ This scores every fixture under `host/bench/fixtures` against
 
 | Option | Effect |
 | --- | --- |
-| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every cursor fixture's settings, matched by stage `stableId`. |
+| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every cursor fixture's settings, matched by stage `stableId`. Scroll and text fixtures are not affected. |
 | `--sensor-spans` | Give the pipeline each frame's sensor sample span even where the firmware path has none today (what-if for #113). |
 | `--json <file>` | Write the full report: per-set scores, per-fixture and per-stroke values, and the baseline comparison. |
 | `--markdown <file>` | Write the tables as Markdown (CI appends this to the job summary). |
@@ -40,11 +40,28 @@ To see what a setting does, score it as a profile, for example
 `--profile host/bench/profiles/short-rise.json`; the `change` column then
 reads against the committed baseline.
 
+`--profile` changes only cursor fixtures; scroll and text fixtures keep
+their own settings, and the benchmark says so when it runs. It checks the
+profile first, so a mistake can't silently score as the baseline:
+
+- A duplicate target or a duplicate parameter in one target is an error
+  (exit code 2).
+- If none of the profile's cursor targets matches a stage `stableId` in any
+  fixture, that is an error too: the profile would change nothing.
+- A full tuner export also lists targets the fixtures don't have, such as a
+  sniper pipeline's stages or scroll and text stages. Those are ignored with
+  a warning, so check the warnings when only some targets apply.
+- A parameter key a matched stage doesn't publish, or a value out of its
+  range, fails the replay.
+
 Change the baseline only in a commit that explains why the scores moved,
 the same way regression snapshots are updated.
 
 The CI `checks` job runs the benchmark after the host tests and appends the
-table to the job summary. That step never fails the build.
+table to the job summary. On a pull request it compares with the base
+branch's `baseline.json`, so a PR that also rewrites the baseline still shows
+what it changed; on a push, or when the base has no baseline, it compares
+with the commit's own. That step never fails the build.
 
 ## Fixture sets and the held-out convention
 
@@ -53,10 +70,10 @@ host/bench/fixtures/tune/      traces to develop and tune against
 host/bench/fixtures/holdout/   traces kept out of tuning, reported separately
 host/bench/baseline.json       committed scores of both sets
 host/bench/profiles/           tuner profiles: precision.json (used by a
-                               fixture), and deliberately worse settings
-                               for checking the metrics: short-rise.json
-                               (speed-rise 1 ms), long-rise.json (120 ms),
-                               no-acceleration.json (flat curve)
+                               fixture), and settings for checking the
+                               metrics: short-rise.json (speed-rise 1 ms),
+                               long-rise.json (120 ms), no-acceleration.json
+                               (flat curve)
 host/bench/generate.js         generator of the synthetic fixtures
 ```
 
@@ -89,13 +106,13 @@ The generator is deterministic. It models the cases #116 names:
 | tune | `slow-aim-precision` | The #113 case: slow strokes (5 to 30 mm/s) on the steep slow end of the Precision curve, applied from `profiles/precision.json`. |
 | tune | `tremor` | Rest tremor (8.5 to 10.5 Hz) that the user doesn't mean, and slow strokes with tremor on top. |
 | tune | `flicks-usb` | Minimum-jerk flicks peaking at 250 to 600 mm/s, with USB report pacing. |
-| tune | `post-typing-cursor` | Ball shake from key presses, then an intended stroke 80 ms after the last key. |
+| tune | `post-typing-cursor` | Ball shake from key presses, then an intended stroke 20, 40, 80, and 150 ms after the last key. The Bridges cursor pipeline has no keypress guard, so the shake reaches the cursor. |
 | tune | `scroll-slow` | Slow, nearly straight left-ball scroll strokes at its effective 114 CPI. |
 | tune | `scroll-curved` | Vertical scroll strokes that curve sideways by 23 to 46 degrees. |
 | tune | `text-strokes` | Text navigation strokes with up to 14 degrees of drift. |
 | holdout | `slow-aim-2052cpi` | Slow steady strokes at 2052 CPI, Bridges curve. |
 | holdout | `flicks-ble` | The same kind of flicks, with Bluetooth report pacing. |
-| holdout | `scroll-post-typing` | Left-ball shake from typing, then a scroll stroke 20 to 80 ms after the last key, inside the keypress guard. |
+| holdout | `scroll-post-typing` | Left-ball shake from typing, then a scroll stroke 20, 40, 80, and 150 ms after the last key: inside, at, and outside the 40 ms keypress guard. A longer guard drops the start of the later strokes. |
 
 The sensor model behind all of them: the true ball position is sampled by the
 sensor every 333 µs; a motion interrupt starts a read 200 to 600 µs after the
@@ -140,7 +157,14 @@ stage the whole-millisecond arrival time firmware uses today (`floor(t / 1000)`)
 so the coarse timing #113 is about shows up in replay. The optional fifth
 field is the sensor sample span in microseconds: the time between the read
 that produced the frame and the previous read. It reaches the pipeline only
-when `source.span` is `"sensor"` (or with `--sensor-spans`).
+when `source.span` is `"sensor"` (or with `--sensor-spans`). Times are read
+as 32-bit microseconds, so a fixture must be shorter than about 71.6 minutes;
+split longer recordings.
+
+The span is replayed exactly as recorded. A peripheral's firmware path
+quantizes it on the way to the central (2 ms steps in
+`src/source/transport/compact_split_codec.c`), so exact-span replay of a
+peripheral is slightly optimistic about what the firmware sees today.
 
 **Processor.** Scroll, text, and noise fixtures keep their version 1
 `settings`, except that the resolution comes from `source.cpi`. The cursor
@@ -186,11 +210,24 @@ or `post-typing`), `intended` (whether the user meant the motion), and a
 - `speedMmPerS`: the true ball speed of a steady stroke. For a recording,
   the stroke's length over its duration.
 - `axis`: the intended axis of a scroll or text stroke.
-- `intendedOutput`: `[x, y]` the output the user wanted, in pointer units
-  (cursor) or steps (scroll, text). For a recording, for example a playground
-  target's displacement. Generated fixtures use the output an ideal pipeline
-  with the fixture's own curve would give knowing the true speed, so under a
-  `--profile` with another curve this measures against the fixture's curve.
+- `path`: the intended ball motion of a cursor stroke, as
+  `{ "intervalUs": …, "points": [[x, y], …] }`: positions in sensor counts
+  (before orientation) relative to the stroke's start, one every
+  `intervalUs` from `startUs`. For a recording it can be the recorded counts,
+  smoothed; generated fixtures use the modelled motion without tremor or
+  shake. Replay turns it into the **ideal output**: each step between points,
+  oriented by the fixture's own orientation stages, times the transfer gain,
+  times the acceleration curve's sensitivity at that step's true speed, all
+  with the settings the replay runs (fixture, embedded profile, and
+  `--profile`). The curve and gain are choices, so the truth follows them;
+  orientation is the sensor's mounting, so a profile that changes it scores
+  as wrong direction.
+- `intendedOutput`: `[x, y]` the output the user wanted, signed, in pointer
+  units (cursor) or steps (scroll, text: right and down are positive). It is
+  fixed truth that no setting changes, for example a playground target's
+  displacement, and takes precedence over `path`. Generated scroll and text
+  fixtures use it, from the ball travel along the intended axis and the
+  fixture's own steps per metre or step threshold.
 
 ## Metrics
 
@@ -258,16 +295,18 @@ reaching p. The stroke value is the mean of the three lags in milliseconds.
 Because progress is a fraction of each total, acceleration that ramps up
 during a flick also adds lag; a flat curve has the least.
 
-### Distance error (`distanceErrorPercent`)
+### Output error (`outputErrorPercent`)
 
-Distance lost or gained over an intended stroke. Applies to intended strokes
-with `intendedOutput`. Cursor output is the magnitude of the summed output
-vector; scroll and text output is the net output along the intended axis
-(text: right minus left, or down minus up). The stroke value is
-`|actual − intended| / intended` in percent, comparing magnitudes, with
-`intended` the magnitude of `intendedOutput`. Direction is not scored. The
-JSON report also carries the signed value (`distanceBiasPercent`, negative
-when distance is lost).
+Distance and direction lost or gained over an intended stroke. Applies to
+intended strokes with `intendedOutput`, or cursor strokes with a `path`, from
+which the intended output is the ideal output defined above. `actual` is the
+stroke's summed output: the summed cursor report vector, or the net scroll
+steps per axis, or for text the right minus left and down minus up steps. The
+stroke value is `|actual − intended| / |intended|` in percent, the length of
+the vector difference over the intended length, so output in the wrong
+direction counts as error even at the right length. The JSON report also
+carries the signed length difference (`distanceBiasPercent`,
+`(|actual| − |intended|) / |intended|`, negative when distance is lost).
 
 ### Unintended output (`unintendedOutput`)
 
@@ -306,7 +345,8 @@ A recording becomes a fixture when it has:
 5. Raw motion events with microsecond arrival times and sensor spans, and
    keypress events if they were recorded.
 6. `truth.strokes` labelled by activity, with whatever ground truth is
-   known: the steady speed, the intended axis, the playground target.
+   known: the steady speed, the intended axis, the intended ball `path`, or
+   the playground target as `intendedOutput`.
 
 Put it in `tune/` or `holdout/` by the convention above, run the benchmark,
 and commit the new baseline with it. Keep both synthetic and real fixtures

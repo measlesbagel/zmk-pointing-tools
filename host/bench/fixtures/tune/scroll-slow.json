@@ -521,7 +521,7 @@
         "activity": "scroll",
         "intended": true,
         "axis": "horizontal",
-        "intendedOutput": [40.26, 0],
+        "intendedOutput": [-40.26, 0],
         "speedMmPerS": 12
       },
       {
@@ -551,7 +551,7 @@
         "activity": "scroll",
         "intended": true,
         "axis": "vertical",
-        "intendedOutput": [0, 117.43],
+        "intendedOutput": [0, -117.43],
         "speedMmPerS": 35
       }
     ]

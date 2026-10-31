@@ -36,18 +36,66 @@ function runners(buildDirectory) {
   };
 }
 
-function scoreSet(directory, native, profile, sensorSpans) {
-  const paths = readdirSync(directory).filter((name) => name.endsWith(".json")).sort()
-    .map((name) => join(directory, name));
-  const fixtures = paths.map((path) => {
+function loadSet(directory, sensorSpans) {
+  return readdirSync(directory).filter((name) => name.endsWith(".json")).sort().map((name) => {
+    const path = join(directory, name);
     const fixture = loadFixture(path);
     if (sensorSpans && fixture.version === 2) fixture.source.span = "sensor";
-    const strokes = scoreFixture(fixture, runFixture(fixture, native, profile));
+    return { path, fixture };
+  });
+}
+
+function scoreSet(loaded, native, profile) {
+  const fixtures = loaded.map(({ path, fixture }) => {
+    const strokes = scoreFixture(fixture, runFixture(fixture, native, profile), profile);
     return { id: fixture.id, path: relative(REPOSITORY, path),
       synthetic: fixture.metadata?.synthetic === true, scores: aggregate(strokes), strokes };
   });
   return { fixtures: fixtures.length, scores: aggregate(fixtures.flatMap((f) => f.strokes)),
     fixtureResults: fixtures };
+}
+
+/* Tuning keys only scroll and text stages publish. */
+const SCROLL_TEXT_KEYS = new Set(["steps-per-meter", "report-interval", "engage-ratio",
+  "release-ratio", "window", "discard-unclassified", "fold-interval", "horizontal-threshold",
+  "vertical-threshold"]);
+
+/* A profile target that matches no cursor stage would change nothing and
+ * leave every score at the baseline. Scroll and text targets are expected
+ * in a full tuner export and only warned about; other unmatched targets
+ * are warned about too, unless none of the profile's cursor targets
+ * matches anything, which is an error. */
+function checkProfile(profile, fixtures, path) {
+  const stableIds = new Set(fixtures.filter(({ fixture }) => fixture.version === 2 &&
+    fixture.processor.kind === "cursor-pipeline")
+    .flatMap(({ fixture }) => fixture.processor.stages.map((stage) => stage.stableId)));
+  const unmatched = profile.targets.filter((target) => !stableIds.has(target.stableId));
+  const scrollText = unmatched.filter((target) =>
+    target.parameters.some(({ key }) => SCROLL_TEXT_KEYS.has(key)));
+  const cursorTargets = profile.targets.filter((target) => !scrollText.includes(target));
+  const unmatchedCursor = unmatched.filter((target) => !scrollText.includes(target));
+  if (cursorTargets.length > 0 && unmatchedCursor.length === cursorTargets.length) {
+    throw new Error(`${path}: no target matches a cursor stage in any fixture ` +
+      `(${unmatchedCursor.map((target) => target.stableId).join(", ")}); known stages: ` +
+      `${[...stableIds].sort().join(", ")}`);
+  }
+  if (cursorTargets.length === 0) {
+    throw new Error(`${path}: the profile has no cursor targets; --profile only changes ` +
+      "cursor fixtures");
+  }
+  for (const target of unmatchedCursor) {
+    console.warn(`warning: ${path}: target ${target.stableId} matches no stage in any ` +
+      "fixture and is ignored");
+  }
+  if (scrollText.length) {
+    console.warn(`warning: ${path}: scroll and text targets are ignored ` +
+      `(${scrollText.map((target) => target.stableId).join(", ")}); --profile only changes ` +
+      "cursor fixtures");
+  }
+  const others = fixtures.filter(({ fixture }) => fixture.processor.kind !== "cursor-pipeline");
+  if (others.length) {
+    console.warn(`note: --profile doesn't change the ${others.length} scroll and text fixtures`);
+  }
 }
 
 function compare(name, value, baseline) {
@@ -116,9 +164,13 @@ function main() {
     .sort((a, b) => (a === "tune" ? -1 : b === "tune" ? 1 : a.localeCompare(b)));
   if (setNames.length === 0) throw new Error(`${values.fixtures} has no fixture sets`);
 
+  const loaded = Object.fromEntries(setNames.map((set) => [set,
+    loadSet(join(values.fixtures, set), values["sensor-spans"])]));
+  if (profile) checkProfile(profile, Object.values(loaded).flat(), values.profile);
+
   const started = Date.now();
   const sets = Object.fromEntries(setNames.map((set) => [set,
-    scoreSet(join(values.fixtures, set), native, profile, values["sensor-spans"])]));
+    scoreSet(loaded[set], native, profile)]));
   const baseline = existsSync(values.baseline)
     ? JSON.parse(readFileSync(values.baseline, "utf8")) : null;
   withBaseline(sets, baseline);

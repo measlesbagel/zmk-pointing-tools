@@ -36,12 +36,6 @@ const BRIDGES_CURVE = {
   percents: [100, 100, 110, 135, 165, 190, 200, 200],
 };
 
-/* The tuner's Precision preset at its default options (web/acceleration-curve.js). */
-const PRECISION_CURVE = {
-  speeds: [0, 4, 10, 25, 54, 116, 250, 400],
-  percents: [35, 35, 68, 100, 126, 174, 200, 200],
-};
-
 function curveSettings(curve) {
   const settings = {};
   curve.speeds.forEach((speed, i) => { settings[`curve-speed-${i + 1}`] = speed; });
@@ -80,52 +74,20 @@ const RIGHT_TEXT_SETTINGS = {
   mapperIdleTimeoutMs: 40,
 };
 
-/* ---- Ideal output, the ground truth for distance ----------------------- */
+/* ---- Ground truth ------------------------------------------------------- */
 
-/* Monotone cubic through the curve points, as the firmware draws it. */
-function curvePercent(curve, speed) {
-  const { speeds: xs, percents: ys } = curve;
-  const n = xs.length;
-  if (speed <= xs[0]) return ys[0];
-  if (speed >= xs[n - 1]) return ys[n - 1];
-  const tangent = (i) => {
-    if (i === 0 || i === n - 1) return 0;
-    const h0 = xs[i] - xs[i - 1];
-    const h1 = xs[i + 1] - xs[i];
-    const d0 = (ys[i] - ys[i - 1]) / h0;
-    const d1 = (ys[i + 1] - ys[i]) / h1;
-    if (d0 === 0 || d1 === 0 || Math.sign(d0) !== Math.sign(d1)) return 0;
-    const w1 = 2 * h1 + h0;
-    const w2 = h1 + 2 * h0;
-    return (w1 + w2) / (w1 / d0 + w2 / d1);
-  };
-  let i = 0;
-  while (speed >= xs[i + 1]) i += 1;
-  const h = xs[i + 1] - xs[i];
-  const t = (speed - xs[i]) / h;
-  return ys[i] * (2 * t ** 3 - 3 * t ** 2 + 1) + tangent(i) * h * (t ** 3 - 2 * t ** 2 + t) +
-    ys[i + 1] * (-2 * t ** 3 + 3 * t ** 2) + tangent(i + 1) * h * (t ** 3 - t ** 2);
-}
-
-/* Output of an ideal cursor pipeline that knows the true speed: ball
- * travel in counts, times gain and the curve's sensitivity at that speed,
- * with the Bridges orientation's inversion. */
-function idealCursorOutput(stroke, cpi, curve) {
-  const step = 1e-4;
-  let x = 0;
-  let y = 0;
-  for (let t = 0; t < stroke.duration; t += step) {
-    const [ax, ay] = stroke.position(t);
-    const [bx, by] = stroke.position(Math.min(t + step, stroke.duration));
-    const dx = bx - ax;
-    const dy = by - ay;
-    const speed = Math.hypot(dx, dy) / step;
-    const gain = curve ? curvePercent(curve, speed) / 100 : 1;
-    x -= dx * gain;
-    y -= dy * gain;
-  }
+/* The intended ball motion of a stroke, in sensor counts relative to its
+ * start, sampled every intervalUs. Replay derives the ideal output from it
+ * with whatever settings it runs, so the truth holds under --profile. */
+function ballPath(stroke, cpi, intervalUs) {
   const countsPerMm = cpi / 25.4;
-  return [round(x * countsPerMm, 2), round(y * countsPerMm, 2)];
+  const points = [];
+  const steps = Math.ceil((stroke.duration * 1e6) / intervalUs);
+  for (let i = 0; i <= steps; i += 1) {
+    const [x, y] = stroke.position(Math.min((i * intervalUs) / 1e6, stroke.duration));
+    points.push([round(x * countsPerMm, 3), round(y * countsPerMm, 3)]);
+  }
+  return { intervalUs, points };
 }
 
 const round = (value, digits) => Number(value.toFixed(digits));
@@ -323,7 +285,7 @@ function cursorProcessor(link = "usb", profile = undefined) {
     ...(profile ? { profile } : {}) };
 }
 
-function slowAim({ id, cpi, curve, speeds, seed, profile, description }) {
+function slowAim({ id, cpi, speeds, seed, profile, description }) {
   const trace = new Trace(cpi, seed);
   const rand = random(seed + 1);
   trace.pause(0.05);
@@ -332,7 +294,7 @@ function slowAim({ id, cpi, curve, speeds, seed, profile, description }) {
     const stroke = linear(speed, angle, 0.8);
     trace.segment(stroke, { id: `slow-${index + 1}`, fields: {
       activity: "slow-aim", intended: true, speedMmPerS: speed,
-      intendedOutput: idealCursorOutput(stroke, cpi, curve) } });
+      path: ballPath(stroke, cpi, 50000) } });
     trace.pause(0.3);
   });
   return fixture({ id, description, mode: "cursor", trace, source: RIGHT_BALL(cpi),
@@ -353,7 +315,7 @@ function tremorFixture() {
     const stroke = linear(speed, rand() * 2 * Math.PI, 0.8);
     trace.segment(withTremor(stroke, 0.03, rand), { id: `aim-${index + 1}`, fields: {
       activity: "slow-aim", intended: true, speedMmPerS: speed,
-      intendedOutput: idealCursorOutput(stroke, cpi, BRIDGES_CURVE) } });
+      path: ballPath(stroke, cpi, 50000) } });
     trace.pause(0.3);
   }
   return fixture({ id: "tremor", mode: "cursor", trace, source: RIGHT_BALL(cpi),
@@ -373,8 +335,7 @@ function flicks({ id, link, seed }) {
     const length = (peak * duration) / 1.875;
     const stroke = minimumJerk(length, rand() * 2 * Math.PI, duration);
     trace.segment(stroke, { id: `flick-${index + 1}`, fields: {
-      activity: "flick", intended: true,
-      intendedOutput: idealCursorOutput(stroke, cpi, BRIDGES_CURVE) } });
+      activity: "flick", intended: true, path: ballPath(stroke, cpi, 1000) } });
     trace.pause(0.25);
   }
   return fixture({ id, mode: "cursor", trace, source: RIGHT_BALL(cpi),
@@ -383,31 +344,50 @@ function flicks({ id, link, seed }) {
     processor: cursorProcessor(link) });
 }
 
+/* Gaps from the last keypress to the start of the next stroke: inside, at,
+ * and outside the 40 ms keypress guard. */
+const POST_TYPING_GAPS_MS = [20, 40, 80, 150];
+
+/* A burst of keypresses, each shaking the ball. The last shake is cut off
+ * where the next stroke starts, gapMs after the last keypress. Returns the
+ * burst's unintended stroke. */
+function typingBurst(trace, rand, { keys, shakeMm, shakeS, gapMs, id }) {
+  const startUs = trace.timeUs;
+  for (let key = 0; key < keys; key += 1) {
+    const last = key === keys - 1;
+    trace.keypress();
+    const keyUs = trace.timeUs;
+    trace.segment(keypressShake(shakeMm[0] + (shakeMm[1] - shakeMm[0]) * rand(),
+      rand() * 2 * Math.PI, last ? Math.min(shakeS, gapMs / 1000) : shakeS));
+    if (last) {
+      trace.timeUs = Math.max(trace.timeUs, keyUs + gapMs * 1000);
+    } else {
+      trace.pause(0.04 + 0.06 * rand());
+    }
+  }
+  trace.strokes.push({ id, startUs, endUs: trace.timeUs, activity: "post-typing",
+    intended: false });
+}
+
 function postTypingCursor() {
   const cpi = 684;
   const trace = new Trace(cpi, 51);
   const rand = random(52);
   trace.pause(0.05);
-  for (let burst = 0; burst < 4; burst += 1) {
-    const startUs = trace.timeUs;
-    for (let key = 0; key < 5; key += 1) {
-      trace.keypress();
-      trace.segment(keypressShake(0.15 + 0.15 * rand(), rand() * 2 * Math.PI, 0.06));
-      trace.pause(0.06 + 0.06 * rand());
-    }
-    trace.strokes.push({ id: `typing-${burst + 1}`, startUs, endUs: trace.timeUs,
-      activity: "post-typing", intended: false });
-    trace.pause(0.08);
+  POST_TYPING_GAPS_MS.forEach((gapMs, burst) => {
+    typingBurst(trace, rand, { keys: 5, shakeMm: [0.15, 0.3], shakeS: 0.06, gapMs,
+      id: `typing-${burst + 1}` });
     const speed = 20 + 15 * burst;
     const stroke = linear(speed, rand() * 2 * Math.PI, 0.5);
     trace.segment(stroke, { id: `reach-${burst + 1}`, fields: {
       activity: "post-typing", intended: true, speedMmPerS: speed,
-      intendedOutput: idealCursorOutput(stroke, cpi, BRIDGES_CURVE) } });
+      path: ballPath(stroke, cpi, 50000) } });
     trace.pause(0.4);
-  }
+  });
   return fixture({ id: "post-typing-cursor", mode: "cursor", trace, source: RIGHT_BALL(cpi),
-    description: "Typing shakes the ball, then the hand moves to the cursor 80 ms after the last key.",
-    model: "damped 25 Hz shake of 0.15-0.3 mm per keypress, then 20-65 mm/s strokes, 684 CPI",
+    description: "Typing shakes the ball, then the hand moves to the cursor 20, 40, 80, or 150 ms after the last key.",
+    model: "damped 25 Hz shake of 0.15-0.3 mm per keypress, then 20-65 mm/s strokes " +
+      "20-150 ms after the last key, 684 CPI",
     processor: cursorProcessor() });
 }
 
@@ -419,10 +399,9 @@ const scrollSteps = (millimetres) => round((millimetres * LEFT_SCROLL_SETTINGS.s
 
 function scrollStroke(trace, stroke, axis, id, extra = {}) {
   const [x, y] = stroke.position(stroke.duration);
-  const travel = axis === "vertical" ? y : x;
   trace.segment(stroke, { id, fields: { activity: "scroll", intended: true, axis,
-    intendedOutput: axis === "vertical" ? [0, scrollSteps(Math.abs(travel))]
-      : [scrollSteps(Math.abs(travel)), 0], ...extra } });
+    intendedOutput: axis === "vertical" ? [0, scrollSteps(y)] : [scrollSteps(x), 0],
+    ...extra } });
 }
 
 function scrollSlow() {
@@ -458,23 +437,17 @@ function scrollPostTyping() {
   const trace = new Trace(114, 81);
   const rand = random(82);
   trace.pause(0.05);
-  for (let burst = 0; burst < 4; burst += 1) {
-    const startUs = trace.timeUs;
-    for (let key = 0; key < 4; key += 1) {
-      trace.keypress();
-      trace.segment(keypressShake(0.4 + 0.3 * rand(), rand() * 2 * Math.PI, 0.05));
-      trace.pause(0.05 + 0.05 * rand());
-    }
-    trace.strokes.push({ id: `typing-${burst + 1}`, startUs, endUs: trace.timeUs,
-      activity: "post-typing", intended: false });
-    trace.pause(0.02 + 0.02 * burst);
+  POST_TYPING_GAPS_MS.forEach((gapMs, burst) => {
+    typingBurst(trace, rand, { keys: 4, shakeMm: [0.4, 0.7], shakeS: 0.05, gapMs,
+      id: `typing-${burst + 1}` });
     scrollStroke(trace, linear(20 + 10 * burst, Math.PI / 2 + 0.1, 0.6), "vertical",
       `scroll-${burst + 1}`);
     trace.pause(0.4);
-  }
+  });
   return fixture({ id: "scroll-post-typing", mode: "scroll", trace, source: LEFT_BALL,
-    description: "Typing shakes the left ball, then a scroll stroke starts 20-80 ms after the last key.",
-    model: "damped 25 Hz shake of 0.4-0.7 mm per keypress, then 20-50 mm/s strokes, effective 114 CPI",
+    description: "Typing shakes the left ball, then a scroll stroke starts 20, 40, 80, or 150 ms after the last key.",
+    model: "damped 25 Hz shake of 0.4-0.7 mm per keypress, then 20-50 mm/s strokes " +
+      "20-150 ms after the last key, effective 114 CPI",
     processor: scrollProcessor() });
 }
 
@@ -491,8 +464,7 @@ function textStrokes() {
     const threshold = RIGHT_TEXT_SETTINGS.horizontalThresholdMicrometers / 1000;
     trace.segment(stroke, { id: `text-${index + 1}`, fields: {
       activity: "text", intended: true, axis: horizontal ? "horizontal" : "vertical",
-      intendedOutput: horizontal ? [round(Math.abs(x) / threshold, 2), 0]
-        : [0, round(Math.abs(y) / threshold, 2)] } });
+      intendedOutput: horizontal ? [round(x / threshold, 2), 0] : [0, round(y / threshold, 2)] } });
     trace.pause(0.25);
   }
   return fixture({ id: "text-strokes", mode: "text", trace, source: RIGHT_BALL(cpi),
@@ -512,10 +484,10 @@ function main() {
   const precisionProfile = JSON.parse(readFileSync(join(ROOT, "profiles/precision.json"), "utf8"));
   const sets = {
     tune: [
-      slowAim({ id: "slow-aim-bridges", cpi: 684, curve: BRIDGES_CURVE, seed: 11,
+      slowAim({ id: "slow-aim-bridges", cpi: 684, seed: 11,
         speeds: [4, 6, 8, 10, 12, 15],
         description: "Slow steady aiming strokes that arrive as sparse single counts." }),
-      slowAim({ id: "slow-aim-precision", cpi: 684, curve: PRECISION_CURVE, seed: 21,
+      slowAim({ id: "slow-aim-precision", cpi: 684, seed: 21,
         speeds: [5, 8, 12, 16, 20, 30], profile: precisionProfile,
         description: "Slow aiming on the steep slow end of the Precision curve, the #113 case." }),
       tremorFixture(),
@@ -526,7 +498,7 @@ function main() {
       textStrokes(),
     ],
     holdout: [
-      slowAim({ id: "slow-aim-2052cpi", cpi: 2052, curve: BRIDGES_CURVE, seed: 111,
+      slowAim({ id: "slow-aim-2052cpi", cpi: 2052, seed: 111,
         speeds: [5, 7, 9, 13, 18, 24],
         description: "Slow steady aiming strokes at 2052 CPI." }),
       flicks({ id: "flicks-ble", link: "ble", seed: 141 }),

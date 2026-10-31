@@ -30,17 +30,31 @@ jobs:
         run: devenv tasks run repository:check --no-tui
       - name: Run host tests with sanitizers
         run: devenv tasks run host:test:asan --no-tui
-      # Scores the trace benchmark against host/bench/baseline.json and adds
-      # the table to the job summary (docs/trace-benchmark.md). A score
-      # change never fails the job; only a benchmark that can't run does.
+      # Scores the trace benchmark and adds the table to the job summary
+      # (docs/trace-benchmark.md). On a pull request the scores compare
+      # with the base branch's baseline, so a PR that rewrites
+      # host/bench/baseline.json still shows what it changed; without one
+      # (a push, or a base without the file) they compare with this
+      # commit's. A score change never fails the job; only a benchmark
+      # that can't run does.
       - name: Report trace benchmark scores
         run: |
+          baseline=host/bench/baseline.json
+          label="this commit's host/bench/baseline.json"
+          if [ -n "${GITHUB_BASE_REF:-}" ] &&
+             git fetch --depth=1 --quiet origin \
+               "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF" &&
+             git show "origin/$GITHUB_BASE_REF:host/bench/baseline.json" > base-baseline.json; then
+            baseline=base-baseline.json
+            label="the $GITHUB_BASE_REF branch's host/bench/baseline.json"
+          fi
           devenv shell -- bash -c 'cmake -S host -B build/host -G Ninja &&
-            cmake --build build/host &&
-            node host/replay/bench.js --build-dir build/host --markdown bench.md --json bench.json'
-          cat bench.md >> "$GITHUB_STEP_SUMMARY"
+            cmake --build build/host' &&
+          devenv shell -- node host/replay/bench.js --build-dir build/host \
+            --baseline "$baseline" --markdown bench.md --json bench.json
+          { cat bench.md; echo; echo "Compared with $label."; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload trace benchmark report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trace-benchmark
           path: bench.json

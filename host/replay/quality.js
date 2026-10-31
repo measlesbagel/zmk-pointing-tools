@@ -5,7 +5,7 @@
  * docs/trace-benchmark.md; keep this file and that document in step.
  */
 
-import { eventTimesUs } from "./fixture.js";
+import { eventTimesUs, resolveCursorStages } from "./fixture.js";
 import { parseLines } from "./metrics.js";
 
 /* Metric names in report order, and whether a higher value is better. */
@@ -14,7 +14,7 @@ export const METRICS = {
   slowJitterPercent: { higherIsBetter: false, unit: "%" },
   sensitivityStepPercent: { higherIsBetter: false, unit: "%" },
   flickLagMs: { higherIsBetter: false, unit: "ms" },
-  distanceErrorPercent: { higherIsBetter: false, unit: "%" },
+  outputErrorPercent: { higherIsBetter: false, unit: "%" },
   unintendedOutput: { higherIsBetter: false, unit: "" },
   axisLockPercent: { higherIsBetter: true, unit: "%" },
   sidewaysLeakPercent: { higherIsBetter: false, unit: "%" },
@@ -64,6 +64,95 @@ export function parseTrace(fixture, output) {
     return { tUs: report[0] * 1000, x, y };
   });
   return { frames, reports };
+}
+
+/* Monotone cubic through the curve points, as the firmware draws it
+ * (Fritsch-Carlson, flat beyond both ends). */
+export function curvePercent(curve, speed) {
+  const { speeds: xs, percents: ys } = curve;
+  const n = xs.length;
+  if (speed <= xs[0]) return ys[0];
+  if (speed >= xs[n - 1]) return ys[n - 1];
+  const tangent = (i) => {
+    if (i === 0 || i === n - 1) return 0;
+    const h0 = xs[i] - xs[i - 1];
+    const h1 = xs[i + 1] - xs[i];
+    const d0 = (ys[i] - ys[i - 1]) / h0;
+    const d1 = (ys[i + 1] - ys[i]) / h1;
+    if (d0 === 0 || d1 === 0 || Math.sign(d0) !== Math.sign(d1)) return 0;
+    const w1 = 2 * h1 + h0;
+    const w2 = h1 + 2 * h0;
+    return (w1 + w2) / (w1 / d0 + w2 / d1);
+  };
+  let i = 0;
+  while (speed >= xs[i + 1]) i += 1;
+  const h = xs[i + 1] - xs[i];
+  const t = (speed - xs[i]) / h;
+  return ys[i] * (2 * t ** 3 - 3 * t ** 2 + 1) + tangent(i) * h * (t ** 3 - 2 * t ** 2 + t) +
+    ys[i + 1] * (-2 * t ** 3 + 3 * t ** 2) + tangent(i + 1) * h * (t ** 3 - t ** 2);
+}
+
+/* What an ideal cursor pipeline does to ball motion. The acceleration curve
+ * and transfer gain are choices, so they come from the stages with the
+ * replay's settings. Orientation is the sensor's mounting, part of the
+ * truth, so it comes from the fixture's own settings: a profile that turns
+ * motion the wrong way scores as wrong. */
+function cursorModel(fixture, profile) {
+  if (fixture.version === 1) {
+    const { scaleMultiplier, scaleDivisor } = fixture.processor.settings;
+    return { orientations: [], curve: null, gain: scaleMultiplier / scaleDivisor };
+  }
+  const model = { orientations: [], curve: null, gain: 1 };
+  for (const { type, settings } of resolveCursorStages(fixture)) {
+    if (type === "orientation") {
+      model.orientations.push({ swap: Boolean(settings["swap-xy"]),
+        invertX: Boolean(settings["invert-x"]), invertY: Boolean(settings["invert-y"]) });
+    }
+  }
+  for (const { type, settings } of resolveCursorStages(fixture, profile)) {
+    if (type === "acceleration") {
+      const points = [1, 2, 3, 4, 5, 6, 7, 8];
+      model.curve = { speeds: points.map((i) => settings[`curve-speed-${i}`]),
+        percents: points.map((i) => settings[`curve-sensitivity-${i}`]) };
+    } else if (type === "transfer") {
+      model.gain *= settings["scale-multiplier"] / settings["scale-divisor"];
+    }
+  }
+  return model;
+}
+
+/* The output of an ideal cursor pipeline that knows the stroke's true
+ * motion: each path step oriented, scaled by the transfer gain and by the
+ * curve at the step's true speed, in pointer units. */
+export function idealCursorOutput(fixture, stroke, profile = null) {
+  const model = cursorModel(fixture, profile);
+  const { intervalUs, points } = stroke.path;
+  const millimetresPerCount = 25.4 / fixture.source.cpi;
+  let [ox, oy] = [0, 0];
+  for (let i = 1; i < points.length; i += 1) {
+    let dx = points[i][0] - points[i - 1][0];
+    let dy = points[i][1] - points[i - 1][1];
+    const speed = (Math.hypot(dx, dy) * millimetresPerCount * 1e6) / intervalUs;
+    const gain = model.gain * (model.curve ? curvePercent(model.curve, speed) / 100 : 1);
+    for (const { swap, invertX, invertY } of model.orientations) {
+      if (swap) [dx, dy] = [dy, dx];
+      if (invertX) dx = -dx;
+      if (invertY) dy = -dy;
+    }
+    ox += dx * gain;
+    oy += dy * gain;
+  }
+  return [ox, oy];
+}
+
+/* The intended output: explicit truth, such as a playground target, or for
+ * the cursor the ideal output of the stroke's ball path. */
+function intendedOutput(stroke, fixture, profile) {
+  if (stroke.intendedOutput) return stroke.intendedOutput;
+  if (stroke.path && fixture.processor.kind === "cursor-pipeline") {
+    return idealCursorOutput(fixture, stroke, profile);
+  }
+  return undefined;
 }
 
 function sum(items) {
@@ -131,14 +220,6 @@ function flickLag(frames, reports) {
   return mean(input.map((time, index) => (output[index] - time) / 1000));
 }
 
-/* Output magnitude as each kind measures it: the summed vector for the
- * cursor, the net steps along the intended axis for scroll and text. */
-function outputMagnitude(stroke, reports, cursor) {
-  const [x, y] = sum(reports);
-  if (cursor) return Math.hypot(x, y);
-  return Math.abs(stroke.axis === "horizontal" ? x : y);
-}
-
 function axisMetrics(stroke, frames, reports) {
   const decided = frames.filter((frame) => frame.intent !== INTENT_UNDECIDED);
   const along = stroke.axis === "horizontal" ? "x" : "y";
@@ -158,7 +239,7 @@ function axisMetrics(stroke, frames, reports) {
   };
 }
 
-function strokeMetrics(stroke, frames, reports, fixture) {
+function strokeMetrics(stroke, frames, reports, fixture, profile) {
   const cursor = fixture.processor.kind === "cursor-pipeline";
   const values = {};
   const set = (name, value) => {
@@ -172,11 +253,13 @@ function strokeMetrics(stroke, frames, reports, fixture) {
     }
   }
   if (stroke.activity === "flick") set("flickLagMs", flickLag(frames, reports));
-  if (stroke.intended && stroke.intendedOutput) {
-    const intended = Math.hypot(...stroke.intendedOutput);
-    const actual = outputMagnitude(stroke, reports, cursor);
-    set("distanceErrorPercent", (100 * Math.abs(actual - intended)) / intended);
-    set("distanceBiasPercent", (100 * (actual - intended)) / intended);
+  const intended = stroke.intended ? intendedOutput(stroke, fixture, profile) : undefined;
+  if (intended && Math.hypot(...intended) > 0) {
+    /* Net output against the intended vector, so direction counts too. */
+    const [x, y] = sum(reports);
+    const size = Math.hypot(...intended);
+    set("outputErrorPercent", (100 * Math.hypot(x - intended[0], y - intended[1])) / size);
+    set("distanceBiasPercent", (100 * (Math.hypot(x, y) - size)) / size);
   }
   if (!stroke.intended) {
     set("unintendedOutput", reports.reduce((total, report) =>
@@ -192,7 +275,7 @@ function strokeMetrics(stroke, frames, reports, fixture) {
 }
 
 /* Metric values of every ground-truth stroke in a fixture. */
-export function scoreFixture(fixture, output) {
+export function scoreFixture(fixture, output, profile = null) {
   const { frames, reports } = parseTrace(fixture, output);
   const strokes = [...(fixture.truth?.strokes ?? [])].sort((a, b) => a.startUs - b.startUs);
   return strokes.map((stroke, index) => {
@@ -205,7 +288,7 @@ export function scoreFixture(fixture, output) {
       metrics: strokeMetrics(stroke,
         frames.filter((frame) => frame.tUs >= stroke.startUs && frame.tUs < stroke.endUs),
         reports.filter((report) => report.tUs >= outputStart && report.tUs < outputEnd),
-        fixture),
+        fixture, profile),
     };
   });
 }

@@ -3011,7 +3011,7 @@
         "activity": "text",
         "intended": true,
         "axis": "horizontal",
-        "intendedOutput": [5.06, 0]
+        "intendedOutput": [-5.06, 0]
       },
       {
         "id": "text-4",
@@ -3020,7 +3020,7 @@
         "activity": "text",
         "intended": true,
         "axis": "vertical",
-        "intendedOutput": [0, 7.67]
+        "intendedOutput": [0, -7.67]
       },
       {
         "id": "text-5",
@@ -3047,7 +3047,7 @@
         "activity": "text",
         "intended": true,
         "axis": "horizontal",
-        "intendedOutput": [7.36, 0]
+        "intendedOutput": [-7.36, 0]
       },
       {
         "id": "text-8",
@@ -3056,7 +3056,7 @@
         "activity": "text",
         "intended": true,
         "axis": "vertical",
-        "intendedOutput": [0, 7.24]
+        "intendedOutput": [0, -7.24]
       }
     ]
   }
