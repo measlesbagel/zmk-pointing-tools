@@ -939,8 +939,16 @@ void zpt_host_protocol_wake(void) { k_sem_give(&zpt_wake); }
 
 static void zpt_receive(void) {
     for (size_t i = 0; i < ARRAY_SIZE(zpt_transports); i++) {
+        const struct zpt_host_transport *link = zpt_transports[i];
         uint8_t byte;
-        while (ring_buf_get(zpt_transports[i]->rx, &byte, 1) == 1) {
+        while (ring_buf_get(link->rx, &byte, 1) == 1) {
+            /* Checked after taking each byte: the transport raises the flag
+             * before queuing a new peer's bytes, so the first of them always
+             * sees it and starts a fresh frame instead of completing the
+             * previous peer's partial one. */
+            if (link->rx_reset != NULL && atomic_clear(link->rx_reset)) {
+                zpt_parsers[i].state = MAGIC_0;
+            }
             zpt_parse_byte(i, byte);
         }
     }

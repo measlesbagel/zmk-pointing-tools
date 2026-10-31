@@ -70,7 +70,12 @@ also exposes).
 - **Requests.** The host writes request bytes to the request characteristic in
   chunks of at most 20 bytes, which fit the minimum ATT MTU. Firmware doesn't
   support long (prepared) writes, and Web Bluetooth doesn't expose the
-  negotiated MTU. Chunks can split a frame anywhere.
+  negotiated MTU. Chunks can split a frame anywhere. Use write with response
+  (`writeValueWithResponse`): when firmware's receive buffer is full it
+  rejects the chunk with an error the host sees, while a write without
+  response is lost silently and corrupts the frame. When a different
+  connection, or the same host after reconnecting, writes its first chunk,
+  firmware discards any frame the previous connection left half-written.
 - **Responses and telemetry.** The host subscribes to notifications on the
   response characteristic before its first request. Firmware sends only to the
   connection that wrote the latest request. Each frame starts a new

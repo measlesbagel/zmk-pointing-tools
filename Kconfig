@@ -169,6 +169,7 @@ config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE
 
 config ZMK_POINTING_TOOLS_TELEMETRY_THREAD_STACK_SIZE
     int "Telemetry worker stack size"
+    default 2048 if ZMK_POINTING_TOOLS_TELEMETRY_BLE
     default 1536
     range 1024 4096
 

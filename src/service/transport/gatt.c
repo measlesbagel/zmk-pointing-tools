@@ -35,15 +35,13 @@ static const struct bt_uuid_128 zpt_response_uuid = BT_UUID_INIT_128(ZPT_GATT_RE
 /* ATT notification header: opcode and attribute handle. */
 #define ZPT_ATT_NOTIFY_OVERHEAD 3
 #define ZPT_GATT_CHUNK_MAX (BT_L2CAP_TX_MTU - ZPT_ATT_NOTIFY_OVERHEAD)
-/* How long a frame waits for the link to take its next chunk. Only a
- * stalled link waits this long; a dropped one releases the wait at once. */
-#define ZPT_GATT_CHUNK_TIMEOUT K_MSEC(1000)
 #define ZPT_GATT_CREDITS CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE_TX_CREDITS
 
 /* The ring buffer handle is documented as `extern struct ring_buf
  * <name>` (the storage is already static); the one-line macro has no
  * static variant. */
 RING_BUF_DECLARE(zpt_gatt_rx_ring, 256); // NOLINT(misc-use-internal-linkage)
+static atomic_t zpt_gatt_rx_reset;
 
 /* Notifications handed to the stack and not yet sent. Notifications on one
  * connection leave in order, HID reports included, so the cap bounds how
@@ -54,7 +52,8 @@ RING_BUF_DECLARE(zpt_gatt_rx_ring, 256); // NOLINT(misc-use-internal-linkage)
 K_SEM_DEFINE(zpt_gatt_credits, ZPT_GATT_CREDITS, ZPT_GATT_CREDITS);
 
 /* The connection that wrote the latest request; responses go only to it.
- * Written from the Bluetooth thread, read from the protocol worker. */
+ * Only the Bluetooth thread writes it, so Bluetooth callbacks compare it
+ * without the lock; the protocol worker takes a reference under the lock. */
 static struct k_spinlock zpt_gatt_lock;
 static struct bt_conn *zpt_gatt_conn;
 
@@ -124,6 +123,10 @@ static ssize_t zpt_gatt_write(struct bt_conn *conn, const struct bt_gatt_attr *a
     }
 
     if (zpt_gatt_conn != conn) {
+        /* A new peer, or the same one after a reconnect: a frame the
+         * previous connection left half-written must not absorb these
+         * bytes. Raised before they are queued. */
+        atomic_set(&zpt_gatt_rx_reset, 1);
         zpt_gatt_set_conn(conn);
     }
     ring_buf_put(&zpt_gatt_rx_ring, buf, len);
@@ -165,8 +168,11 @@ static int zpt_gatt_notify_frame(struct bt_conn *conn, size_t chunk_size, const 
                                  size_t header_length, const uint8_t *payload, size_t total) {
     uint8_t chunk[ZPT_GATT_CHUNK_MAX];
     for (size_t offset = 0; offset < total; offset += chunk_size) {
-        if (k_sem_take(&zpt_gatt_credits, ZPT_GATT_CHUNK_TIMEOUT) < 0) {
-            return -ETIMEDOUT;
+        /* Waits as long as the link stays up, so a slow link never cuts a
+         * frame short. A disconnect resets the semaphore, which ends the
+         * wait with an error. */
+        if (k_sem_take(&zpt_gatt_credits, K_FOREVER) < 0) {
+            return -ENOTCONN;
         }
         const size_t length = MIN(chunk_size, total - offset);
         zpt_gatt_gather(chunk, offset, length, header, header_length, payload);
@@ -217,6 +223,7 @@ static int zpt_gatt_send(const uint8_t *header, size_t header_length, const uint
 const struct zpt_host_transport zpt_gatt_transport = {
     .name = "bluetooth",
     .rx = &zpt_gatt_rx_ring,
+    .rx_reset = &zpt_gatt_rx_reset,
     .send = zpt_gatt_send,
 };
 

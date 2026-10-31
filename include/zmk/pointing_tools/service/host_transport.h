@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/ring_buffer.h>
 
 /* A byte link that carries the host protocol (docs/protocol.md). The
@@ -16,6 +17,10 @@ struct zpt_host_transport {
     /* Received bytes waiting for the protocol worker. The transport writes,
      * the worker reads. */
     struct ring_buf *rx;
+    /* Optional. The transport sets it before queuing the first bytes from a
+     * new peer; the worker then drops any partial frame from the previous
+     * peer before parsing them. NULL for links that never change peer. */
+    atomic_t *rx_reset;
     /* Sends one frame, the header and then the payload. Returns 0 once the
      * whole frame is handed to the link, or a negative errno. A droppable
      * frame (an unsolicited state sample) is refused rather than delayed
