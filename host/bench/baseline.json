@@ -1,28 +1,82 @@
 {
   "schema": "zmk-pointing-tools/benchmark-baseline",
-  "version": 1,
+  "version": 2,
   "sets": {
     "tune": {
-      "speedErrorPercent": 15.26,
-      "slowJitterPercent": 12.92,
-      "sensitivityStepPercent": 2.71,
-      "flickLagMs": 1.28,
-      "outputErrorPercent": 5.58,
-      "unintendedOutput": 23.24,
-      "axisLockPercent": 94.76,
-      "sidewaysLeakPercent": 2.45,
-      "axisSwitches": 0.29
+      "speedErrorPercent": {
+        "value": 15.26,
+        "strokes": 20
+      },
+      "slowJitterPercent": {
+        "value": 12.92,
+        "strokes": 19
+      },
+      "sensitivityStepPercent": {
+        "value": 2.71,
+        "strokes": 19
+      },
+      "flickLagMs": {
+        "value": 1.28,
+        "strokes": 6
+      },
+      "outputErrorPercent": {
+        "value": 5.58,
+        "strokes": 44
+      },
+      "unintendedOutput": {
+        "value": 23.24,
+        "strokes": 8
+      },
+      "axisLockPercent": {
+        "value": 94.76,
+        "strokes": 17
+      },
+      "sidewaysLeakPercent": {
+        "value": 2.45,
+        "strokes": 17
+      },
+      "axisSwitches": {
+        "value": 0.29,
+        "strokes": 17
+      }
     },
     "holdout": {
-      "speedErrorPercent": 9.63,
-      "slowJitterPercent": 4.11,
-      "sensitivityStepPercent": 0,
-      "flickLagMs": 5.77,
-      "outputErrorPercent": 0.86,
-      "unintendedOutput": 0,
-      "axisLockPercent": 99.08,
-      "sidewaysLeakPercent": 0.25,
-      "axisSwitches": 0.75
+      "speedErrorPercent": {
+        "value": 9.63,
+        "strokes": 6
+      },
+      "slowJitterPercent": {
+        "value": 4.11,
+        "strokes": 6
+      },
+      "sensitivityStepPercent": {
+        "value": 0,
+        "strokes": 6
+      },
+      "flickLagMs": {
+        "value": 5.77,
+        "strokes": 6
+      },
+      "outputErrorPercent": {
+        "value": 0.86,
+        "strokes": 16
+      },
+      "unintendedOutput": {
+        "value": 0,
+        "strokes": 4
+      },
+      "axisLockPercent": {
+        "value": 99.08,
+        "strokes": 4
+      },
+      "sidewaysLeakPercent": {
+        "value": 0.25,
+        "strokes": 4
+      },
+      "axisSwitches": {
+        "value": 0.75,
+        "strokes": 4
+      }
     }
   }
 }

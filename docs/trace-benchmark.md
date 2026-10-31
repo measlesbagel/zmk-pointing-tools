@@ -15,6 +15,13 @@ can define precisely, on traces that are, for now, synthetic. A change that
 scores better still has to feel better: live playground runs and tuning on the
 keyboard (#108, #115) stay the final check before a change ships.
 
+**The benchmark doesn't judge curve shape or gain.** The ideal output follows
+the acceleration curve and transfer gain the replay runs, so the metrics score
+how faithfully the pipeline carries out a curve, not whether the curve is a
+good one. A flatter curve or a lower gain can win every metric while feeling
+worse. Check curve and gain changes on the keyboard; `bench.js` prints a
+reminder when `--profile` sets `curve-*` or `scale-*` keys.
+
 ## Run it
 
 ```sh
@@ -55,7 +62,11 @@ profile first, so a mistake can't silently score as the baseline:
   range, fails the replay.
 
 Change the baseline only in a commit that explains why the scores moved,
-the same way regression snapshots are updated.
+the same way regression snapshots are updated. The baseline stores each
+metric's value and how many strokes it was scored on. A metric scored on a
+different number of strokes than its baseline, or not at all, reads as
+worse whatever its value: a change must not improve a score by making strokes
+unscorable.
 
 The CI `checks` job runs the benchmark after the host tests and appends the
 table to the job summary. On a pull request it compares with the base
@@ -307,13 +318,21 @@ the vector difference over the intended length, so output in the wrong
 direction counts as error even at the right length. The JSON report also
 carries the signed length difference (`distanceBiasPercent`,
 `(|actual| − |intended|) / |intended|`, negative when distance is lost).
+When the ball moved (a non-zero `path` or `intendedOutput`) but the ideal or
+the actual output is zero, for example with a transfer multiplier of 0, the
+stroke scores 100 % rather than being skipped.
 
 ### Unintended output (`unintendedOutput`)
 
 Output from motion the user didn't mean, such as tremor at rest or shake from
 typing. Applies to strokes with `intended: false`. The stroke value is the
 summed magnitude of every report: the Euclidean length of each cursor report,
-or the absolute steps of each scroll or text report.
+or the absolute steps of each scroll or text report. Cursor output is divided
+by the pipeline's slow-motion gain, the replayed transfer gain times the
+curve's first-point sensitivity, so it reads in ball counts and lowering the
+gain doesn't hide it. Pixel quantization still makes a lower gain show a
+little less shake, which is real; the cost then shows in slow-stroke jitter.
+With a gain of zero the metric is unscored, which reads as worse.
 
 ### Axis-lock accuracy (`axisLockPercent`)
 

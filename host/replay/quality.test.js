@@ -96,3 +96,26 @@ test("ideal cursor output follows the replayed curve and gain but not orientatio
   /* Mounting is truth: a profile that drops the inversion still expects -x. */
   close(idealCursorOutput(fixture, stroke, profile("o", "invert-x", 0)), [-15, 5]);
 });
+
+test("zero output scores as lost and unintended output reads in ball counts", () => {
+  const fixture = { version: 2, id: "z", source: { device: "b", location: "central", cpi: 254,
+    span: "none" }, processor: { kind: "cursor-pipeline", stages: [
+    { type: "transfer", stableId: "t", settings: { "scale-multiplier": 1, "scale-divisor": 4 } },
+  ] }, events: [["motion", 0, 1, 0], ["motion", 50000, 1, 0]], truth: { strokes: [
+    { id: "aim", activity: "aim", intended: true, startUs: 0, endUs: 40000,
+      path: { intervalUs: 10000, points: [[0, 0], [8, 0]] } },
+    { id: "rest", activity: "tremor", intended: false, startUs: 50000, endUs: 60000 },
+  ] } };
+  /* No reports during the stroke: every count of the path is lost. */
+  const output = [D(0, 1, 0, 0), D(50000, 1, 0, 0), O(50000, 3, 4)].join("\n");
+  const [aim, rest] = scoreFixture(fixture, output);
+  assert.equal(aim.metrics.outputErrorPercent, 100);
+  /* A 5-unit report at a quarter gain is 20 ball counts. */
+  assert.equal(rest.metrics.unintendedOutput, 20);
+  /* With a zero gain the ideal output is zero too, which still counts as lost. */
+  const zero = { schema: "zmk-pointing-tools/tuning-profile", version: 1, targets: [
+    { stableId: "t", parameters: [{ key: "scale-multiplier", value: 0 }] }] };
+  const [aimZero, restZero] = scoreFixture(fixture, output, zero);
+  assert.equal(aimZero.metrics.outputErrorPercent, 100);
+  assert.equal(restZero.metrics.unintendedOutput, undefined);
+});

@@ -83,6 +83,13 @@ function checkProfile(profile, fixtures, path) {
     throw new Error(`${path}: the profile has no cursor targets; --profile only changes ` +
       "cursor fixtures");
   }
+  const shaping = profile.targets.filter((target) => !scrollText.includes(target) &&
+    target.parameters.some(({ key }) => /^(curve-|scale-)/.test(key)));
+  if (shaping.length) {
+    console.warn(`note: ${path} sets curve or gain keys; the benchmark scores how faithfully ` +
+      "the pipeline follows its curve and gain, not whether they feel right. Check curve " +
+      "changes on the keyboard (docs/trace-benchmark.md).");
+  }
   for (const target of unmatchedCursor) {
     console.warn(`warning: ${path}: target ${target.stableId} matches no stage in any ` +
       "fixture and is ignored");
@@ -98,20 +105,35 @@ function checkProfile(profile, fixtures, path) {
   }
 }
 
-function compare(name, value, baseline) {
+/* Baselines hold { value, strokes } per metric. A metric that lost
+ * strokes or vanished is worse: a setting must not improve a score by
+ * making strokes unscorable. */
+function compare(name, score, baseline) {
   if (baseline === undefined) return { change: "new" };
-  const delta = round(value) - round(baseline);
+  if (score.value === undefined) return { change: "worse", note: "missing" };
+  if (baseline.strokes !== undefined && score.strokes !== baseline.strokes) {
+    return { delta: round(round(score.value) - baseline.value), change: "worse",
+      note: `strokes ${baseline.strokes}→${score.strokes}` };
+  }
+  const delta = round(round(score.value) - baseline.value);
   if (delta === 0) return { delta: 0, change: "same" };
   const better = METRICS[name].higherIsBetter ? delta > 0 : delta < 0;
-  return { delta: round(delta), change: better ? "better" : "worse" };
+  return { delta, change: better ? "better" : "worse" };
 }
 
 function withBaseline(sets, baseline) {
   for (const [set, result] of Object.entries(sets)) {
-    for (const [name, score] of Object.entries(result.scores)) {
-      Object.assign(score, { baseline: baseline?.sets?.[set]?.[name] },
-        compare(name, score.value, baseline?.sets?.[set]?.[name]));
+    /* Version 1 baselines hold bare values without stroke counts. */
+    const previous = Object.fromEntries(Object.entries(baseline?.sets?.[set] ?? {})
+      .map(([name, entry]) => [name, typeof entry === "number" ? { value: entry } : entry]));
+    const scores = {};
+    for (const name of Object.keys(METRICS)) {
+      if (!(name in result.scores) && !(name in previous)) continue;
+      const score = result.scores[name] ?? { value: undefined, strokes: 0 };
+      scores[name] = Object.assign(score, { baseline: previous[name]?.value },
+        compare(name, score, previous[name]));
     }
+    result.scores = scores;
   }
   return sets;
 }
@@ -120,8 +142,11 @@ function rows(result) {
   return Object.entries(result.scores).map(([name, score]) => {
     const arrow = METRICS[name].higherIsBetter ? "↑" : "↓";
     const change = score.change === "same" ? "=" : score.change === "new" ? "new"
-      : `${score.delta > 0 ? "+" : ""}${score.delta.toFixed(DIGITS)} ${score.change}`;
-    return [`${name} ${arrow}`, String(score.strokes), score.value.toFixed(DIGITS),
+      : [score.delta === undefined ? null
+        : `${score.delta > 0 ? "+" : ""}${score.delta.toFixed(DIGITS)}`,
+      score.change, score.note && `(${score.note})`].filter(Boolean).join(" ");
+    return [`${name} ${arrow}`, String(score.strokes),
+      score.value === undefined ? "-" : score.value.toFixed(DIGITS),
       score.baseline === undefined ? "-" : score.baseline.toFixed(DIGITS), change];
   });
 }
@@ -196,9 +221,11 @@ function main() {
       "Fixtures are synthetic until real recordings land; see docs/trace-benchmark.md.\n");
   }
   if (values["write-baseline"]) {
-    writeFileSync(values.baseline, `${JSON.stringify({ schema: BASELINE_SCHEMA, version: 1,
+    writeFileSync(values.baseline, `${JSON.stringify({ schema: BASELINE_SCHEMA, version: 2,
       sets: Object.fromEntries(setNames.map((set) => [set, Object.fromEntries(
-        Object.entries(sets[set].scores).map(([name, score]) => [name, round(score.value)]))])),
+        Object.entries(sets[set].scores).filter(([, score]) => score.value !== undefined)
+          .map(([name, score]) => [name, { value: round(score.value), strokes: score.strokes }]),
+      )])),
     }, null, 2)}\n`);
     console.log(`\nWrote ${relative(process.cwd(), values.baseline)}`);
   }

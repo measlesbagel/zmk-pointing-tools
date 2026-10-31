@@ -145,6 +145,19 @@ export function idealCursorOutput(fixture, stroke, profile = null) {
   return [ox, oy];
 }
 
+/* Ball travel along a stroke's path, in counts. */
+function pathTravel(stroke) {
+  const points = stroke.path?.points ?? [];
+  return points.slice(1).reduce((total, point, i) =>
+    total + Math.hypot(point[0] - points[i][0], point[1] - points[i][1]), 0);
+}
+
+/* The pipeline's gain for slow, unintended motion: transfer gain times the
+ * curve's first-point sensitivity. Zero leaves the metric undefined. */
+function slowGain(model) {
+  return model.gain * (model.curve ? model.curve.percents[0] / 100 : 1);
+}
+
 /* The intended output: explicit truth, such as a playground target, or for
  * the cursor the ideal output of the stroke's ball path. */
 function intendedOutput(stroke, fixture, profile) {
@@ -254,17 +267,25 @@ function strokeMetrics(stroke, frames, reports, fixture, profile) {
   }
   if (stroke.activity === "flick") set("flickLagMs", flickLag(frames, reports));
   const intended = stroke.intended ? intendedOutput(stroke, fixture, profile) : undefined;
-  if (intended && Math.hypot(...intended) > 0) {
+  if (intended) {
     /* Net output against the intended vector, so direction counts too. */
     const [x, y] = sum(reports);
     const size = Math.hypot(...intended);
-    set("outputErrorPercent", (100 * Math.hypot(x - intended[0], y - intended[1])) / size);
-    set("distanceBiasPercent", (100 * (Math.hypot(x, y) - size)) / size);
+    if (size > 0 && Math.hypot(x, y) > 0) {
+      set("outputErrorPercent", (100 * Math.hypot(x - intended[0], y - intended[1])) / size);
+      set("distanceBiasPercent", (100 * (Math.hypot(x, y) - size)) / size);
+    } else if (size > 0 || pathTravel(stroke) > 0) {
+      /* The ball moved but either side gave nothing: all of it is lost. */
+      set("outputErrorPercent", 100);
+      set("distanceBiasPercent", -100);
+    }
   }
   if (!stroke.intended) {
+    /* Cursor output counts in ball counts, so lowering the gain can't hide it. */
+    const scale = cursor ? slowGain(cursorModel(fixture, profile)) : 1;
     set("unintendedOutput", reports.reduce((total, report) =>
       total + (cursor ? Math.hypot(report.x, report.y)
-        : Math.abs(report.x) + Math.abs(report.y)), 0));
+        : Math.abs(report.x) + Math.abs(report.y)), 0) / scale);
   }
   if (!cursor && stroke.axis) {
     for (const [name, value] of Object.entries(axisMetrics(stroke, frames, reports))) {
