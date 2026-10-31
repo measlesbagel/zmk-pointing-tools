@@ -42,17 +42,20 @@ function context(overrides = {}) {
 const call = async (tools, name, input) =>
   JSON.parse(await tools.find((tool) => tool.name === name).execute(input));
 
-test("every agent tool is a uniquely named read-only tool with an object schema", () => {
+test("every agent tool is a uniquely named read-only tool with object input and output", async () => {
   const tools = createAgentTools(context());
   assert.equal(new Set(tools.map(({ name }) => name)).size, tools.length);
   for (const tool of tools) {
     assert.equal(tool.annotations.readOnlyHint, true, tool.name);
     assert.equal(tool.inputSchema.type, "object", tool.name);
+    /* The relay only passes plain objects on as structured content. */
+    const output = JSON.parse(await tool.execute({}));
+    assert.ok(output && typeof output === "object" && !Array.isArray(output), tool.name);
   }
 });
 
 test("tuning targets report preview state and missing metadata as null", async () => {
-  const [described] = await call(createAgentTools(context()), "list_tuning_targets");
+  const { targets: [described] } = await call(createAgentTools(context()), "list_tuning_targets");
   assert.equal(described.stableId, "right-cursor-acceleration");
   const [rise, fall] = described.parameters;
   assert.deepEqual([rise.modified, rise.current, rise.compiled, rise.unit], [true, 30, 10, "ms"]);
@@ -60,7 +63,7 @@ test("tuning targets report preview state and missing metadata as null", async (
 });
 
 test("pointing devices report split location and resolution capabilities", async () => {
-  const [right, left] = await call(createAgentTools(context()), "list_pointing_devices");
+  const { devices: [right, left] } = await call(createAgentTools(context()), "list_pointing_devices");
   assert.equal(right.location, "local");
   assert.deepEqual(right.resolution.cpiRange, { min: 608, max: 4826, step: 38 });
   assert.equal(right.resolution.compiledCpi, 684);
