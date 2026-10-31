@@ -54,6 +54,10 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .state-timeline li { display: grid; grid-template-columns: 150px minmax(120px, .45fr) 1fr; gap: 10px; padding: 7px 9px; background: #11141a; font-size: 12px; }
 .state-timeline strong { font-weight: 600; }
 .state-timeline span { color: var(--muted); }
+.agent-setup { margin-bottom: 10px; }
+.agent-setup p { margin: 8px 0; max-width: 760px; }
+.agent-setup pre { margin: 0 0 8px; padding: 10px 12px; overflow-x: auto; border: 1px solid var(--line); background: #0a0c0f; color: var(--accent); font: 12px ui-monospace, monospace; }
+.agent-log li { grid-template-columns: 110px minmax(160px, .45fr) 1fr; }
 .playground-dialog { width: min(1050px, calc(100vw - 24px)); max-width: none; height: min(820px, calc(100vh - 24px)); max-height: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 18px; }
 .playground-dialog::backdrop { background: #05070bd9; backdrop-filter: blur(3px); }
 .playground-dialog-heading, .playground-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

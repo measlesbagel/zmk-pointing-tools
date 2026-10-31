@@ -24,7 +24,7 @@ const PRECISION_HISTORY_LIMIT = 20;
 
 /* Saved precision summaries live in this browser only; storage can be
  * missing or full, and the test still runs without it. */
-function loadPrecisionHistory() {
+export function loadPrecisionHistory() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRECISION_HISTORY_KEY) ?? "[]");
     return Array.isArray(saved) ? saved : [];

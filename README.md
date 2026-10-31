@@ -70,6 +70,8 @@ replay.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
 See [`docs/calibration.md`](docs/calibration.md) for per-device gain
 calibration.
+See [`docs/agent-tools.md`](docs/agent-tools.md) for letting your own AI agent
+read the tuner session.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 See [`docs/build.md`](docs/build.md) for host checks and the firmware smoke
