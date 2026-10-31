@@ -13,6 +13,7 @@ const ANSWER_WAIT_DEFAULT = 20;
 const ANSWER_WAIT_LIMIT = 45;
 const SNAPSHOT_LIMIT = 10;
 const QUESTION_LIMIT = 3;
+const SETTLED_QUESTION_LIMIT = 20;
 const SUMMARY_CHANGES = 3;
 
 /* Every result is a JSON object: the relay widget passes an object on as
@@ -242,17 +243,33 @@ export class AgentSession {
 
   /* Sends one change. send gets the values from just before it, read in
    * turn with other changes. The values before the first change become
-   * the revert point, which stays until Revert restores it. */
+   * the revert point, which stays until Revert restores it. Values the
+   * tuner learns later, such as a peripheral's device, join the revert
+   * point as they were before the first change that could touch them.
+   * Callers resolve targets and check ranges before the change waits its
+   * turn, so it fails if the connection changed meanwhile. */
   change(send) {
+    const connection = this.context.connection();
     return this.#serial(async () => {
       requireConnection(this.context);
+      if (this.context.connection() !== connection) {
+        throw new Error("The tuner's connection changed while this call waited. Read the targets again.");
+      }
       this.#prune();
-      this.#baseline ??= captureValues(this.context);
+      const current = captureValues(this.context);
+      this.#baseline ??= current;
+      for (const [id, values] of Object.entries(current.targets)) {
+        this.#baseline.targets[id] = { ...values, ...this.#baseline.targets[id] };
+      }
+      this.#baseline.devices = { ...current.devices, ...this.#baseline.devices };
       return this.#send(send);
     });
   }
 
   #restore(saved) {
+    if (saved.connection !== this.context.connection()) {
+      throw new Error("These values belong to an earlier connection.");
+    }
     for (const target of this.context.targets().values()) {
       const values = target.parameters
         .filter(({ id, current }) => saved.targets[target.id]?.[id] !== undefined && saved.targets[target.id][id] !== current)
@@ -316,6 +333,9 @@ export class AgentSession {
     if (this.#openQuestions().length >= QUESTION_LIMIT) {
       throw new Error(`${QUESTION_LIMIT} questions are already waiting for the user. Get their answers first.`);
     }
+    /* The session lasts the whole page: forget the oldest settled ones. */
+    const settled = [...this.questions.values()].filter(({ status }) => status !== "pending");
+    for (const { id } of settled.slice(0, Math.max(settled.length - SETTLED_QUESTION_LIMIT, 0))) this.questions.delete(id);
     const id = `q${this.#nextQuestion++}`;
     this.questions.set(id, { id, question, choices, status: "pending", answer: null, askedAt: new Date(), waiters: [] });
     this.onUpdate();

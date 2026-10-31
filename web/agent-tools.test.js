@@ -232,6 +232,35 @@ test("revert keeps its point while a target's values are still loading", async (
   assert.deepEqual([values(fake), session.changed], [[30, 5], false]);
 });
 
+test("revert restores a device that was described after the agent's first change", async () => {
+  const fake = context();
+  /* The peripheral's description hasn't arrived yet. */
+  const peripheral = fake.devices().get(1);
+  const session = new AgentSession(fake);
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  peripheral.description = { currentCpi: 800, defaultCpi: 800, stale: false, discrete: true, values: [400, 800, 1600] };
+  await call(session.tools, "preview_device_cpi", { device: "left-ball", cpi: 1600 });
+  const { remaining } = await session.revert();
+  assert.deepEqual([values(fake), peripheral.description.currentCpi, remaining, session.changed], [[30, 5], 800, [], false]);
+});
+
+test("a queued change fails if the connection changed while it waited", async () => {
+  /* The first change waits until released; later ones are answered at once. */
+  let release;
+  const blocked = new Promise((resolve) => { release = () => resolve(true); });
+  let waits = 0;
+  const fake = context({ settled: () => (waits++ ? Promise.resolve(true) : blocked) });
+  const tools = createAgentTools(fake);
+  const first = call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 50 } });
+  const second = call(tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 70 } });
+  await new Promise((resolve) => setTimeout(resolve));
+  fake.connect("simulator-9");
+  release();
+  await first;
+  await assert.rejects(second, /connection changed while this call waited/);
+  assert.equal(fake.batches.length, 1);
+});
+
 test("a revert point and snapshots never reach another connection", async () => {
   const fake = context();
   const session = new AgentSession(fake);
