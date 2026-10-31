@@ -8,6 +8,9 @@ const TELEMETRY_DEFAULT = 100;
 const TELEMETRY_LIMIT = 500;
 const LEVELS = ["off", "decisions", "every-frame"];
 
+/* Every result is a JSON object: the relay widget passes an object on as
+ * structured content, but leaves anything else, such as an array, as text
+ * the agent has to parse again. */
 const json = (value) => JSON.stringify(value, null, 2);
 const noInput = { type: "object", properties: {} };
 
@@ -98,14 +101,14 @@ export function createAgentTools(context) {
       description: "List the keyboard's tunable pipeline stages. Each has a stable id that matches its devicetree node, and parameters with label, unit, range, step, compiled value, current preview value, help text and devicetree property.",
       inputSchema: noInput,
       annotations: { readOnlyHint: true },
-      execute: async () => json([...context.targets().values()].map(describeTarget)),
+      execute: async () => json({ targets: [...context.targets().values()].map(describeTarget) }),
     },
     {
       name: "list_pointing_devices",
       description: "List the keyboard's pointing sensors with their location in the split, whether they're reachable, and their current, compiled and supported resolution (CPI).",
       inputSchema: noInput,
       annotations: { readOnlyHint: true },
-      execute: async () => json([...context.devices().values()].map(describeDevice)),
+      execute: async () => json({ devices: [...context.devices().values()].map(describeDevice) }),
     },
     {
       name: "get_recent_telemetry",
@@ -125,7 +128,7 @@ export function createAgentTools(context) {
       description: "Read the saved Small-target precision runs from the playground, newest last: each run's label, acquire mode, time, Fitts throughput, and per target size the median time, corrections, overshoot and misses. Run labels are typed by the user.",
       inputSchema: noInput,
       annotations: { readOnlyHint: true, untrustedContentHint: true },
-      execute: async () => json(context.precisionHistory()),
+      execute: async () => json({ runs: context.precisionHistory() }),
     },
     {
       name: "get_config_handoff",
