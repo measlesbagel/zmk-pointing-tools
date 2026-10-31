@@ -41,8 +41,8 @@ import { ResponseRequestQueue } from "./request-queue.js";
 import { PointingPlayground } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
+import { SerialTransport } from "./transport.js";
 
-const USB_FILTERS = [{ usbVendorId: 0x16c0 }];
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
 const STAGE_EVENT_LABELS = ["suppressed", "discarded", "qualified", "intent-changed", "flushed", "action"];
@@ -55,10 +55,7 @@ const elements = Object.fromEntries(
   ),
 );
 
-let port;
-let reader;
-let writer;
-let readActive = false;
+let transport;
 let protocolReady = false;
 let simulator;
 let heartbeat;
@@ -71,8 +68,8 @@ let decoder = new FrameDecoder();
 let calibration;
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
-    if (!writer) throw new Error("Serial writer is unavailable");
-    return writer.write(frame);
+    if (!transport) throw new Error("The keyboard connection is unavailable");
+    return transport.write(frame);
   },
   (error) => notice(`Tuning request failed: ${error.message}`, true),
 );
@@ -100,7 +97,7 @@ function notice(text, error = false) {
 
 function updateHeartbeat() {
   const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
-  const needed = Boolean(writer) && stateEnabled;
+  const needed = Boolean(transport) && stateEnabled;
   if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
   if (!needed && heartbeat) {
     clearInterval(heartbeat);
@@ -265,7 +262,7 @@ function setStateLevel(targetId, level) {
     stateStatus.levels.set(targetId, level);
     stateDirty = true;
     calibration?.refresh();
-  } else if (writer && protocolReady) {
+  } else if (transport && protocolReady) {
     tuningRequests.enqueue(MESSAGE.STATE_CONTROL_REQUEST, encodeStateControl(targetId, level));
   }
 }
@@ -322,7 +319,7 @@ function previewCurve(targetId, values) {
     }
     renderTuning();
     notice(`${target.label} simulator curve updated.`);
-  } else if (writer) {
+  } else if (transport) {
     tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(targetId, values));
   }
 }
@@ -425,7 +422,7 @@ function renderLoop() {
 }
 
 async function send(type, payload) {
-  if (writer) await writer.write(encodeFrame(type, payload));
+  if (transport) await transport.write(encodeFrame(type, payload));
 }
 
 function queueTuningRequest(type, payload) {
@@ -551,31 +548,15 @@ function handleFrame(frame) {
   }
 }
 
-async function readLoop() {
-  while (readActive && port?.readable) {
-    reader = port.readable.getReader();
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        for (const frame of decoder.push(value)) handleFrame(frame);
-      }
-    } catch (error) {
-      if (readActive) notice(`Serial read failed: ${error.message}`, true);
-    } finally {
-      reader.releaseLock();
-      reader = undefined;
-    }
-  }
+function receive(bytes) {
+  for (const frame of decoder.push(bytes)) handleFrame(frame);
 }
 
 async function disconnect() {
-  try { if (writer && protocolReady) await writer.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
-  readActive = false;
-  try { if (reader) await reader.cancel(); } catch {}
-  try { if (writer) writer.releaseLock(); } catch {}
-  try { if (port) await port.close(); } catch {}
-  port = writer = undefined;
+  const link = transport;
+  transport = undefined;
+  try { if (link && protocolReady) await link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
+  await link?.close();
   protocolReady = false;
   tuningRequests.clear();
   calibration.cancel();
@@ -593,18 +574,21 @@ async function disconnect() {
 }
 
 async function connect() {
-  if (!("serial" in navigator)) {
+  if (!SerialTransport.supported) {
     notice("Web Serial is unavailable. Use current desktop Chrome or the simulator.", true);
     return;
   }
   try {
     if (simulator) startSimulator();
-    port = await navigator.serial.requestPort({ filters: USB_FILTERS });
-    await port.open({ baudRate: 115200 });
-    writer = port.writable.getWriter();
+    decoder = new FrameDecoder();
+    const link = new SerialTransport({
+      onData: receive,
+      onError: (error) => notice(`${link.label} read failed: ${error.message}`, true),
+      onClose: () => { if (transport === link) disconnect(); },
+    });
+    await link.open();
+    transport = link;
     protocolReady = false;
-    readActive = true;
-    readLoop();
     elements.connect.textContent = "Disconnect";
     elements.simulate.disabled = true;
     tuningTargets = new Map();
@@ -613,7 +597,6 @@ async function connect() {
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
     stateDirty = true;
     tuningRequests.clear();
-    decoder = new FrameDecoder();
     renderTuning();
     setStatus("Connected", true);
     await send(MESSAGE.DESCRIBE_REQUEST);
@@ -624,7 +607,7 @@ async function connect() {
 }
 
 function startSimulator() {
-  if (port) {
+  if (transport) {
     notice("Disconnect the keyboard before starting the simulator.", true);
     return;
   }
@@ -633,7 +616,7 @@ function startSimulator() {
     simulator = undefined;
     calibration.cancel();
     elements.simulate.textContent = "Simulate";
-    setStatus(port ? "Connected" : "Disconnected", Boolean(port));
+    setStatus(transport ? "Connected" : "Disconnected", Boolean(transport));
     tuningTargets = new Map();
     devices = new Map();
     protocolReady = false;
@@ -685,7 +668,7 @@ function startSimulator() {
   calibration.refresh();
 }
 
-elements.connect.addEventListener("click", () => (port ? disconnect() : connect()));
+elements.connect.addEventListener("click", () => (transport ? disconnect() : connect()));
 elements.simulate.addEventListener("click", startSimulator);
 elements.clear.addEventListener("click", () => {
   stateEvents = [];
@@ -749,7 +732,7 @@ elements.tuning.addEventListener("click", async (event) => {
       parameter.current = value;
       renderTuning();
       notice(`${target.label} simulator preview updated.`);
-    } else if (writer) {
+    } else if (transport) {
       tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
     }
   } else if (reset) {
@@ -802,7 +785,7 @@ elements.devices.addEventListener("click", async (event) => {
     device.description.currentCpi = requested;
     renderDevices();
     notice(`${device.label} simulator resolution updated.`);
-  } else if (writer) {
+  } else if (transport) {
     tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST,
       encodeDevicePreview(deviceId, requested));
   }
@@ -849,7 +832,7 @@ function applyCalibration(target, values) {
     }
     renderTuning();
     notice(`${target.label} simulator calibration applied.`);
-  } else if (writer) {
+  } else if (transport) {
     tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(target.id, updates));
   }
 }
@@ -858,7 +841,7 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   getTuningTargets: () => tuningTargets,
   getStateStatus: () => stateStatus,
   getDropped: () => stateStatus.dropped,
-  canControl: () => Boolean(simulator) || (Boolean(writer) && protocolReady),
+  canControl: () => Boolean(simulator) || (Boolean(transport) && protocolReady),
   setStateLevel,
   applyValues: applyCalibration,
   onExport: (result) => {
@@ -872,6 +855,5 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   },
 });
 
-navigator.serial?.addEventListener("disconnect", (event) => { if (event.target === port) disconnect(); });
 renderLoop();
 renderTuning();
