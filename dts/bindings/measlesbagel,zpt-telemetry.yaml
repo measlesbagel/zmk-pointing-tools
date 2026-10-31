@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: MIT
 
-description: Host-facing USB serial telemetry service for ZMK Pointing Tools
+description: |
+  Host-facing telemetry and tuning service for ZMK Pointing Tools. It runs the
+  host protocol over the USB serial port named by the
+  measlesbagel,zpt-telemetry-uart chosen node and, with
+  CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE, over Bluetooth GATT.
 
 compatible: "measlesbagel,zpt-telemetry"

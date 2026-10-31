@@ -305,6 +305,10 @@ used — `native_posix` is the fast local/CI baseline.
   responses from its TX buffer. The firmware callback tolerates drivers
   without the `irq_update` UART operation (the mock returns `-ENOSYS`; the
   production CDC-ACM driver implements it), so the same code runs on both.
+  The Bluetooth GATT transport (`src/service/transport/gatt.c`) has no
+  native_posix Bluetooth peer to test against; the smoke build matrix
+  compiles it (`zmk_pointing_tools_smoke_bluetooth`), and it shares the
+  protocol code these tests cover.
 - **One suite, ordered by name** — ztest executes suites *and* cases in
   name-sorted linker order (not link order), and the tuning registry is a
   process-wide singleton with no unregister API. All cases therefore live

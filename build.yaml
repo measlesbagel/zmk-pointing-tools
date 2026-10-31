@@ -5,3 +5,8 @@ include:
   - board: nice_nano//zmk
     shield: corne_right
     artifact-name: zmk_pointing_tools_smoke_peripheral
+  # The opt-in Bluetooth transport for the host protocol (#105).
+  - board: nice_nano//zmk
+    shield: corne_left
+    cmake-args: -DCONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE=y
+    artifact-name: zmk_pointing_tools_smoke_bluetooth

@@ -94,18 +94,18 @@ config ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
       matching decoder with cadence and sequence diagnostics.
 
 config ZMK_POINTING_TOOLS_TELEMETRY
-    bool "USB serial pointing telemetry service"
+    bool "Pointing telemetry and tuning host service"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TELEMETRY))
     depends on SERIAL
     depends on UART_INTERRUPT_DRIVEN
     help
-      Expose state samples and discovery over a dedicated USB CDC-ACM serial
-      interface.
+      Expose state samples, discovery, and tuning over a dedicated USB
+      CDC-ACM serial interface, and optionally over Bluetooth.
 
 if ZMK_POINTING_TOOLS_TELEMETRY
 
 config ZMK_POINTING_TOOLS_RUNTIME_TUNING
-    bool "Temporary runtime tuning over USB serial"
+    bool "Temporary runtime tuning over the host protocol"
     default y
     help
       Discover targets and preview validated parameter changes. Runtime
@@ -138,6 +138,29 @@ config ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY
       stages report state under the target id they registered for tuning.
 
 endif
+
+config ZMK_POINTING_TOOLS_TELEMETRY_BLE
+    bool "Host protocol over Bluetooth GATT"
+    depends on ZMK_BLE
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    help
+      Also serve the host protocol over a custom GATT service on the
+      Bluetooth host connection, beside the HID service, so the web tuner
+      can connect over Web Bluetooth without a cable. Requests need an
+      encrypted link to a bonded host. USB serial keeps working. See
+      docs/protocol.md for the service and characteristic UUIDs.
+
+config ZMK_POINTING_TOOLS_TELEMETRY_BLE_TX_CREDITS
+    int "Maximum protocol notifications in flight over Bluetooth"
+    default 2
+    range 1 16
+    depends on ZMK_POINTING_TOOLS_TELEMETRY_BLE
+    help
+      Notifications handed to the Bluetooth stack and not yet sent. HID
+      reports leave on the same connection in order, so one waits behind at
+      most this many telemetry notifications. State samples that don't fit in the free
+      budget are dropped whole and counted, so every-frame telemetry runs at
+      whatever rate the connection sustains.
 
 config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE
     int "Maximum queued telemetry samples"

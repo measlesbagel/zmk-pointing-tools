@@ -1,7 +1,8 @@
 # Host protocol
 
-The first transport is USB CDC-ACM for use through Web Serial. The protocol is
-otherwise transport-independent. All multi-byte integers are little-endian.
+The protocol runs over USB CDC-ACM serial (Web Serial) and, optionally, over a
+Bluetooth GATT service (Web Bluetooth). Both carry the same framed byte stream;
+see [Transports](#transports). All multi-byte integers are little-endian.
 
 The current protocol is version 7. Firmware and host are updated together; the
 tuner rejects every other version instead of carrying compatibility parsers or
@@ -20,6 +21,88 @@ Hosts send at most one tuning request at a time and wait for its matching
 response before advancing discovery. This provides transport-level flow
 control for firmware with small serial receive buffers; bulk parameter-help
 requests must not be emitted as an unbounded burst.
+
+## Transports
+
+Every transport carries the framed byte stream above unchanged, and firmware
+decodes each link separately. A request is answered on the link it arrived
+on, and state samples go to the link that sent the latest request. Heartbeats,
+the host timeout, and state levels are shared, so a host on either link keeps
+telemetry alive. Firmware never cuts a frame short while a link stays up:
+host decoders, the tuner's included, can't resynchronise after a truncated
+frame.
+
+### USB serial
+
+The `measlesbagel,zpt-telemetry-uart` chosen node names a USB CDC-ACM port.
+Writes block until the port takes each byte, so no frame is dropped.
+
+### Bluetooth GATT
+
+An opt-in GATT service on the central's host connection, beside ZMK's HID
+service. Turn it on in the keyboard's config (for a split keyboard, the
+central half's config, or a config shared by both halves, where the
+peripheral's build warns about the unmet dependency and leaves it off):
+
+```ini
+CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE=y
+```
+
+It needs the telemetry service as USB serial does: the
+`measlesbagel,zpt-telemetry` node and the `measlesbagel,zpt-telemetry-uart`
+chosen node stay in the keymap. Builds without the option don't include the
+service.
+
+| | UUID | Properties |
+| --- | --- | --- |
+| Service | `f336b450-531c-49cf-9d5d-846a5db2398b` | primary |
+| Request characteristic | `f336b451-531c-49cf-9d5d-846a5db2398b` | write, write without response |
+| Response characteristic | `f336b452-531c-49cf-9d5d-846a5db2398b` | notify |
+
+Browsers only expose services a page names, so a Web Bluetooth host lists the
+service UUID in `optionalServices` (Chrome blocklists HID, which the keyboard
+also exposes).
+
+- **Security.** Both writing requests and subscribing need an encrypted link,
+  and firmware rejects requests from a peer that isn't bonded with Insufficient
+  Authentication, since requests change settings. The computer that uses the
+  keyboard is already bonded, so this costs nothing there.
+- **Requests.** The host writes request bytes to the request characteristic in
+  chunks of at most 20 bytes, which fit the minimum ATT MTU. Firmware doesn't
+  support long (prepared) writes, and Web Bluetooth doesn't expose the
+  negotiated MTU. Chunks can split a frame anywhere.
+- **Responses and telemetry.** The host subscribes to notifications on the
+  response characteristic before its first request. Firmware sends only to the
+  connection that wrote the latest request. Each frame starts a new
+  notification and spans as many as it needs, each up to the ATT MTU minus 3
+  bytes, so hosts decode notifications as a byte stream exactly like serial
+  reads. After a disconnect, the host starts with a fresh decoder.
+
+#### Bandwidth
+
+Telemetry shares the connection with HID reports. ZMK asks the computer for a
+7.5 to 15 ms connection interval, and the computer decides. A state sample
+frame is 59 bytes: one notification once the computer has exchanged a larger
+ATT MTU (ZMK supports 65; computers usually exchange it on connect), three at
+the minimum MTU of 23.
+
+Notifications on one connection leave in order, HID reports included. To keep
+pointing and typing responsive, firmware keeps at most
+`CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE_TX_CREDITS` notifications (default 2)
+in the Bluetooth stack at once, so a HID report waits behind at most that many.
+In a nice!nano ZMK build, a full 65-byte notification leaves as three
+link-layer packets (27-byte ACL buffers), which usually fit in one connection
+event. Responses wait for room, so a large response, such as a 1 KB target
+description of about 17 notifications, takes several connection events. A
+state sample that can't start at once is dropped whole and counted in
+`dropped-state-records` (status and heartbeat acknowledgements), like a full
+queue.
+
+Decision-level telemetry is sparse and fits easily. Every-frame telemetry runs
+at whatever rate the link sustains, at most about two samples per connection
+event with the default budget, and drops the rest visibly. A calibration run
+then reports its dropped samples. Raising the budget trades HID headroom for
+telemetry rate.
 
 ## Messages
 

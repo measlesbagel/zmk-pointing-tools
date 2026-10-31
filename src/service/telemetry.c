@@ -106,6 +106,9 @@ enum zpt_tuning_status {
  * arriving on different links never interleave. */
 static const struct zpt_host_transport *const zpt_transports[] = {
     &zpt_uart_transport,
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE)
+    &zpt_gatt_transport,
+#endif
 };
 
 struct zpt_frame_parser {
