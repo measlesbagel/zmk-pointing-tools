@@ -26,7 +26,7 @@ on the same computer as that tab. Nothing is hosted anywhere else.
 
 ## Set up
 
-1. Use Chrome. Until WebMCP ships by default, enable
+1. Use Chrome 155 or newer. Until WebMCP ships by default, enable
    `chrome://flags/#enable-webmcp-testing` and relaunch. Without it the
    **Allow agent** button stays disabled.
 2. Add the relay to your agent's MCP servers. The tuner's **Agent access**
@@ -37,14 +37,17 @@ on the same computer as that tab. Nothing is hosted anywhere else.
      "mcpServers": {
        "zmk-tuner": {
          "command": "npx",
-         "args": ["-y", "@mcp-b/webmcp-local-relay@6",
+         "args": ["-y", "@mcp-b/webmcp-local-relay@6.0.3",
                   "--widget-origin", "https://measlesbagel.github.io"]
        }
      }
    }
    ```
 
-   `--widget-origin` makes the relay accept tools only from the tuner. Keep it.
+   `--widget-origin` makes the relay accept tools only from that origin. Keep
+   it. Note that an origin covers every page on it: `https://measlesbagel.github.io`
+   also admits that account's other GitHub Pages projects. The version is
+   pinned to match the tuner's copy of the relay widget.
 3. Open the tuner, connect the keyboard (or start the simulator), and select
    **Allow agent**. Chrome may ask once whether the site may reach devices on
    your local network; allow it so the widget can reach the relay.
@@ -74,6 +77,11 @@ repository: match nodes by stable id against your keymap before committing.
   `get_precision_results` are text you typed and are marked as untrusted
   content.
 - The relay binds to loopback only.
+- The relay adds a few tools of its own. One, `webmcp_open_page`, can open a
+  web page in your default browser. Its request to reload the tuner is ignored
+  on purpose, so it can't drop the keyboard connection.
+- The relay forwards every WebMCP tool the tuner page registers. Today those
+  are the six above.
 - The widget is a pinned copy of the relay's own (`web/vendor/webmcp-local-relay`,
   MIT). The tuner loads it itself instead of with the relay's `embed.js`,
   which reloads the page when the relay asks; a reload would drop the keyboard

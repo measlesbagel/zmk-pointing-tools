@@ -8,14 +8,16 @@
  * rather than with the relay's embed.js, which reloads the page when the
  * relay asks; a reload would drop the keyboard connection. */
 
-const RELAY_VERSION = "6";
+const RELAY_VERSION = "6.0.3";
 const RELAY_PORT = "9333";
 const WIDGET_URL = new URL("./vendor/webmcp-local-relay/widget.html", import.meta.url).href;
 const TAB_ID_KEY = "__webmcp_relay_tab_id";
 const LOG_LIMIT = 50;
 
+/* Only document.modelContext: the relay widget reads tools there, and drops
+ * the string schemas older WebMCP builds returned under navigator. */
 export function modelContext() {
-  return globalThis.document?.modelContext ?? globalThis.navigator?.modelContext;
+  return globalThis.document?.modelContext;
 }
 
 function relayTabId() {
@@ -101,7 +103,7 @@ export class AgentBridge {
       return await tool.execute(input ?? {});
     } catch (error) {
       entry.ok = false;
-      entry.error = error.message;
+      entry.error = String(error?.message ?? error);
       throw error;
     } finally {
       this.render();
@@ -135,6 +137,7 @@ export class AgentBridge {
     widget.setAttribute("aria-hidden", "true");
     widget.setAttribute("allow", "loopback-network; local-network; local-network-access");
     widget.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+    widget.addEventListener("error", () => URL.revokeObjectURL(url), { once: true });
     document.body.append(widget);
     this.widget = widget;
   }

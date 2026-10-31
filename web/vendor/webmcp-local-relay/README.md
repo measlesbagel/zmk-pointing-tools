@@ -10,5 +10,6 @@ allows agent access. It forwards the page's WebMCP tools to the relay on
 The relay's `embed.js` isn't used, because it reloads the page when the relay
 asks and a reload drops the keyboard connection.
 
-To update, copy `dist/browser/widget.html` from a newer release with the same
-major version as `RELAY_VERSION` in `agent-bridge.js`, and update both.
+To update, copy `dist/browser/widget.html` from the new release, set
+`RELAY_VERSION` in `agent-bridge.js` to that release so the MCP config the
+tuner shows matches, and update the version in `docs/agent-tools.md`.

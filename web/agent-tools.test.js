@@ -16,9 +16,10 @@ const target = {
 };
 
 function context(overrides = {}) {
-  const events = Array.from({ length: 8 }, (_, index) => ({
+  /* Frozen: the tools must never reorder or trim the tuner's live timeline. */
+  const events = Object.freeze(Array.from({ length: 8 }, (_, index) => ({
     targetId: index % 2 ? 3 : 4, timestamp: index * 10, sequence: index, values: [index],
-  }));
+  })));
   return {
     session: () => ({ connection: "simulator" }),
     targets: () => new Map([[3, target]]),
