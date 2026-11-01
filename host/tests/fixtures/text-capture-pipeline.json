@@ -2531,6 +2531,7 @@
         "id": "label-1",
         "startUs": 0,
         "endUs": 600000,
+        "source": "label",
         "activity": "text",
         "intended": true,
         "axis": "vertical",
@@ -3745,26 +3746,26 @@
         }
       },
       {
-        "id": "derived-2",
+        "id": "typing-2",
         "startUs": 600000,
         "endUs": 665639,
-        "derived": true,
+        "source": "typing",
         "activity": "post-typing",
         "intended": false
       },
       {
-        "id": "derived-3",
+        "id": "typing-3",
         "startUs": 799944,
         "endUs": 908956,
-        "derived": true,
+        "source": "typing",
         "activity": "post-typing",
         "intended": false
       },
       {
-        "id": "derived-4",
+        "id": "typing-4",
         "startUs": 991398,
         "endUs": 1081891,
-        "derived": true,
+        "source": "typing",
         "activity": "post-typing",
         "intended": false
       },
@@ -3772,7 +3773,7 @@
         "id": "derived-5",
         "startUs": 1296244,
         "endUs": 1656353,
-        "derived": true,
+        "source": "derived",
         "activity": "text",
         "intended": true,
         "path": {
@@ -4513,7 +4514,7 @@
         "id": "derived-6",
         "startUs": 1774461,
         "endUs": 1888955,
-        "derived": true,
+        "source": "derived",
         "activity": "text",
         "intended": true,
         "path": {
@@ -4759,10 +4760,10 @@
         }
       },
       {
-        "id": "derived-7",
+        "id": "typing-7",
         "startUs": 1998485,
         "endUs": 2039272,
-        "derived": true,
+        "source": "typing",
         "activity": "post-typing",
         "intended": false
       },
@@ -4770,7 +4771,7 @@
         "id": "derived-8",
         "startUs": 2210990,
         "endUs": 2238192,
-        "derived": true,
+        "source": "derived",
         "activity": "text",
         "intended": true,
         "path": {

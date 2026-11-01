@@ -415,9 +415,14 @@ truth. `options.truth` picks how:
   strokes only where labels say what the user meant. Unlabelled motion is
   unscored.
 - **`derive`** (`--truth derive`; the tuner passes this): labels where
-  present, and strokes derived from the motion everywhere else, each tagged
-  `derived: true`, with `truth.derived: true` on the trace. Derived truth is
+  present, and strokes derived from the motion everywhere else, with
+  `truth.derived: true` on the trace. Derived truth is
   a heuristic; prefer labels for anything you tune against.
+
+Every stroke of a recording's truth has a `source`: `label` for a labelled
+stroke, `typing` for one derived as typing shake (rule 1 below), and
+`derived` for every other derived stroke. Stroke ids follow it: `label-1`,
+`typing-2`, `derived-3`.
 
 **Labels.** `--labels labels.json`, or `options.labels`, names what the user
 meant in a stretch of a scroll or text recording, in device uptime

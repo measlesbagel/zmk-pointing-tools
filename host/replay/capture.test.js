@@ -232,9 +232,9 @@ test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", 
   const derived = captureToFixtures({ description: scroll, records }, scrollProfile,
     { labels, truth: "derive" }).fixtures[0].truth;
   assert.equal(derived.derived, true);
-  assert.deepEqual(derived.strokes.map(({ id, activity, intended, derived: tag }) =>
-    [id, activity, intended, tag]), [["label-1", "scroll", true, undefined],
-    ["derived-2", "post-typing", false, true], ["label-3", "scroll", true, undefined]]);
+  assert.deepEqual(derived.strokes.map(({ id, activity, intended, source }) =>
+    [id, activity, intended, source]), [["label-1", "scroll", true, "label"],
+    ["typing-2", "post-typing", false, "typing"], ["label-3", "scroll", true, "label"]]);
   assert.throws(() => captureToFixtures({ description: scroll, records }, scrollProfile,
     { labels: [{ startMs: 1, endMs: 1, activity: "scroll", axis: "vertical" }] }), /label 0/);
 });

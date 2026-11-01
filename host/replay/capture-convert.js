@@ -306,10 +306,10 @@ function deriveStroke(frames, mode, keyTimes, mmPerCount, floorUs) {
   const leadUs = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1000;
   const startUs = Math.max(floorUs, frames[0].tUs - Math.min(frames[0].spanUs || leadUs, leadUs));
   const endUs = frames.at(-1).tUs + 1;
-  const base = { startUs, endUs, derived: true };
+  const base = { startUs, endUs, source: "derived" };
   /* Typing: the hand is on the keys, whatever the ball does. */
   if (keyTimes.some((key) => key <= endUs && startUs - key < TYPING_GAP_US)) {
-    return { ...base, activity: "post-typing", intended: false };
+    return { ...base, source: "typing", activity: "post-typing", intended: false };
   }
   const points = strokePath(frames, startUs, endUs);
   const travel = sum(stepLengths(points));
@@ -380,9 +380,9 @@ function traceTruth(fixture, labelled, derive) {
   }
   if (strokes.length === 0) return undefined;
   strokes.sort((a, b) => a.startUs - b.startUs);
-  const derived = strokes.some((stroke) => stroke.derived);
-  return { strokes: strokes.map((stroke, index) => ({ id: `${stroke.derived ? "derived"
-    : "label"}-${index + 1}`, ...stroke })), ...(derived ? { derived: true } : {}) };
+  const derived = strokes.some((stroke) => stroke.source !== "label");
+  return { strokes: strokes.map((stroke, index) => ({ id: `${stroke.source}-${index + 1}`,
+    ...stroke })), ...(derived ? { derived: true } : {}) };
 }
 
 /* Labelled strokes of one trace, clamped to it, with the ball path inside
@@ -414,7 +414,8 @@ function labelledStrokes(fixture, startMs, mode, labels, warnings) {
       warnings.push(`label ${index} covers no motion in ${fixture.id}`);
       continue;
     }
-    result.push({ startUs, endUs: stopUs, activity: mode, intended: true, axis: label.axis,
+    result.push({ startUs, endUs: stopUs, source: "label", activity: mode, intended: true,
+      axis: label.axis,
       path: { intervalUs: PATH_INTERVAL_US, points: strokePath(inside, startUs, stopUs) } });
   }
   return result;
@@ -428,7 +429,9 @@ function labelledStrokes(fixture, startMs, mode, labels, warnings) {
  * "scroll" | "text", axis: "horizontal" | "vertical" } in device uptime.
  * options.truth is "labels-only" (the default: truth only from labels) or
  * "derive" (labels where they apply, and strokes derived from the motion
- * elsewhere, marked derived). Returns { fixtures, warnings }. */
+ * elsewhere). Every stroke's source is "label", "derived", or "typing"
+ * (derived as typing shake), and truth.derived is set when any stroke
+ * isn't from a label. Returns { fixtures, warnings }. */
 export function captureToFixtures(capture, profiles, options = {}) {
   const { description, records } = capture;
   profiles = Array.isArray(profiles) ? profiles : [profiles];

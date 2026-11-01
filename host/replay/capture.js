@@ -20,7 +20,7 @@
  * --labels names the intended axis of stretches of a scroll or text
  * recording: a JSON list of { startMs, endMs, activity, axis } in device
  * uptime. --truth derive also derives strokes for the motion outside labels,
- * tagged derived; the default, labels-only, writes only the labelled ones
+ * with source "derived" or "typing"; the default, labels-only, writes only the labelled ones
  * (docs/trace-benchmark.md, "Recorded traces: ground truth"). */
 
 import { readFileSync, writeFileSync } from "node:fs";
