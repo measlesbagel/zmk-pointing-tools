@@ -23,15 +23,29 @@ on:
       - "devenv.nix"
       - "devenv.lock"
       - ".github/workflows/pages.yml"
+  # Pull requests run the build as a dry run, without deploying.
+  pull_request:
+    paths:
+      - "web/**"
+      - "host/CMakeLists.txt"
+      - "host/replay/**"
+      - "host/runners/**"
+      - "host/wasm/**"
+      - "include/**"
+      - "src/**"
+      - "devenv.nix"
+      - "devenv.lock"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # One deploy at a time; a newer push supersedes a queued one, but never
-# cancels a deploy that is already publishing.
+# cancels a deploy that is already publishing. Pull request dry runs queue
+# per pull request instead, so they never hold up a deploy.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
@@ -72,6 +86,7 @@ jobs:
           path: _site
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
