@@ -19,5 +19,7 @@ set(CMAKE_EXECUTABLE_SUFFIX_C ".wasm")
 # exits. Size matters more than speed for a page download; at -Os a browser
 # still replays the whole benchmark tune set in tens of milliseconds.
 set(CMAKE_C_FLAGS_INIT "-Os")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-Wl,--strip-debug")
+# --stack-first puts the 64 KiB stack below the data, so an overflow traps
+# at address 0 instead of silently overwriting static state.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-Wl,--stack-first -Wl,--strip-debug")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
