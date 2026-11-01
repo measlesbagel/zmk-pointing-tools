@@ -43,8 +43,9 @@ class Exit {
 }
 
 /* Run a WASI command with the given stdin text and no arguments, files or
- * environment. Returns its exit status and output. A runner only needs
- * stdio, so every other call fails with ENOSYS. */
+ * environment. Returns its exit status and output, and the error when the
+ * module trapped instead of exiting. A runner only needs stdio, so every
+ * other call fails with ENOSYS. */
 export function runWasi(module, input) {
   const stdin = new TextEncoder().encode(input);
   let stdinOffset = 0;
@@ -103,18 +104,19 @@ export function runWasi(module, input) {
   const instance = new WebAssembly.Instance(module, { wasi_snapshot_preview1: imports });
   memory = instance.exports.memory;
   let status = 0;
+  let trap = null;
   try {
     instance.exports._start();
   } catch (error) {
-    if (!(error instanceof Exit)) throw error;
-    status = error.status;
+    if (error instanceof Exit) status = error.status;
+    else trap = error;
   }
   const decode = (chunks) => {
     const decoder = new TextDecoder();
     return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") +
       decoder.decode();
   };
-  return { status, stdout: decode(output[1]), stderr: decode(output[2]) };
+  return { status, trap, stdout: decode(output[1]), stderr: decode(output[2]) };
 }
 
 /* The WebAssembly counterpart of runner.js's runFixture: replay a fixture
@@ -122,6 +124,9 @@ export function runWasi(module, input) {
  * profile replaces cursor stage settings by stable id. */
 export function runFixtureWasm(fixture, modules, overrideProfile = null) {
   const result = runWasi(modules[runnerFor(fixture)], encodeRunnerInput(fixture, overrideProfile));
+  if (result.trap) {
+    throw new Error(`${fixture.id}: runner trapped: ${result.stderr.trim() || result.trap.message}`);
+  }
   if (result.status !== 0) {
     throw new Error(`${fixture.id}: runner failed: ${result.stderr.trim()}`);
   }
