@@ -7,7 +7,7 @@ compiled values. Nothing assumes continuous CPI steps or a particular driver.
 
 ```text
 web tuner
-   │  USB CDC, protocol v7 (docs/protocol.md)
+   │  USB CDC or Bluetooth GATT, protocol v7 (docs/protocol.md)
    ▼
 telemetry service (central)
    │  device table lookup

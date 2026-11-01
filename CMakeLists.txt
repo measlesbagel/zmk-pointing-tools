@@ -115,6 +115,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
 
   # Cross-cutting runtime services.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY src/service/telemetry.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART
+    src/service/transport/uart.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE
+    src/service/transport/gatt.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING src/service/tuning.c)
   # Runtime stage tuning needs both the pipeline and the tuning service.
   if(CONFIG_ZMK_POINTING_TOOLS_PIPELINE AND CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)

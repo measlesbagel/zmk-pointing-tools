@@ -298,13 +298,18 @@ harness cannot reach (they call Zephyr APIs); the pure pipeline/stage logic
 remains covered by the host harness (the `host:test` task), and BSim is not
 used — `native_posix` is the fast local/CI baseline.
 
-- **UART under test** — the telemetry service talks to a `vnd,serial`
-  virtual UART (`zephyr/drivers/serial/serial_test.c`, auto-enabled when a
+- **UART under test** — the telemetry service's USB serial transport
+  (`src/service/transport/uart.c`) talks to a `vnd,serial` virtual UART (`zephyr/drivers/serial/serial_test.c`, auto-enabled when a
   node with that compatible is present): test code injects host frames into
   its RX queue with `serial_vnd_queue_in_data()` and reads service
   responses from its TX buffer. The firmware callback tolerates drivers
   without the `irq_update` UART operation (the mock returns `-ENOSYS`; the
   production CDC-ACM driver implements it), so the same code runs on both.
+  The Bluetooth GATT transport (`src/service/transport/gatt.c`) has no
+  native_posix Bluetooth peer to test against; the smoke build matrix
+  compiles it (on by default in `zmk_pointing_tools_smoke`, and alone in
+  `zmk_pointing_tools_smoke_bluetooth_only`), and it shares the protocol
+  code these tests cover.
 - **One suite, ordered by name** — ztest executes suites *and* cases in
   name-sorted linker order (not link order), and the tuning registry is a
   process-wide singleton with no unregister API. All cases therefore live
