@@ -20,7 +20,7 @@ work with arbitrary ZMK pointing devices.
 - Layer- and behavior-driven pipeline routing with leave-before-enter lifecycle
 - Shared physical-keypress suppression across every pipeline stage
 - Per-stage decision telemetry with stable identity and discovery
-- An offline, repository-owned Web Serial tuner
+- An offline, repository-owned tuner that connects over Web Serial or Web Bluetooth
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic byte-exact regression replay through the composed stages
 - Guided scroll, text, cursor, click, and drag playground activities
@@ -81,8 +81,29 @@ build.
 
 The tuner is published from `main` at
 <https://measlesbagel.github.io/zmk-pointing-tools/>. Open it in desktop Chrome
-or Edge to connect over Web Serial, simulate, or calibrate without cloning the
-repository. The commit it was built from is shown at the bottom of the page.
+or Edge to connect over USB or Bluetooth, simulate, or calibrate without cloning
+the repository. The commit it was built from is shown at the bottom of the page.
+
+### Connecting over Bluetooth
+
+**Connect via Bluetooth** reaches the keyboard's central half without a cable,
+beside its normal connection as a keyboard. It needs:
+
+- Firmware with the Bluetooth transport. It's on by default for Bluetooth
+  keyboards that include the telemetry service; see
+  [`docs/protocol.md`](docs/protocol.md#bluetooth-gatt).
+- A computer already paired (bonded) with the keyboard. The tuner can change
+  settings, so the keyboard refuses computers it isn't bonded with.
+- Chrome or Edge. Firefox and Safari have no Web Bluetooth. On Linux, if the
+  tuner says Web Bluetooth is unavailable, turn on Experimental Web Platform
+  features in `chrome://flags`.
+
+The browser's picker lists every nearby device, because the tuning service
+isn't advertised; pick the keyboard even though it's already connected.
+Everything works as over USB, including agent tools, previews, revert and
+calibration. Every-frame telemetry is limited by the Bluetooth connection: the
+firmware drops the samples the link can't carry and the tuner shows them as
+dropped, so calibration over Bluetooth may need longer or slower strokes.
 
 ## Local tuner
 
@@ -95,8 +116,8 @@ devenv up
 ```
 
 Then open <http://localhost:8787> in desktop Chrome. The simulator works without
-hardware. Serving from localhost is required because Web Serial is unavailable
-to pages opened directly from the filesystem.
+hardware. Serving from localhost is required because Web Serial and Web
+Bluetooth are unavailable to pages opened directly from the filesystem.
 
 ## License
 
