@@ -4,7 +4,7 @@
  * Scores traces the way the benchmark does (docs/trace-benchmark.md).
  * bench.js scores its fixture sets with the native runners through
  * scoreFixtures; the tuner scores recorded traces with the WebAssembly
- * runners through scoreTraces, in a worker (worker.js). Both report the
+ * runners through scoreTraces, in a worker (score-worker.js). Both report the
  * same shape. No Node imports: the tuner loads this file as is.
  */
 
