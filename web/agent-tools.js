@@ -327,6 +327,61 @@ export class AgentSession {
     }
   }
 
+  /* The current values as a tuning profile, with some replaced: from a
+   * snapshot by name, or by { target: { key: value } } checked against each
+   * parameter's range. For scoring; nothing is sent to the keyboard. */
+  candidateProfile({ snapshot, values } = {}) {
+    requireConnection(this.context);
+    this.#prune();
+    const profile = this.context.profile();
+    const replace = new Map();
+    if (snapshot !== undefined) {
+      const saved = this.#snapshots.get(snapshot);
+      if (!saved) throw new Error(`No snapshot "${snapshot}". Saved: ${this.snapshots.join(", ") || "none"}.`);
+      for (const target of this.context.targets().values()) {
+        for (const parameter of target.parameters) {
+          const value = saved.targets[target.id]?.[parameter.id];
+          if (value !== undefined) replace.set(`${target.stableId}\n${parameter.key}`, value);
+        }
+      }
+    }
+    for (const [reference, entries] of Object.entries(values ?? {})) {
+      const target = findTarget(this.context, reference);
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+        throw new Error(`values.${reference} must be an object keyed by parameter key.`);
+      }
+      for (const [key, raw] of Object.entries(entries)) {
+        const parameter = target.parameters.find((candidate) => candidate.key === key);
+        if (!parameter) throw new Error(`${targetName(target)} has no parameter "${key}".`);
+        const value = typeof raw === "boolean" ? Number(raw) : raw;
+        if (!Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum) {
+          throw new Error(`${key} takes a whole value from ${parameter.minimum} to ${parameter.maximum}, not ${raw}.`);
+        }
+        replace.set(`${target.stableId}\n${key}`, value);
+      }
+    }
+    return {
+      ...profile,
+      targets: profile.targets.map((target) => ({
+        ...target,
+        parameters: target.parameters.map((parameter) => {
+          const value = replace.get(`${target.stableId}\n${parameter.key}`);
+          return value === undefined ? parameter : { ...parameter, value };
+        }),
+      })),
+    };
+  }
+
+  /* Every snapshot as a profile, for the recording panel's scoring. */
+  snapshotProfiles() {
+    if (this.context.connection() === null) return [];
+    try {
+      return this.snapshots.map((name) => ({ name: `snapshot ${name}`, profile: this.candidateProfile({ snapshot: name }) }));
+    } catch {
+      return [];
+    }
+  }
+
   snapshotMatches(name) {
     this.#prune();
     const snapshot = this.#snapshots.get(name);

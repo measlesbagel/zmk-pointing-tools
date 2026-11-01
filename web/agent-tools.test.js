@@ -26,7 +26,38 @@ const makeDevices = () => [
  * to reject them, and every request is answered at once unless it's set to
  * answer late. disconnect() and connect() clear and refill the tuner like
  * the app does. */
+/* The recording panel as the tools see it: one saved recording, and a
+ * score that reports what it was asked to score. */
+function fakeRecorder() {
+  return {
+    supported: true,
+    active: null,
+    stops: [],
+    scored: [],
+    recordings: [{ id: "rec-1", label: "everyday" }],
+    pipelines: () => [{ id: 0, label: "right-cursor", replayable: true, active: true }],
+    describe: (recording) => ({ recordingId: recording.id, label: recording.label }),
+    find(id) {
+      const recording = this.recordings.find((candidate) => candidate.id === id);
+      if (!recording) throw new Error(`No recording "${id}".`);
+      return recording;
+    },
+    async stop(reason) { this.stops.push(reason); this.onStop?.(); },
+    async checkSupport() { return this.supported; },
+    async score(ids, candidates) {
+      this.scored.push({ ids, candidates });
+      return { recordings: ids, traces: 2, strokes: 9, columns: ["current values", candidates[0].name],
+        warnings: Array.from({ length: 13 }, (_, index) => `warning ${index}`), caveat: "curve shape",
+        rows: [{ metric: "flickLagMs", unit: "ms", higherIsBetter: false, truth: { derived: 3 },
+          values: [{ value: 12, strokes: 3 }, { value: 10, strokes: 3 }], change: [null, -2], better: [null, true], note: [null, null] },
+        { metric: "unintendedOutput", unit: "", higherIsBetter: false, truth: { typing: 2 },
+          values: [{ value: 4, strokes: 2 }, null], change: [null, null], better: [null, false], note: [null, "missing"] }] };
+    },
+  };
+}
+
 function context(overrides = {}) {
+  const recorder = fakeRecorder();
   const targets = new Map([[3, makeTarget()]]);
   const devices = new Map(makeDevices());
   /* Frozen: the tools must never reorder or trim the tuner's live timeline. */
@@ -34,6 +65,7 @@ function context(overrides = {}) {
     targetId: index % 2 ? 3 : 4, timestamp: index * 10, sequence: index, values: [index],
   })));
   return {
+    recorderFake: recorder,
     session: () => ({ connection: "simulator" }),
     targets: () => targets,
     devices: () => devices,
@@ -76,6 +108,7 @@ function context(overrides = {}) {
     resetTarget: (targetId) => targets.get(targetId).parameters.forEach((parameter) => { parameter.current = parameter.compiled; }),
     resetAll() { for (const id of targets.keys()) this.resetTarget(id); },
     async settled() { return !this.late; },
+    recorder: () => recorder,
     ...overrides,
   };
 }
@@ -87,7 +120,7 @@ const values = (fake) => fake.targets().get(3).parameters.map(({ current }) => c
 const cpi = (fake) => fake.devices().get(0).description.currentCpi;
 
 const CHANGING = ["set_tuning_values", "preview_device_cpi", "reset_previews", "save_snapshot", "apply_snapshot", "ask_user", "request_run",
-  "cancel_run", "start_telemetry_window", "stop_telemetry_window"];
+  "cancel_run", "start_telemetry_window", "stop_telemetry_window", "start_recording", "stop_recording"];
 
 test("only the tools that change previews or ask the user are marked as writing", async () => {
   const tools = createAgentTools(context());
@@ -545,4 +578,53 @@ test("raw sample pages stop at the end and filter by stage", async () => {
   assert.deepEqual(await page({ offset: 9 }), [[], null, 5]);
   assert.deepEqual(await page({ stage: "right-scroll-intent" }), [[3, 4], null, 2]);
   await call(session.tools, "stop_telemetry_window", { windowId });
+});
+
+test("a recording request runs next to a run, blocks agent changes while recording, and ends with the recording", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await assert.rejects(call(session.tools, "start_recording", { label: "x", pipeline: "left-scroll" }), /No pipeline "left-scroll"/);
+  const runId = await runTo(session, "A", "requested");
+  const { runId: recordingId } = await call(session.tools, "start_recording", { label: "“everyday”", pipeline: "right-cursor" });
+  await assert.rejects(call(session.tools, "start_recording", { label: "again" }), /still requested/);
+  session.runs.accept(recordingId);
+  /* Only the requested pipeline counts. */
+  session.runs.started("recording", "left-cursor");
+  assert.equal(session.runs.runs.get(recordingId).status, "accepted");
+  session.runs.started("recording", "right-cursor");
+  await assert.rejects(call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 40 } }),
+    /Run "everyday" \(run2\) is running/);
+  fake.recorderFake.onStop = () => session.runs.ended("recording", "right-cursor",
+    { completed: true, result: { recordingId: "rec-2", frames: 900 } });
+  const stopped = await call(session.tools, "stop_recording", { runId: recordingId });
+  assert.deepEqual([stopped.status, stopped.result.recordingId, fake.recorderFake.stops], ["finished", "rec-2", ["stopped by the agent"]]);
+  await assert.rejects(call(session.tools, "stop_recording", { runId }), /isn't a recording/);
+  await assert.rejects(call(session.tools, "compare_runs", { runIds: [runId, recordingId] }), /score_settings/);
+});
+
+test("score_settings scores a snapshot or checked values against the current values", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  fake.profile = () => ({ schema: "zmk-pointing-tools/tuning-profile", version: 1,
+    targets: [{ stableId: "right-cursor-acceleration", parameters: [{ key: "speed-rise-ms", value: 30 }] }] });
+  await assert.rejects(call(session.tools, "score_settings", { recordings: ["rec-1"] }), /either snapshot or values/);
+  await assert.rejects(call(session.tools, "score_settings", { recordings: ["rec-9"], values: {} }), /No recording "rec-9"/);
+  await assert.rejects(call(session.tools, "score_settings", { recordings: ["rec-1"],
+    values: { "right-cursor-acceleration": { "speed-rise-ms": 500 } } }), /from 1 to 200, not 500/);
+  const result = await call(session.tools, "score_settings", { recordings: ["rec-1", "rec-1"],
+    values: { "right-cursor-acceleration": { "speed-rise-ms": 50 } } });
+  const [{ ids, candidates: [candidate] }] = fake.recorderFake.scored;
+  assert.deepEqual(ids, ["rec-1"]);
+  assert.equal(candidate.profile.targets[0].parameters[0].value, 50);
+  assert.equal(result.summary, "Scored candidate values on 2 traces: 1 metrics better, 1 worse");
+  assert.deepEqual(result.metrics.map(({ metric, change, better, truthStrokes, note }) => [metric, change, better, truthStrokes, note]),
+    [["flickLagMs", -2, true, { derived: 3 }, undefined],
+      ["unintendedOutput", null, false, { typing: 2 }, "not scored with the candidate: counts as worse"]]);
+  assert.deepEqual([result.warnings.length, result.moreWarnings], [10, 3]);
+  /* Nothing reached the keyboard. */
+  assert.deepEqual(fake.batches, []);
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 70 } });
+  await call(session.tools, "save_snapshot", { name: "fast" });
+  await call(session.tools, "score_settings", { recordings: ["rec-1"], snapshot: "fast" });
+  assert.equal(fake.recorderFake.scored[1].candidates[0].profile.targets[0].parameters[0].value, 70);
 });

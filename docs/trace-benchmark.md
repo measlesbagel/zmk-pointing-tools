@@ -489,3 +489,14 @@ a drop, a settings change, or a change of source, resolution, or link (see
 recorded path's ideal output; and the
 `host/tests/fixtures/*-capture-pipeline.json` regression fixtures come from
 the synthetic capture session, not a keyboard.
+
+Comparing settings on recordings:
+
+- The benchmark judges accuracy against the settings being scored, not how
+  the gain feels. A smaller text threshold quantizes the recorded path more
+  finely, so it can score slightly better on output error without feeling
+  better; check threshold and gain changes on the keyboard.
+- `unintendedOutput` means aren't comparable across truth sources: label
+  truth and derived truth pick different strokes as unintended. Compare
+  settings on the same recordings with the same `truth` option, so every
+  candidate is scored within one truth source.

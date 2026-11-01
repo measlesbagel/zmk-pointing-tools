@@ -15,3 +15,6 @@ __pycache__/
 *.pyc
 .devenv/
 .direnv/
+
+# Browser replay module, built by host/wasm/build.sh web/replay for a local tuner.
+web/replay/

@@ -133,6 +133,58 @@ simulator, values change in the tuner only.
 - Disconnecting ends a recording window. Turning access off stops windows and
   forgets them with their samples.
 
+## Recordings and offline scoring
+
+The **Record and score** panel records real motion from one of the
+keyboard's pipelines with firmware input capture
+([protocol](protocol.md#input-capture)). It then scores the current values
+against other settings on those recordings by replaying them through the
+firmware's own stage code in the browser ([trace replay](trace-replay.md#replay-in-the-browser)).
+It works without agent access too.
+
+- **Recording.** Pick a pipeline, give it a label, and select **Record**. The
+  tuner reads every tuning value right before it starts, so each trace replays
+  with the settings it ran with, and keeps a profile for every setting the
+  pipeline runs while recording. While it records, the panel shows how full
+  the keyboard's capture buffer is, and the dropped records and resyncs.
+  After a drop, a trace ends and a new one starts at the next rest. The tuner
+  keeps the keyboard's heartbeat going while recording, and stops the
+  recording when it disconnects.
+- **Your data.** Recordings stay in this browser (IndexedDB) until you delete
+  them, and are never uploaded. The tuner keeps the latest 30 and says which
+  one it deletes to make room. A recording holds the time of every key press
+  the pipeline's keypress guard sees, so it shows your typing rhythm, though
+  not which keys. **Export** writes one to a file, with the stream as
+  received, which `host/replay/capture.js` reads too; **Import recording**
+  reads it back.
+- **Scoring.** Tick recordings and candidates (the current values always
+  count; agent snapshots and imported profiles are candidates), then
+  **Score**. Each metric shows its mean over the strokes it applies to, the
+  stroke count, and the change from the current values. A metric that a
+  candidate leaves unscored, or scores over different strokes, counts as
+  worse, as in the benchmark: settings mustn't win by making strokes
+  unscorable. Ground truth comes from the converter
+  (`host/replay/capture-convert.js` with `truth: "derive"`); its rules are in
+  [the benchmark](trace-benchmark.md#recorded-traces-ground-truth). For each
+  metric, the table shows how many of its strokes were derived and how many
+  came from the typing heuristic. Metrics with no truth in the selected
+  recordings show no value, and recordings with no truth at all give an
+  error instead of a table.
+- **The benchmark doesn't judge curve shape or gain.** The ideal output
+  follows the curve and gain being scored, so a flatter curve or a lower gain
+  can win every metric while feeling worse. Scores narrow the candidates;
+  the keyboard decides.
+- **Agent requests.** `start_recording` asks you to record, the same way
+  `request_run` asks for a run: a card with the agent's note, **Go to
+  recording** and **Decline**. You start the recording yourself, and
+  **Stop recording** on the card, the panel's **Stop**, or the agent's
+  `stop_recording` ends it. A recording can be open next to a run, so the
+  agent can record during a precision run. While it records, the agent's
+  previews are refused, as during a run.
+- Scoring needs the browser replay module under `replay/`, which the hosted
+  tuner has. A local copy of `web/` needs `host/wasm/build.sh web/replay`
+  first; without it, recording still works and scoring says what's missing.
+
 ## Tools
 
 | Tool | Returns |
@@ -156,6 +208,10 @@ simulator, values change in the tuner only.
 | `start_telemetry_window` | Starts recording stage telemetry under a label and returns a window id at once |
 | `stop_telemetry_window` | Stops a window and returns its summary, with dropped samples |
 | `get_telemetry_window` | A window's summary while recording or after, optionally with pages of raw samples. Without an id, lists windows |
+| `start_recording` | Asks you to record motion from a pipeline (optionally a given one) and returns a run id at once; `get_run_result` returns the recording when it ends |
+| `stop_recording` | Stops a recording it requested and returns its run with the recording, or withdraws the request if it hasn't started |
+| `list_recordings` | Saved recordings with frames, dropped records and resyncs, the keyboard's recordable pipelines, and whether it supports capture |
+| `score_settings` | Scores the current values and a candidate (a snapshot, or values by target stable id and parameter key) on recordings, with each metric's change, whether it's better, and where its truth comes from. Sends nothing to the keyboard |
 
 Every result is a JSON object. A tool that fails returns an MCP error result
 with the reason, such as a value outside the parameter's range.
@@ -172,8 +228,10 @@ repository: match nodes by stable id against your keymap before committing, as
   drop every preview at once, is also marked `consequentialHint`. Requesting
   or withdrawing a run and starting or stopping a telemetry window aren't
   marked read-only either, since they change what the tuner shows or records;
-  reading a window is. Run labels, run results, telemetry and your answers are
-  marked as untrusted content.
+  reading a window is. Requesting and stopping a recording are marked as
+  writing; listing recordings and `score_settings`, which only replays them in
+  the browser, are read-only. Run labels, run results, telemetry, recordings,
+  scores and your answers are marked as untrusted content.
 - Nothing the agent does persists: previews last until the keyboard restarts,
   and **Revert to pre-agent values** undoes them sooner.
 - The relay binds to loopback only.
@@ -181,7 +239,7 @@ repository: match nodes by stable id against your keymap before committing, as
   web page in your default browser. Its request to reload the tuner is ignored
   on purpose, so it can't drop the keyboard connection.
 - The relay forwards every WebMCP tool the tuner page registers. Today those
-  are the twenty-one above.
+  are the twenty-five above.
 - The widget is a pinned copy of the relay's own (`web/vendor/webmcp-local-relay`,
   MIT). The tuner loads it itself instead of with the relay's `embed.js`,
   which reloads the page when the relay asks; a reload would drop the keyboard
