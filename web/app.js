@@ -43,7 +43,6 @@ import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
 import { SerialTransport } from "./transport.js";
 import { AgentBridge } from "./agent-bridge.js";
-import { createAgentTools } from "./agent-tools.js";
 
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
@@ -68,6 +67,7 @@ let stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new 
 let stateDirty = true;
 let decoder = new FrameDecoder();
 let calibration;
+let agentBridge;
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
     if (!transport) throw new Error("The keyboard connection is unavailable");
@@ -82,7 +82,7 @@ const curveEditors = new CurveEditors({
     const target = tuningTargets.get(targetId);
     return target ? findCurve(target) : null;
   },
-  onPreview: previewCurve,
+  onPreview: (targetId, values) => previewValues(targetId, values, "curve"),
   onRender: renderTuning,
 });
 curveEditors.bind(elements.tuning);
@@ -144,6 +144,7 @@ function renderTuning() {
   elements["profile-import"].disabled = !profileReady;
   elements["modified-count"].textContent = `${modified} modified`;
   calibration?.refresh();
+  agentBridge?.renderState();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
     return;
@@ -311,8 +312,8 @@ function setTuningDescription(description) {
   }
 }
 
-/* Send a whole curve as one batch so the keyboard never runs half of it. */
-function previewCurve(targetId, values) {
+/* Send values as one batch so the keyboard never runs half of a curve. */
+function previewValues(targetId, values, what = "preview") {
   const target = tuningTargets.get(targetId);
   if (!target) return;
   if (simulator) {
@@ -320,7 +321,7 @@ function previewCurve(targetId, values) {
       target.parameters.find(({ id }) => id === parameterId).current = value;
     }
     renderTuning();
-    notice(`${target.label} simulator curve updated.`);
+    notice(`${target.label} simulator ${what} updated.`);
   } else if (transport) {
     tuningRequests.enqueue(MESSAGE.TUNING_SET_MANY_REQUEST, encodeTuningSetMany(targetId, values));
   }
@@ -376,6 +377,7 @@ function locationLabel(location) {
 }
 
 function renderDevices() {
+  agentBridge?.renderState();
   const supported = protocolReady || simulator;
   if (!supported || devices.size === 0) {
     elements.devices.innerHTML = supported
@@ -745,21 +747,25 @@ elements.tuning.addEventListener("click", async (event) => {
       tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
     }
   } else if (reset) {
-    const targetId = Number(reset.dataset.resetTarget);
-    curveEditors.discard(targetId);
-    if (simulator) {
-      const target = tuningTargets.get(targetId);
-      for (const parameter of target.parameters) parameter.current = parameter.compiled;
-      renderTuning();
-      notice(`${target.label} simulator defaults restored.`);
-    } else {
-      queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
-    }
+    resetTarget(Number(reset.dataset.resetTarget));
   }
 });
 
-elements["reset-all"].addEventListener("click", async () => {
-  curveEditors.discardAll();
+/* The agent keeps unsaved curve drafts; the panel's buttons drop them. */
+function resetTarget(targetId, discardDraft = true) {
+  if (discardDraft) curveEditors.discard(targetId);
+  if (simulator) {
+    const target = tuningTargets.get(targetId);
+    for (const parameter of target.parameters) parameter.current = parameter.compiled;
+    renderTuning();
+    notice(`${target.label} simulator defaults restored.`);
+  } else {
+    queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(targetId));
+  }
+}
+
+function resetAllTargets(discardDrafts = true) {
+  if (discardDrafts) curveEditors.discardAll();
   if (simulator) {
     for (const target of tuningTargets.values()) {
       for (const parameter of target.parameters) parameter.current = parameter.compiled;
@@ -769,7 +775,9 @@ elements["reset-all"].addEventListener("click", async () => {
   } else {
     queueTuningRequest(MESSAGE.TUNING_RESET_REQUEST, Uint8Array.of(TUNING.ALL_TARGETS));
   }
-});
+}
+
+elements["reset-all"].addEventListener("click", () => resetAllTargets());
 
 elements.devices.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-device-preview]");
@@ -789,16 +797,42 @@ elements.devices.addEventListener("click", async (event) => {
     notice("Enter a whole CPI value.", true);
     return;
   }
+  previewDevice(deviceId, requested);
+});
 
+function previewDevice(deviceId, cpi) {
+  const device = devices.get(deviceId);
   if (simulator) {
-    device.description.currentCpi = requested;
+    device.description.currentCpi = cpi;
     renderDevices();
     notice(`${device.label} simulator resolution updated.`);
   } else if (transport) {
-    tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST,
-      encodeDevicePreview(deviceId, requested));
+    tuningRequests.enqueue(MESSAGE.DEVICE_PREVIEW_REQUEST, encodeDevicePreview(deviceId, cpi));
   }
-});
+}
+
+/* Names the current link, so agent captures from the simulator, another
+ * keyboard or an earlier connection are never sent to this one. A
+ * keyboard restart closes the port and makes a new transport. */
+const connectionIds = new WeakMap();
+function connectionId() {
+  if (transport) {
+    if (!connectionIds.has(transport)) connectionIds.set(transport, `keyboard-${crypto.randomUUID()}`);
+    return connectionIds.get(transport);
+  }
+  return simulator ? `simulator-${simulator}` : null;
+}
+
+/* Resolves once the keyboard has answered every queued request, or false
+ * after a few seconds without that. */
+async function requestsSettled(timeout = 5_000) {
+  const deadline = Date.now() + timeout;
+  while (tuningRequests.pending) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return true;
+}
 
 function playgroundContext() {
   let tuningProfile;
@@ -864,9 +898,9 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   },
 });
 
-new AgentBridge(document.getElementById("agent"), {
+agentBridge = new AgentBridge(document.getElementById("agent"), {
   notice,
-  tools: createAgentTools({
+  context: {
     session: () => {
       const targets = [...tuningTargets.values()];
       return {
@@ -892,7 +926,13 @@ new AgentBridge(document.getElementById("agent"), {
     precisionHistory: loadPrecisionHistory,
     profile: () => createTuningProfile(tuningTargets),
     devicetree: () => renderDevicetreeSnippet(tuningTargets),
-  }),
+    connection: connectionId,
+    previewValues,
+    previewDevice,
+    resetTarget: (targetId) => resetTarget(targetId, false),
+    resetAll: () => resetAllTargets(false),
+    settled: requestsSettled,
+  },
 });
 renderLoop();
 renderTuning();

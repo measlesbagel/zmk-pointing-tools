@@ -3,10 +3,12 @@
 The web tuner can hand a set of tools to your own AI agent, such as Claude
 Code, Amp, Codex or Cursor. With them the agent reads the connected keyboard's
 settings, devices, telemetry and playground results directly, instead of you
-exporting files and pasting them into a chat. This is the first step of #115.
+exporting files and pasting them into a chat. It can also preview values,
+compare named snapshots, and ask you how a change feels (#115).
 
-The tools only read. They can't preview settings, change telemetry levels,
-flash, or save anything to the keyboard.
+Previews are the same temporary values the tuner's **Preview** buttons set.
+The agent can't save them to the keyboard, flash, or change telemetry levels,
+and you can undo everything it changed with one click.
 
 ## How it connects
 
@@ -54,7 +56,38 @@ on the same computer as that tab. Nothing is hosted anywhere else.
 4. Ask your agent to call `get_session`.
 
 Select **Turn off agent access** to unregister the tools and close the
-connection. Every call is listed in the panel while access is on.
+connection. Every call is listed in the panel, with what each change did.
+
+## Previews, snapshots and revert
+
+The agent's preview tools send the same requests as the tuner's own controls:
+one atomic batch per target, a reset, or a device resolution preview. The
+keyboard validates each value, and the panels update as usual. Each call waits
+until the keyboard has answered and returns the values it accepted. With the
+simulator, values change in the tuner only.
+
+- The agent's first change sets a revert point: every value as it was just
+  before. The status shows **values differ from before the agent** while the
+  current values differ from it, whoever changed them.
+- **Revert to pre-agent values** restores the revert point. That includes
+  previews you set by hand after the agent's first change, so set those again
+  afterwards if you want to keep them. Revert stays available after you turn
+  access off, which leaves values as they are, and turning access on again
+  keeps the same revert point. If the keyboard doesn't confirm every value,
+  the revert point stays so you can try again.
+- The revert point and snapshots belong to the connection. Disconnecting,
+  restarting the keyboard, or switching between the simulator and a keyboard
+  drops them, so values saved from one are never sent to another. The values
+  on the keyboard stay as they are until it restarts.
+- Snapshots the agent saves appear as buttons in the panel. Select one to
+  switch to it yourself, so you can compare "A" and "B" while you use the
+  keyboard. The highlighted button matches the current values. Switching
+  snapshots yourself sets the revert point too if the agent hasn't yet.
+- `reset_previews` leaves unsaved curve edits in the panel as drafts. The
+  panel's own reset buttons still discard them.
+- Questions from `ask_user` appear in the panel with any answer choices the
+  agent offered and a text field. You can dismiss one instead of answering.
+  At most three wait at once. Turning access off cancels open questions.
 
 ## Tools
 
@@ -66,6 +99,15 @@ connection. Every call is listed in the panel while access is on.
 | `get_recent_telemetry` | Up to 500 of the latest captured stage telemetry events, optionally for one stage, with a readable summary of each. Detail levels are set by you in **Stage decisions** |
 | `get_precision_results` | Saved Small-target precision runs from the playground |
 | `get_config_handoff` | The tuning profile and the devicetree snippet that **Copy config** produces |
+| `set_tuning_values` | Previews one or more parameters of one target as one batch, keyed by parameter key. Returns each parameter's previous, requested and accepted value |
+| `preview_device_cpi` | Previews a sensor's resolution |
+| `reset_previews` | Restores compiled defaults for one target, one device, or everything |
+| `save_snapshot`, `apply_snapshot`, `list_snapshots` | Saves every target value and device resolution under a name, previews a saved snapshot (only what differs), and lists snapshots with whether each matches the current values |
+| `ask_user` | Shows a question in the tuner and returns a question id at once |
+| `get_user_answer` | Waits up to 45 seconds (20 by default) for the answer, then returns it or `pending` |
+
+Every result is a JSON object. A tool that fails returns an MCP error result
+with the reason, such as a value outside the parameter's range.
 
 Everything comes from the keyboard and this browser, so the tools work for any
 keyboard built with this module. Put tested values into your own ZMK config
@@ -73,15 +115,18 @@ repository: match nodes by stable id against your keymap before committing.
 
 ## Safety
 
-- The tools are read-only and marked so (`readOnlyHint`). Run labels in
-  `get_precision_results` are text you typed and are marked as untrusted
-  content.
+- Tools that only read are marked `readOnlyHint`. The tools that preview,
+  save snapshots or ask questions are not, and `reset_previews`, which can
+  drop every preview at once, is also marked `consequentialHint`. Run labels
+  and your answers are text you typed and are marked as untrusted content.
+- Nothing the agent does persists: previews last until the keyboard restarts,
+  and **Revert to pre-agent values** undoes them sooner.
 - The relay binds to loopback only.
 - The relay adds a few tools of its own. One, `webmcp_open_page`, can open a
   web page in your default browser. Its request to reload the tuner is ignored
   on purpose, so it can't drop the keyboard connection.
 - The relay forwards every WebMCP tool the tuner page registers. Today those
-  are the six above.
+  are the fourteen above.
 - The widget is a pinned copy of the relay's own (`web/vendor/webmcp-local-relay`,
   MIT). The tuner loads it itself instead of with the relay's `embed.js`,
   which reloads the page when the relay asks; a reload would drop the keyboard
