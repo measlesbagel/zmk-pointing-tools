@@ -952,15 +952,27 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
 
 agentBridge = new AgentBridge(document.getElementById("agent"), {
   notice,
-  /* Opens the panel an accepted run request belongs to. */
+  /* Opens the panel an accepted run request belongs to. Start is disabled
+   * while nothing can record, so focus goes to the panel then. */
   openRun: (run) => {
     if (run.kind === "calibration") {
       const panel = document.getElementById("calibration");
+      const start = panel.querySelector("[data-calibration-start]");
       panel.scrollIntoView({ block: "start" });
-      panel.querySelector("[data-calibration-start]").focus({ preventScroll: true });
+      if (!start.disabled) start.focus({ preventScroll: true });
+      else {
+        panel.tabIndex = -1;
+        panel.focus({ preventScroll: true });
+      }
     } else {
       playground.prepare(run);
     }
+  },
+  /* The user cancelled a run that's running: a calibration stops
+   * recording. A playground run can't be cancelled from the panel, since
+   * the playground dialog covers it. */
+  endRun: (run) => {
+    if (run.kind === "calibration") calibration.stop();
   },
   context: {
     session: () => {

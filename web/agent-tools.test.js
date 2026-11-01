@@ -86,7 +86,8 @@ const call = async (tools, name, input) =>
 const values = (fake) => fake.targets().get(3).parameters.map(({ current }) => current);
 const cpi = (fake) => fake.devices().get(0).description.currentCpi;
 
-const CHANGING = ["set_tuning_values", "preview_device_cpi", "reset_previews", "save_snapshot", "apply_snapshot", "ask_user", "request_run"];
+const CHANGING = ["set_tuning_values", "preview_device_cpi", "reset_previews", "save_snapshot", "apply_snapshot", "ask_user", "request_run",
+  "cancel_run", "start_telemetry_window", "stop_telemetry_window"];
 
 test("only the tools that change previews or ask the user are marked as writing", async () => {
   const tools = createAgentTools(context());
@@ -370,7 +371,7 @@ test("a requested run attaches to the asked activity only and reports the values
   assert.equal(run.status, "finished");
   assert.deepEqual(run.settings.modified, [{ target: "right-cursor-acceleration", parameter: "speed-rise-ms", value: 30, compiled: 10 },
     { device: "right-ball", parameter: "cpi", value: 2052, compiled: 684 }]);
-  assert.deepEqual(run.settingsChangedDuringRun, [{ target: "right-cursor-acceleration", parameter: "Speed fall", from: 5, to: 9 }]);
+  assert.deepEqual(run.netChangeDuringRun, [{ target: "right-cursor-acceleration", parameter: "Speed fall", from: 5, to: 9 }]);
 });
 
 test("compare_runs lines up metrics and their change from the first run", async () => {
@@ -431,4 +432,117 @@ test("a telemetry window reports every-frame motion and ends with its connection
   const { frames } = result.stages.find(({ stage }) => stage === "right-cursor-acceleration");
   assert.deepEqual(frames.bySignal["normalized-motion"], { frames: 2, unit: "mm", sumX: 2.5, sumY: 4, travel: 5.5, maxStep: 5, cpi: [800] });
   assert.equal(frames.intervalMs.median, 8);
+});
+
+const runTo = async (session, label, status = "running") => {
+  const { runId } = await call(session.tools, "request_run", { kind: "precision", label });
+  if (status === "requested") return runId;
+  session.runs.accept(runId);
+  if (status === "running") session.runs.started("playground", "cursor-precision");
+  return runId;
+};
+
+test("agent changes are refused while a run is running, and the user's snapshot switch shows as net change", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await call(session.tools, "save_snapshot", { name: "A" });
+  const runId = await runTo(session, "A");
+  await assert.rejects(call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 40 } }),
+    /Run "A" \(run1\) is running; wait with get_run_result/);
+  await assert.rejects(call(session.tools, "apply_snapshot", { name: "A" }), /is running/);
+  assert.deepEqual(values(fake), [30, 5]);
+  /* The user may still switch; it's refused only for the agent. */
+  fake.targets().get(3).parameters[0].current = 50;
+  await session.applySnapshot("A", { byUser: true });
+  assert.deepEqual(values(fake), [30, 5]);
+  session.runs.ended("playground", "cursor-precision", { completed: true, result: { durationMs: 1, metrics: { errors: 0, pointerDistance: 0 } } });
+  assert.deepEqual((await call(session.tools, "get_run_result", { runId })).netChangeDuringRun, []);
+  await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 40 } });
+  assert.deepEqual(values(fake), [40, 5]);
+});
+
+test("a pending get_run_result wakes on decline, withdrawal, access off and a connection change", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  const ends = [
+    [(id) => session.runs.decline(id), "declined", null],
+    [(id) => call(session.tools, "cancel_run", { runId: id }), "cancelled", "withdrawn by the agent"],
+    [() => session.close(), "cancelled", "agent access was turned off"],
+    [() => { fake.disconnect(); fake.connect("keyboard-2"); }, "cancelled", "the connection changed"],
+  ];
+  for (const [end, status, endReason] of ends) {
+    const runId = await runTo(session, "x", "requested");
+    const waiting = call(session.tools, "get_run_result", { runId, waitSeconds: 30 });
+    await end(runId);
+    const started = Date.now();
+    /* A connection change is noticed when the run is next read. */
+    if (endReason === "the connection changed") session.runs.open;
+    assert.deepEqual(await waiting.then(({ status: s, endReason: r }) => [s, r]), [status, endReason]);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(session.runs.runs.get(runId).waiters.length, 0);
+  }
+  await assert.rejects(call(session.tools, "cancel_run", { runId: "run1" }), /already ended as declined/);
+});
+
+test("a timed-out poll leaves no waiter behind, and labels lose their quotation marks", async () => {
+  const session = new AgentSession(context());
+  const runId = await runTo(session, '“A” "B"', "requested");
+  await call(session.tools, "get_run_result", { runId, waitSeconds: 1 });
+  assert.equal(session.runs.runs.get(runId).waiters.length, 0);
+  assert.equal(session.runs.runs.get(runId).label, "A B");
+});
+
+test("the tuner keeps the latest 20 runs", async () => {
+  const session = new AgentSession(context());
+  for (let index = 0; index < 21; index += 1) session.runs.decline(await runTo(session, `r${index}`, "requested"));
+  assert.equal(session.runs.runs.size, 20);
+  await assert.rejects(call(session.tools, "get_run_result", { runId: "run1" }), /No run "run1"/);
+  assert.equal((await call(session.tools, "get_run_result", { runId: "run21" })).status, "declined");
+});
+
+test("sequence gaps count across wraparound", async () => {
+  const session = new AgentSession(context());
+  const { windowId } = await call(session.tools, "start_telemetry_window", { label: "wrap" });
+  for (const sequence of [0xfffffffe, 0xffffffff, 1, 2]) session.windows.observe(sample(3, sequence));
+  const { dropped } = await call(session.tools, "stop_telemetry_window", { windowId });
+  /* 0xffffffff → 1 skips 0. */
+  assert.equal(dropped.sequenceGaps, 1);
+});
+
+test("a window stops at the sample limit", async () => {
+  const session = new AgentSession(context());
+  const { windowId } = await call(session.tools, "start_telemetry_window", { label: "long" });
+  for (let sequence = 0; sequence < 50_005; sequence += 1) session.windows.observe(sample(3, sequence));
+  const result = await call(session.tools, "get_telemetry_window", { windowId });
+  assert.deepEqual([result.status, result.stopReason, result.samples], ["stopped", "sample limit", 50_000]);
+});
+
+test("windows: three record at once, five are kept, and access off forgets them", async () => {
+  const session = new AgentSession(context());
+  const ids = [];
+  for (let index = 0; index < 3; index += 1) ids.push((await call(session.tools, "start_telemetry_window", { label: `w${index}` })).windowId);
+  await assert.rejects(call(session.tools, "start_telemetry_window", { label: "four" }), /3 telemetry windows are already recording/);
+  for (const windowId of ids) await call(session.tools, "stop_telemetry_window", { windowId });
+  for (let index = 3; index < 6; index += 1) {
+    const { windowId } = await call(session.tools, "start_telemetry_window", { label: `w${index}` });
+    await call(session.tools, "stop_telemetry_window", { windowId });
+  }
+  assert.deepEqual((await call(session.tools, "get_telemetry_window", {})).windows.map(({ windowId }) => windowId), ["w2", "w3", "w4", "w5", "w6"]);
+  await call(session.tools, "start_telemetry_window", { label: "open" });
+  session.close();
+  assert.deepEqual(session.windows.recording, []);
+  assert.deepEqual((await call(session.tools, "get_telemetry_window", {})).windows, []);
+});
+
+test("raw sample pages stop at the end and filter by stage", async () => {
+  const session = new AgentSession(context());
+  const { windowId } = await call(session.tools, "start_telemetry_window", { label: "pages" });
+  for (let sequence = 0; sequence < 5; sequence += 1) session.windows.observe(sample(sequence < 3 ? 3 : 4, sequence));
+  const page = (options) => call(session.tools, "get_telemetry_window", { windowId, includeSamples: true, ...options })
+    .then(({ rawSamples }) => [rawSamples.items.map(({ sequence }) => sequence), rawSamples.nextOffset, rawSamples.total]);
+  assert.deepEqual(await page({ limit: 2 }), [[0, 1], 2, 5]);
+  assert.deepEqual(await page({ offset: 4, limit: 2 }), [[4], null, 5]);
+  assert.deepEqual(await page({ offset: 9 }), [[], null, 5]);
+  assert.deepEqual(await page({ stage: "right-scroll-intent" }), [[3, 4], null, 2]);
+  await call(session.tools, "stop_telemetry_window", { windowId });
 });

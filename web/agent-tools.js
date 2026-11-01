@@ -7,7 +7,7 @@
  * Everything comes from the keyboard and this browser, so the tools know
  * nothing about any particular board or config repository. */
 
-import { RunRequests, TelemetryWindows, createExperimentTools, stageNames } from "./agent-experiments.js";
+import { RunRequests, TelemetryWindows, createExperimentTools, stageNames, waitFor } from "./agent-experiments.js";
 
 const TELEMETRY_DEFAULT = 100;
 const TELEMETRY_LIMIT = 500;
@@ -198,6 +198,7 @@ export class AgentSession {
     this.questions = new Map();
     this.runs = new RunRequests({
       onUpdate,
+      connection: () => context.connection(),
       settings: {
         capture: () => this.#runSettings(),
         changesSince: (values) => (values && values.connection === context.connection()
@@ -286,10 +287,14 @@ export class AgentSession {
    * point as they were before the first change that could touch them.
    * Callers resolve targets and check ranges before the change waits its
    * turn, so it fails if the connection changed meanwhile. */
-  change(send) {
+  change(send, { byUser = false } = {}) {
     const connection = this.context.connection();
     return this.#serial(async () => {
       requireConnection(this.context);
+      /* A run's result must reflect the values it started with. The user
+       * can still switch snapshots; the run reports the net change. */
+      const running = byUser ? undefined : this.runs.running;
+      if (running) throw new Error(`Run "${running.label}" (${running.id}) is running; wait with get_run_result.`);
       if (this.context.connection() !== connection) {
         throw new Error("The tuner's connection changed while this call waited. Read the targets again.");
       }
@@ -338,14 +343,14 @@ export class AgentSession {
     this.onUpdate();
   }
 
-  applySnapshot(name) {
+  applySnapshot(name, { byUser = false } = {}) {
     requireConnection(this.context);
     this.#prune();
     const snapshot = this.#snapshots.get(name);
     if (!snapshot) {
       throw new Error(`No snapshot "${name}". Saved: ${this.snapshots.join(", ") || "none"}. Snapshots end when the tuner disconnects or connects something else.`);
     }
-    return this.change(() => this.#restore(snapshot));
+    return this.change(() => this.#restore(snapshot), { byUser });
   }
 
   /* Restores the revert point. It stays until the keyboard has confirmed
@@ -400,14 +405,7 @@ export class AgentSession {
   async awaitAnswer(id, seconds) {
     const entry = this.questions.get(id);
     if (!entry) throw new Error(`No question "${id}". ask_user returns its id.`);
-    if (entry.status === "pending" && seconds > 0) {
-      let timer;
-      await new Promise((resolve) => {
-        entry.waiters.push(resolve);
-        timer = setTimeout(resolve, seconds * 1000);
-      });
-      clearTimeout(timer);
-    }
+    if (entry.status === "pending") await waitFor(entry, seconds);
     return { questionId: id, question: entry.question, status: entry.status, answer: entry.answer };
   }
 

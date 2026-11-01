@@ -103,6 +103,7 @@ export class PointingPlayground {
     this.dialog.addEventListener("close", () => {
       if (this.running) this.finish(false);
       this.stop();
+      this.restoreLabel();
     });
     this.activity.addEventListener("change", () => {
       this.run = undefined;
@@ -121,6 +122,8 @@ export class PointingPlayground {
     if (this.running) this.finish(false);
     this.activity.value = activity;
     if (activity === "cursor-precision") {
+      /* The user's own label comes back after the agent's run. */
+      this.userLabel ??= this.label.value;
       this.label.value = label;
       if (acquire) this.acquire.value = acquire;
     }
@@ -128,6 +131,12 @@ export class PointingPlayground {
     if (!this.dialog.open) this.dialog.showModal();
     this.renderActivity();
     this.startButton.focus();
+  }
+
+  restoreLabel() {
+    if (this.userLabel === undefined) return;
+    this.label.value = this.userLabel;
+    this.userLabel = undefined;
   }
 
   stop() {
@@ -178,6 +187,7 @@ export class PointingPlayground {
         ...(precision ? { precision: { label: precision.label, acquire: precision.acquire, trials: precision.trials.length, summary: precision.summary ?? null } } : {}),
       },
     });
+    this.restoreLabel();
   }
 
   complete() { this.finish(true); }

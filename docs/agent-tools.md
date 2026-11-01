@@ -96,31 +96,42 @@ simulator, values change in the tuner only.
 
 - `request_run` asks you for a labelled run: a Small-target precision test,
   another playground activity, or a calibration. The request appears in the
-  panel with the agent's note. **Open playground** (or **Go to calibration**)
-  opens the panel with the activity and label set, and **Decline** refuses it.
-  Nothing starts until you start it yourself. Once it's open, the button
-  becomes **Cancel run**. Only a run of the requested activity counts, and
-  only one request is open at a time, so "run A, then run B" is two requests
-  in turn. Ending a run early reports it as stopped, with what it measured so
-  far.
+  panel, with the agent's note quoted and marked as the agent's. **Open
+  playground** (or **Go to calibration**) opens the panel with the activity
+  and label set, and **Decline** refuses it. Nothing starts until you start it
+  yourself. You can edit a precision run's label first; your own label comes
+  back in the field afterwards. Once the request is open, the button becomes
+  **Cancel run**, and for a calibration that's recording, **Stop and cancel
+  run**. Only a run of the requested activity counts, and only one request is
+  open at a time, so "run A, then run B" is two requests in turn. Ending a run
+  early reports it as stopped, with what it measured so far.
+- The agent can withdraw a request with `cancel_run`. Turning access off or a
+  connection change (disconnecting, or switching between the simulator and a
+  keyboard) cancels open requests.
+- While a run is running, the agent's previews, resets and snapshot switches
+  are refused, so the run measures the values it started with. You can still
+  switch snapshots or change values yourself.
 - Each result records the values the run started with: those that differ from
-  compiled defaults, and the snapshots they match. It also lists any value
-  that changed during the run. `compare_runs` lines up runs of the same
-  activity metric by metric.
+  compiled defaults, and the snapshots they match. `netChangeDuringRun` lists
+  values that differ between the start and the end of the run, whoever changed
+  them; a value changed and set back during the run doesn't appear.
+  `compare_runs` lines up runs of the same activity metric by metric.
 - `start_telemetry_window` records every stage sample that arrives until
   `stop_telemetry_window`, the time limit (2 minutes by default, at most 15)
   or 50,000 samples, separately from the timeline's last 2000 events. It
   records what you have turned on in **Stage decisions** and doesn't change
-  detail levels, so it warns when every stage is off. While it records, the
-  panel shows it with a **Stop** button.
+  detail levels, so it warns when every stage is off. When one starts, the
+  page says so, and while it records, the panel shows it with a **Stop**
+  button.
 - Window summaries count events per stage and, for every-frame samples,
   arrival intervals and travel per signal kind. Raw samples come in pages of
   up to 1000. Dropped samples are the larger of the firmware's drop counter
   over the window (read again at start and stop) and the gaps in the sample
-  sequence. Over Bluetooth, every-frame telemetry drops what the link can't
+  sequence. Both cover every stage, not only the ones the window records:
+  the firmware has one counter and one sequence for all stages. Over Bluetooth, every-frame telemetry drops what the link can't
   carry ([protocol](protocol.md#bandwidth)), and the summary says so.
-- Disconnecting ends a recording window. Turning access off cancels open run
-  requests and stops windows.
+- Disconnecting ends a recording window. Turning access off stops windows and
+  forgets them with their samples.
 
 ## Tools
 
@@ -139,6 +150,7 @@ simulator, values change in the tuner only.
 | `ask_user` | Shows a question in the tuner and returns a question id at once |
 | `get_user_answer` | Waits up to 45 seconds (20 by default) for the answer, then returns it or `pending` |
 | `request_run` | Asks you for a labelled precision, playground or calibration run and returns a run id at once |
+| `cancel_run` | Withdraws an open run request |
 | `get_run_result` | Waits up to 45 seconds (20 by default) while the run is open, then returns its status (`requested`, `accepted`, `running`, `finished`, `stopped`, `declined` or `cancelled`), the values it started with, and its result. Without an id, lists runs |
 | `compare_runs` | Two to six runs of the same activity side by side, with each metric's change from the first |
 | `start_telemetry_window` | Starts recording stage telemetry under a label and returns a window id at once |
@@ -157,10 +169,11 @@ repository: match nodes by stable id against your keymap before committing, as
 
 - Tools that only read are marked `readOnlyHint`. The tools that preview,
   save snapshots or ask questions are not, and `reset_previews`, which can
-  drop every preview at once, is also marked `consequentialHint`. Telemetry
-  windows only record in the tuner, so their tools are marked read-only. Run
-  labels, run results, telemetry and your answers are marked as untrusted
-  content.
+  drop every preview at once, is also marked `consequentialHint`. Requesting
+  or withdrawing a run and starting or stopping a telemetry window aren't
+  marked read-only either, since they change what the tuner shows or records;
+  reading a window is. Run labels, run results, telemetry and your answers are
+  marked as untrusted content.
 - Nothing the agent does persists: previews last until the keyboard restarts,
   and **Revert to pre-agent values** undoes them sooner.
 - The relay binds to loopback only.
@@ -168,7 +181,7 @@ repository: match nodes by stable id against your keymap before committing, as
   web page in your default browser. Its request to reload the tuner is ignored
   on purpose, so it can't drop the keyboard connection.
 - The relay forwards every WebMCP tool the tuner page registers. Today those
-  are the twenty above.
+  are the twenty-one above.
 - The widget is a pinned copy of the relay's own (`web/vendor/webmcp-local-relay`,
   MIT). The tuner loads it itself instead of with the relay's `embed.js`,
   which reloads the page when the relay asks; a reload would drop the keyboard
