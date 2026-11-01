@@ -13,26 +13,37 @@ import {
   parseTextMetrics,
 } from "./metrics.js";
 
-export function replayFixture(path, runners, update = false) {
-  const fixture = validateFixture(JSON.parse(readFileSync(path, "utf8")), path);
+export function loadFixture(path) {
+  return validateFixture(JSON.parse(readFileSync(path, "utf8")), path);
+}
+
+/* Run a fixture through its native runner and return the raw output. An
+ * override profile replaces cursor stage settings by stable id. */
+export function runFixture(fixture, runners, overrideProfile = null) {
   const runner = fixture.processor.kind === "composed-scroll" ? runners.scrollPipeline
     : fixture.processor.kind === "composed-text" ? runners.textPipeline
     : fixture.processor.kind === "cursor-pipeline" ? runners.cursorPipeline : runners.noisePipeline;
   const result = spawnSync(resolve(runner), [], {
-    input: encodeRunnerInput(fixture),
+    input: encodeRunnerInput(fixture, overrideProfile),
     encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    throw new Error(`${fixture.id}: runner failed: ${result.stderr.trim()}`);
+    throw new Error(`${fixture.id}: runner failed: ${(result.stderr ?? result.error).trim()}`);
   }
+  return result.stdout;
+}
 
+export function replayFixture(path, runners, update = false) {
+  const fixture = loadFixture(path);
+  const output = runFixture(fixture, runners);
   const metrics = fixture.processor.kind === "composed-scroll"
-    ? parseScrollMetrics(result.stdout, fixture)
+    ? parseScrollMetrics(output, fixture)
     : fixture.processor.kind === "composed-text"
-      ? parseTextMetrics(result.stdout, fixture)
+      ? parseTextMetrics(output, fixture)
       : fixture.processor.kind === "cursor-pipeline"
-        ? parseCursorMetrics(result.stdout, fixture)
-        : parseNoiseFilterMetrics(result.stdout, fixture);
+        ? parseCursorMetrics(output, fixture)
+        : parseNoiseFilterMetrics(output, fixture);
   if (update) {
     fixture.expect = metrics;
     writeFileSync(path, `${JSON.stringify(fixture, null, 2)}\n`);

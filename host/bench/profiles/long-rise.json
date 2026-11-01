@@ -1,0 +1,21 @@
+{
+  "schema": "zmk-pointing-tools/tuning-profile",
+  "version": 1,
+  "exportedAt": "2026-10-31T00:00:00.000Z",
+  "targets": [
+    {
+      "stableId": "right-cursor-acceleration",
+      "kind": 4,
+      "label": "right-cursor-acceleration",
+      "devicetreePath": "/zpt_right_cursor_acceleration",
+      "parameters": [
+        {
+          "key": "speed-rise",
+          "devicetreeProperty": "speed-rise-ms",
+          "value": 120,
+          "compiled": 10
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "schema": "zmk-pointing-tools/benchmark-baseline",
+  "version": 2,
+  "sets": {
+    "tune": {
+      "speedErrorPercent": {
+        "value": 15.26,
+        "strokes": 20
+      },
+      "slowJitterPercent": {
+        "value": 12.92,
+        "strokes": 19
+      },
+      "sensitivityStepPercent": {
+        "value": 2.71,
+        "strokes": 19
+      },
+      "flickLagMs": {
+        "value": 1.28,
+        "strokes": 6
+      },
+      "outputErrorPercent": {
+        "value": 5.58,
+        "strokes": 44
+      },
+      "unintendedOutput": {
+        "value": 23.24,
+        "strokes": 8
+      },
+      "axisLockPercent": {
+        "value": 94.76,
+        "strokes": 17
+      },
+      "sidewaysLeakPercent": {
+        "value": 2.45,
+        "strokes": 17
+      },
+      "axisSwitches": {
+        "value": 0.29,
+        "strokes": 17
+      }
+    },
+    "holdout": {
+      "speedErrorPercent": {
+        "value": 9.63,
+        "strokes": 6
+      },
+      "slowJitterPercent": {
+        "value": 4.11,
+        "strokes": 6
+      },
+      "sensitivityStepPercent": {
+        "value": 0,
+        "strokes": 6
+      },
+      "flickLagMs": {
+        "value": 5.77,
+        "strokes": 6
+      },
+      "outputErrorPercent": {
+        "value": 0.86,
+        "strokes": 16
+      },
+      "unintendedOutput": {
+        "value": 0,
+        "strokes": 4
+      },
+      "axisLockPercent": {
+        "value": 99.08,
+        "strokes": 4
+      },
+      "sidewaysLeakPercent": {
+        "value": 0.25,
+        "strokes": 4
+      },
+      "axisSwitches": {
+        "value": 0.75,
+        "strokes": 4
+      }
+    }
+  }
+}

@@ -19,5 +19,9 @@ scroll, text-navigation, and cursor fixture kinds. CTest runs the C unit tests
 and all versioned fixtures under `host/tests/fixtures` through the JavaScript
 replay client.
 
+`node host/replay/bench.js` scores the benchmark fixture sets in
+`host/bench` against their committed baseline; see
+[`../docs/trace-benchmark.md`](../docs/trace-benchmark.md).
+
 The native binaries are build artifacts and are never committed or included
 in keyboard firmware.

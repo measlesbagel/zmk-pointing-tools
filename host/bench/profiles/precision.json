@@ -1,0 +1,123 @@
+{
+  "schema": "zmk-pointing-tools/tuning-profile",
+  "version": 1,
+  "exportedAt": "2026-10-31T00:00:00.000Z",
+  "targets": [
+    {
+      "stableId": "right-cursor-acceleration",
+      "kind": 4,
+      "label": "right-cursor-acceleration",
+      "devicetreePath": "/zpt_right_cursor_acceleration",
+      "parameters": [
+        {
+          "key": "curve-speed-1",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 0,
+          "compiled": 0
+        },
+        {
+          "key": "curve-speed-2",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 4,
+          "compiled": 25
+        },
+        {
+          "key": "curve-speed-3",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 10,
+          "compiled": 40
+        },
+        {
+          "key": "curve-speed-4",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 25,
+          "compiled": 63
+        },
+        {
+          "key": "curve-speed-5",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 54,
+          "compiled": 100
+        },
+        {
+          "key": "curve-speed-6",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 116,
+          "compiled": 158
+        },
+        {
+          "key": "curve-speed-7",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 250,
+          "compiled": 250
+        },
+        {
+          "key": "curve-speed-8",
+          "devicetreeProperty": "curve-speeds-mm-per-s",
+          "value": 400,
+          "compiled": 400
+        },
+        {
+          "key": "curve-sensitivity-1",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 35,
+          "compiled": 100
+        },
+        {
+          "key": "curve-sensitivity-2",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 35,
+          "compiled": 100
+        },
+        {
+          "key": "curve-sensitivity-3",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 68,
+          "compiled": 110
+        },
+        {
+          "key": "curve-sensitivity-4",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 100,
+          "compiled": 135
+        },
+        {
+          "key": "curve-sensitivity-5",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 126,
+          "compiled": 165
+        },
+        {
+          "key": "curve-sensitivity-6",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 174,
+          "compiled": 190
+        },
+        {
+          "key": "curve-sensitivity-7",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 200,
+          "compiled": 200
+        },
+        {
+          "key": "curve-sensitivity-8",
+          "devicetreeProperty": "curve-sensitivity-percent",
+          "value": 200,
+          "compiled": 200
+        },
+        {
+          "key": "speed-rise",
+          "devicetreeProperty": "speed-rise-ms",
+          "value": 10,
+          "compiled": 10
+        },
+        {
+          "key": "speed-fall",
+          "devicetreeProperty": "speed-fall-ms",
+          "value": 5,
+          "compiled": 5
+        }
+      ]
+    }
+  ]
+}

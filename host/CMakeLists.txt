@@ -123,3 +123,11 @@ add_test(
     --text-pipeline-runner "$<TARGET_FILE:zpt_text_nav_pipeline_replay>"
     ${ZPT_TRACE_FIXTURES}
 )
+
+# Scores the benchmark sets and prints the table. Scores never fail it; it
+# fails only if the benchmark can't run.
+add_test(
+  NAME trace_benchmark
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/bench.js"
+    --build-dir "${CMAKE_CURRENT_BINARY_DIR}"
+)

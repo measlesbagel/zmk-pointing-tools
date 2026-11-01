@@ -1,0 +1,273 @@
+{
+  "schema": "zmk-pointing-tools/trace-fixture",
+  "version": 2,
+  "id": "cursor-bridges-pipeline-v2",
+  "description": "The full Bridges right cursor pipeline with the gate enabled and the keypress guard, over Bluetooth: keypress shake is held back, a stroke qualifies, accelerates, and is coalesced into 8 ms reports.",
+  "metadata": {
+    "mode": "cursor",
+    "synthetic": true,
+    "provenance": "Curated synthetic regression for the v2 cursor pipeline"
+  },
+  "source": {
+    "device": "right-ball",
+    "location": "central",
+    "cpi": 684,
+    "span": "sensor"
+  },
+  "processor": {
+    "kind": "cursor-pipeline",
+    "link": "ble",
+    "stages": [
+      {
+        "type": "orientation",
+        "stableId": "right-cursor-orientation",
+        "settings": {
+          "invert-x": 1,
+          "invert-y": 1
+        }
+      },
+      {
+        "type": "normalize",
+        "stableId": "right-cursor-normalize"
+      },
+      {
+        "type": "gate",
+        "stableId": "right-cursor-gate",
+        "settings": {
+          "enabled": 1,
+          "activation-distance": 223,
+          "coherence": 60,
+          "qualification-timeout": 160,
+          "idle-timeout": 120,
+          "suppress-after-keypress-ms": 40
+        }
+      },
+      {
+        "type": "acceleration",
+        "stableId": "right-cursor-acceleration",
+        "settings": {
+          "curve-speed-1": 0,
+          "curve-speed-2": 25,
+          "curve-speed-3": 40,
+          "curve-speed-4": 63,
+          "curve-speed-5": 100,
+          "curve-speed-6": 158,
+          "curve-speed-7": 250,
+          "curve-speed-8": 400,
+          "curve-sensitivity-1": 100,
+          "curve-sensitivity-2": 100,
+          "curve-sensitivity-3": 110,
+          "curve-sensitivity-4": 135,
+          "curve-sensitivity-5": 165,
+          "curve-sensitivity-6": 190,
+          "curve-sensitivity-7": 200,
+          "curve-sensitivity-8": 200,
+          "speed-rise": 10,
+          "speed-fall": 5
+        }
+      },
+      {
+        "type": "transfer",
+        "stableId": "right-cursor-transfer",
+        "settings": {
+          "scale-multiplier": 1,
+          "scale-divisor": 1
+        }
+      },
+      {
+        "type": "quantizer",
+        "stableId": "right-cursor-quantizer"
+      },
+      {
+        "type": "coalescer",
+        "stableId": "right-cursor-coalescer",
+        "settings": {
+          "usb-report-interval": 1,
+          "ble-report-interval": 8
+        }
+      }
+    ]
+  },
+  "events": [
+    [
+      "keypress",
+      0
+    ],
+    [
+      "motion",
+      2500,
+      1,
+      0,
+      2500
+    ],
+    [
+      "motion",
+      30000,
+      -1,
+      1,
+      30000
+    ],
+    [
+      "motion",
+      15000,
+      2,
+      0,
+      15000
+    ],
+    [
+      "motion",
+      1000,
+      6,
+      0,
+      1000
+    ],
+    [
+      "motion",
+      1250,
+      7,
+      -1,
+      1250
+    ],
+    [
+      "motion",
+      1500,
+      8,
+      -2,
+      1500
+    ],
+    [
+      "motion",
+      1000,
+      9,
+      -3,
+      1000
+    ],
+    [
+      "motion",
+      1250,
+      10,
+      0,
+      1250
+    ],
+    [
+      "motion",
+      1500,
+      11,
+      -1,
+      1500
+    ],
+    [
+      "motion",
+      1000,
+      12,
+      -2,
+      1000
+    ],
+    [
+      "motion",
+      1250,
+      13,
+      -3,
+      1250
+    ],
+    [
+      "motion",
+      1500,
+      14,
+      0,
+      1500
+    ],
+    [
+      "motion",
+      1000,
+      15,
+      -1,
+      1000
+    ],
+    [
+      "motion",
+      1250,
+      16,
+      -2,
+      1250
+    ],
+    [
+      "motion",
+      1500,
+      17,
+      -3,
+      1500
+    ],
+    [
+      "motion",
+      60000,
+      3,
+      1,
+      60000
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ],
+    [
+      "motion",
+      1500,
+      40,
+      8,
+      1500
+    ]
+  ],
+  "expect": {
+    "inputFrames": 22,
+    "durationMs": 131,
+    "outputFrames": 6,
+    "outputCadence": {
+      "meanIntervalMs": 18,
+      "maximumIntervalMs": 58
+    },
+    "horizontal": {
+      "signedDistance": -727,
+      "absoluteDistance": 727,
+      "nonzeroFrames": 6,
+      "directionChanges": 0
+    },
+    "vertical": {
+      "signedDistance": -63,
+      "absoluteDistance": 125,
+      "nonzeroFrames": 4,
+      "directionChanges": 1
+    },
+    "clippedFrames": 0
+  }
+}
