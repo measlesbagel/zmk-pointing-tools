@@ -51,3 +51,33 @@ test("send failures report the error and advance the queue", async () => {
   assert.deepEqual(sent, ["good"]);
   assert.equal(queue.pending, 1);
 });
+
+test("a request without a response ends the session instead of moving on", async () => {
+  const sent = [];
+  let timeouts = 0;
+  const queue = new ResponseRequestQueue((frame) => sent.push(frame), () => {}, {
+    timeoutMs: 20,
+    onTimeout: () => { timeouts += 1; },
+  });
+  queue.enqueue(0x85, "lost");
+  queue.enqueue(0x85, "same response type");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  /* The next request was never sent, so the late response can't confirm it. */
+  assert.equal(timeouts, 1);
+  assert.deepEqual(sent, ["lost"]);
+  assert.equal(queue.pending, 0);
+  assert.equal(queue.complete(0x85), false);
+});
+
+test("a response in time cancels the timeout", async () => {
+  let timeouts = 0;
+  const queue = new ResponseRequestQueue(() => {}, () => {}, {
+    timeoutMs: 20,
+    onTimeout: () => { timeouts += 1; },
+  });
+  queue.enqueue(1, "answered");
+  assert.equal(queue.complete(1), true);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(timeouts, 0);
+});

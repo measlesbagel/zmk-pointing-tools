@@ -17,13 +17,14 @@
       </header>
 
       <section class="actions" aria-label="Connection controls">
-        <button id="connect" class="primary">Connect keyboard</button>
+        <button id="connect" class="primary">Connect via USB</button>
+        <button id="connect-bluetooth">Connect via Bluetooth</button>
         <button id="simulate">Simulate</button>
         <button id="clear">Clear</button>
       </section>
 
       <p id="notice" class="notice">
-        Connect the central half over USB using desktop Chrome, or use the simulator without hardware.
+        Connect the central half over USB or Bluetooth using desktop Chrome, or use the simulator without hardware.
       </p>
 
       <section id="agent" class="panel agent-panel">
@@ -201,7 +202,8 @@
         </div>
         <div class="temporary-warning">
           Diagnostics are observational and off by default. “Decisions” reports transitions and
-          output; “Every frame” uses substantially more serial bandwidth.
+          output; “Every frame” uses substantially more bandwidth, and over Bluetooth it drops
+          whatever the connection can't carry (counted as dropped).
         </div>
         <div id="diagnostics" class="diagnostics">
           <p class="muted">Connect current firmware to inspect stage decisions.</p>
@@ -215,6 +217,8 @@
           <li>On Arch-derived systems, serial devices normally use the <code>uucp</code> group.</li>
           <li>The central half must produce a <code>/dev/ttyACM*</code> device when connected.</li>
           <li>Only one browser tab or native process can own the serial port.</li>
+          <li>Bluetooth needs firmware with the Bluetooth transport, and this computer must already be paired (bonded) with the keyboard's central half. Choose the keyboard in the browser's picker even while it's connected as a keyboard.</li>
+          <li>On Linux, Chrome may need Experimental Web Platform features turned on in <code>chrome://flags</code> before Web Bluetooth is available.</li>
         </ul>
       </details>
 

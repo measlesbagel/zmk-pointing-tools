@@ -93,7 +93,7 @@ simulator, values change in the tuner only.
 
 | Tool | Returns |
 | --- | --- |
-| `get_session` | Connection (keyboard, simulator or none), transport, protocol version, and counts of targets, modified previews, devices and captured telemetry |
+| `get_session` | Connection (keyboard, simulator or none), transport (`USB serial` or `Bluetooth`), protocol version, and counts of targets, modified previews, devices and captured telemetry |
 | `list_tuning_targets` | Every tunable stage with its stable id and devicetree path, and each parameter's label, unit, range, step, compiled value, current preview, help text and devicetree property |
 | `list_pointing_devices` | Each sensor's location in the split, reachability, and current, compiled and supported CPI |
 | `get_recent_telemetry` | Up to 500 of the latest captured stage telemetry events, optionally for one stage, with a readable summary of each. Detail levels are set by you in **Stage decisions** |

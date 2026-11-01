@@ -41,7 +41,7 @@ import { ResponseRequestQueue } from "./request-queue.js";
 import { PointingPlayground, loadPrecisionHistory } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
-import { SerialTransport } from "./transport.js";
+import { BluetoothTransport, SerialTransport } from "./transport.js";
 import { AgentBridge } from "./agent-bridge.js";
 
 const MAX_STATE_EVENTS = 2_000;
@@ -51,7 +51,7 @@ const STAGE_EVENT_INTENT_CHANGED = 3;
 const SIGNAL_KIND_LABELS = ["invalid", "raw", "normalized", "pointer", "scroll", "action"];
 
 const elements = Object.fromEntries(
-  ["status", "connect", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
+  ["status", "connect", "connect-bluetooth", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
@@ -74,6 +74,18 @@ const tuningRequests = new ResponseRequestQueue(
     return transport.write(frame);
   },
   (error) => notice(`Tuning request failed: ${error.message}`, true),
+  {
+    /* Longer than the slowest real response: a peripheral relay waits
+     * 500 ms and a large description over Bluetooth takes several
+     * connection events. After a timeout the tuner can't tell which
+     * response answers which request, so the session ends. */
+    timeoutMs: 5_000,
+    onTimeout: () => {
+      if (!transport) return;
+      notice("The keyboard stopped responding. Reconnect to continue.", true);
+      disconnect();
+    },
+  },
 );
 
 const curveEditors = new CurveEditors({
@@ -100,7 +112,7 @@ function notice(text, error = false) {
 function updateHeartbeat() {
   const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
   const needed = Boolean(transport) && stateEnabled;
-  if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
+  if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING).catch(() => {}), 2000);
   if (!needed && heartbeat) {
     clearInterval(heartbeat);
     heartbeat = undefined;
@@ -563,14 +575,23 @@ async function disconnect() {
   transport = undefined;
   tuningRequests.clear();
   elements.connect.disabled = true;
-  try { if (link && protocolReady) await link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
+  /* Best effort, and bounded: a stalled link mustn't hold the disconnect. */
+  try {
+    if (link && protocolReady) {
+      await Promise.race([
+        link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+    }
+  } catch {}
   await link?.close();
   elements.connect.disabled = false;
   protocolReady = false;
   calibration.cancel();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
-  elements.connect.textContent = "Connect keyboard";
+  elements.connect.textContent = "Connect via USB";
+  elements["connect-bluetooth"].hidden = false;
   elements.simulate.disabled = false;
   tuningTargets = new Map();
   devices = new Map();
@@ -581,16 +602,21 @@ async function disconnect() {
   setStatus("Disconnected");
 }
 
-async function connect() {
-  if (!SerialTransport.supported) {
-    notice("Web Serial is unavailable. Use current desktop Chrome or the simulator.", true);
+const UNSUPPORTED = new Map([
+  [SerialTransport, "Web Serial is unavailable. Use current desktop Chrome or Edge, or the simulator."],
+  [BluetoothTransport, "Web Bluetooth is unavailable. Use current desktop Chrome or Edge; on Linux, turn on Experimental Web Platform features in chrome://flags if it stays unavailable."],
+]);
+
+async function connect(Transport) {
+  if (!Transport.supported) {
+    notice(UNSUPPORTED.get(Transport), true);
     return;
   }
-  elements.connect.disabled = true;
+  elements.connect.disabled = elements["connect-bluetooth"].disabled = true;
   try {
     if (simulator) startSimulator();
     decoder = new FrameDecoder();
-    const link = new SerialTransport({
+    const link = new Transport({
       onData: (bytes) => { if (transport === link) receive(bytes); },
       onError: (error) => notice(`${link.label} read failed: ${error.message}`, true),
       onClose: () => { if (transport === link) disconnect(); },
@@ -599,6 +625,7 @@ async function connect() {
     transport = link;
     protocolReady = false;
     elements.connect.textContent = "Disconnect";
+    elements["connect-bluetooth"].hidden = true;
     elements.simulate.disabled = true;
     tuningTargets = new Map();
     devices = new Map();
@@ -607,13 +634,15 @@ async function connect() {
     stateDirty = true;
     tuningRequests.clear();
     renderTuning();
-    setStatus("Connected", true);
+    setStatus(`Connected over ${link.label}`, true);
     await send(MESSAGE.DESCRIBE_REQUEST);
   } catch (error) {
     notice(`Connection failed: ${error.message}`, true);
     await disconnect();
   } finally {
-    elements.connect.disabled = false;
+    elements.connect.disabled = elements["connect-bluetooth"].disabled = false;
+    /* The Bluetooth button hides while connected, which would drop focus. */
+    elements.connect.focus();
   }
 }
 
@@ -679,7 +708,8 @@ function startSimulator() {
   calibration.refresh();
 }
 
-elements.connect.addEventListener("click", () => (transport ? disconnect() : connect()));
+elements.connect.addEventListener("click", () => (transport ? disconnect() : connect(SerialTransport)));
+elements["connect-bluetooth"].addEventListener("click", () => connect(BluetoothTransport));
 elements.simulate.addEventListener("click", startSimulator);
 elements.clear.addEventListener("click", () => {
   stateEvents = [];
