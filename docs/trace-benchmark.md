@@ -35,7 +35,7 @@ This scores every fixture under `host/bench/fixtures` against
 
 | Option | Effect |
 | --- | --- |
-| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every cursor fixture's settings, matched by stage `stableId`. Scroll and text fixtures are not affected. |
+| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every stage-chain fixture's settings (cursor, and recorded scroll and text pipelines), matched by stage `stableId`. Composed scroll, text, and noise fixtures are not affected. |
 | `--sensor-spans` | Give the pipeline each frame's sensor sample span even where the firmware path has none today (what-if for #113). |
 | `--json <file>` | Write the full report: per-set scores, per-fixture and per-stroke values, and the baseline comparison. |
 | `--markdown <file>` | Write the tables as Markdown (CI appends this to the job summary). |
@@ -47,17 +47,19 @@ To see what a setting does, score it as a profile, for example
 `--profile host/bench/profiles/short-rise.json`; the `change` column then
 reads against the committed baseline.
 
-`--profile` changes only cursor fixtures; scroll and text fixtures keep
-their own settings, and the benchmark says so when it runs. It checks the
-profile first, so a mistake can't silently score as the baseline:
+`--profile` changes only stage-chain fixtures; composed scroll, text, and
+noise fixtures keep their own settings, and the benchmark says so when it
+runs. It checks the profile first, so a mistake can't silently score as the
+baseline:
 
 - A duplicate target or a duplicate parameter in one target is an error
   (exit code 2).
-- If none of the profile's cursor targets matches a stage `stableId` in any
+- If none of the profile's targets matches a stage `stableId` in any
   fixture, that is an error too: the profile would change nothing.
 - A full tuner export also lists targets the fixtures don't have, such as a
-  sniper pipeline's stages or scroll and text stages. Those are ignored with
-  a warning, so check the warnings when only some targets apply.
+  sniper pipeline's stages, or scroll and text stages when no recorded scroll
+  or text trace is scored. Those are ignored with a warning, so check the
+  warnings when only some targets apply.
 - A parameter key a matched stage doesn't publish, or a value out of its
   range, fails the replay.
 
@@ -246,6 +248,12 @@ or `post-typing`), `intended` (whether the user meant the motion), and a
   `--profile`). The curve and gain are choices, so the truth follows them;
   orientation is the sensor's mounting, so a profile that changes it scores
   as wrong direction.
+  For a scroll or text stroke the ideal output is the path's net travel,
+  oriented by the fixture's orientation stages as for the cursor, along the
+  stroke's `axis`, at the replay's own steps per count: the scroll batcher's
+  `steps-per-meter`, or one text step per threshold. Text navigation steps
+  along one axis, so a text stroke without an `axis` keeps only its dominant
+  one.
 - `intendedOutput`: `[x, y]` the output the user wanted, signed, in pointer
   units (cursor) or steps (scroll, text: right and down are positive). It is
   fixed truth that no setting changes, for example a playground target's
@@ -340,10 +348,14 @@ stroke scores 100 % rather than being skipped.
 Output from motion the user didn't mean, such as tremor at rest or shake from
 typing. Applies to strokes with `intended: false`. The stroke value is the
 summed magnitude of every report: the Euclidean length of each cursor report,
-or the absolute steps of each scroll or text report. Cursor output is divided
-by the pipeline's slow-motion gain, the replayed transfer gain times the
-curve's first-point sensitivity, so it reads in ball counts and lowering the
-gain doesn't hide it. Pixel quantization still makes a lower gain show a
+or the absolute steps of each scroll or text report. Every pipeline's output
+is divided by its own gain so it reads in ball counts and lowering the gain
+doesn't hide it: cursor output by the slow-motion gain, the replayed transfer
+gain times the curve's first-point sensitivity; scroll and text steps on each
+axis by the steps per count of that axis (the scroll batcher's
+`steps-per-meter`, or one step per text threshold). A gain so low that
+nothing comes out still reads 0 here, but then the intended strokes score
+100 % output error. Pixel quantization still makes a lower gain show a
 little less shake, which is real; the cost then shows in slow-stroke jitter.
 With a gain of zero the metric is unscored, which reads as worse.
 
@@ -360,8 +372,9 @@ Applies to scroll and text strokes with an `axis`. The share of output steps
 
 ### Mid-stroke switches (`axisSwitches`)
 
-Applies to scroll and text strokes with an `axis`. The number of times the
-decided intent changes between consecutive decided input frames of the stroke.
+Applies to scroll and text strokes, with or without an `axis`: it needs no
+truth. The number of times the decided intent changes between consecutive
+decided input frames of the stroke.
 
 ## Adding real recordings
 
@@ -386,3 +399,93 @@ Put it in `tune/` or `holdout/` by the convention above, run the benchmark,
 and commit the new baseline with it. Keep both synthetic and real fixtures
 until the real set covers every case; then retire the synthetic ones in one
 commit that also moves the baseline.
+
+## Recorded traces: ground truth
+
+`capture.js` converts recordings of cursor, scroll, and text-navigation
+pipelines into `cursor-pipeline`, `scroll-pipeline`, and `text-pipeline`
+traces (see [`trace-replay.md`](trace-replay.md#fixture-format)). They replay
+exactly, with the recorded stage chain and settings, and `--profile` changes
+them by stage `stableId`, so #109 (scroll curves) and #110 (axis locking) can
+be tuned on real motion.
+
+A recording carries no intent, so `captureToFixtures` in
+`host/replay/capture-convert.js` is the one place that writes its ground
+truth. `options.truth` picks how:
+
+- **`labels-only`** (the default, and `capture.js --truth labels-only`):
+  strokes only where labels say what the user meant. Unlabelled motion is
+  unscored.
+- **`derive`** (`--truth derive`; the tuner passes this): labels where
+  present, and strokes derived from the motion everywhere else, with
+  `truth.derived: true` on the trace. Derived truth is
+  a heuristic; prefer labels for anything you tune against.
+
+Every stroke of a recording's truth has a `source`: `label` for a labelled
+stroke, `typing` for one derived as typing shake (rule 1 below), and
+`derived` for every other derived stroke. Stroke ids follow it: `label-1`,
+`typing-2`, `derived-3`.
+
+**Labels.** `--labels labels.json`, or `options.labels`, names what the user
+meant in a stretch of a scroll or text recording, in device uptime
+milliseconds:
+`[{ "startMs": 81200, "endMs": 82900, "activity": "scroll", "axis": "vertical" }]`.
+`activity` is `scroll` or `text` and must match the pipeline; `axis` is
+`horizontal` or `vertical` ("text navigation left/right" is `text` with
+`horizontal`). Each becomes an intended stroke with that axis and the
+recorded ball path, scored on axis lock, sideways leak, switches, and output
+error. Labels must not overlap. Labels win: derived strokes stop at label
+boundaries. The converter warns about a label on the wrong kind of pipeline,
+one clamped to the trace it overlaps, one that covers no motion, and one that
+covers no trace at all.
+
+**Derived strokes.** Frames less than 40 ms apart form one stroke, and a
+key press or a label boundary ends it. A stroke that starts within 150 ms
+after a key press is split where it last stands furthest back along its net
+direction: the frames before that are the shake the key left, the rest the
+hand's reach for the ball. A stroke starts one median frame interval before
+its first frame, but never inside a label or the stroke before it. Then, in
+order:
+
+1. **Typing.** A stroke that starts within 150 ms after a recorded key
+   press is `post-typing` with `intended: false`, scored on unintended
+   output, unless it is a reach: at least 5 frames and 1 mm of travel, with
+   net travel at least half of it. A reach goes on to the rules below, so a
+   guard that eats the start of a stroke after typing costs output error.
+   This is one rule for every pipeline. The window is longer than the usual
+   100 ms keypress guard, so the metric sees shake the guard lets through.
+   Key presses are recorded only for a pipeline whose stages have a keypress
+   guard.
+2. **Too small.** Fewer than 5 frames or less than 0.3 mm of travel along
+   the smoothed path: no stroke.
+3. **Tremor.** Net travel less than half the smoothed path length: `tremor`
+   with `intended: false`.
+4. **Scroll and text.** Everything else is an intended `scroll` or `text`
+   stroke with the recorded path and no axis, so output error and the
+   truth-free axis switches apply but axis lock and sideways leak don't.
+5. **Flick** (cursor). A peak speed of at least 200 mm/s over a 10 ms window
+   makes a `flick`, bounded to the steps faster than a tenth of that peak
+   when they fit in 300 ms. The windowed peak reads below the true peak, so
+   the threshold sits below the generator's flick speeds.
+6. **Aim** (cursor). Otherwise `aim`, or `slow-aim` at 50 mm/s or less. A
+   steady stroke (outside its first and last fifth, its speed over 50 ms
+   windows has a standard deviation within 15 % of its mean) gets
+   `speedMmPerS` from the length of its smoothed path (positions resampled
+   every 2 ms and averaged over 5 samples) over its duration. A plain sum of
+   frame-to-frame distances reads high, because sensor noise adds length.
+
+The benchmark fixtures check these rules in both directions
+(`host/replay/capture.test.js`): with their truth stripped and derived, all
+60 intended strokes stay intended, including the reaches 20 to 150 ms after
+typing; all 12 flicks and 4 tremor rests come back as such; each of the 8
+typing bursts has at most 15 % of its motion in intended strokes (the last
+shake before a 20 or 40 ms reach can run into it); and all 22 steady strokes
+are found steady with speeds within 6 %.
+
+Limits: a recording replays only from an entered record, so a trace ends at
+a drop, a settings change, or a change of source, resolution, or link (see
+[`protocol.md`](protocol.md#drops-and-resyncs)); the converter writes no
+`intendedOutput`, so output error on recordings compares against the
+recorded path's ideal output; and the
+`host/tests/fixtures/*-capture-pipeline.json` regression fixtures come from
+the synthetic capture session, not a keyboard.

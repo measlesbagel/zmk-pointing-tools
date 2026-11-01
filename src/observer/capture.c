@@ -4,9 +4,13 @@
 #include <string.h>
 
 #include <zmk/pointing_tools/observer/capture.h>
+#include <zmk/pointing_tools/stage/axis_constraint.h>
+#include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 #include <zmk/pointing_tools/stage/orientation.h>
+#include <zmk/pointing_tools/stage/scroll_batcher.h>
+#include <zmk/pointing_tools/stage/text_nav.h>
 
 static void put_le16(uint8_t *out, uint16_t value) {
     out[0] = (uint8_t)(value & 0xffU);
@@ -59,9 +63,17 @@ static size_t encode_full(const struct zpt_capture_record *record, uint8_t *out)
 }
 
 static const char *const replayable_strategies[] = {
-    "orthogonal-orientation", "resolution-normalize-mm", "coherent-displacement",
-    "cursor-acceleration",    "cursor-transfer",         "cursor-quantizer",
+    "orthogonal-orientation",
+    "resolution-normalize-mm",
+    "coherent-displacement",
+    "cursor-acceleration",
+    "cursor-transfer",
+    "cursor-quantizer",
     "cursor-coalescer",
+    "axis-intent",
+    "axis-constraint",
+    "scroll-batcher",
+    "text-nav",
 };
 
 static bool replayable_stage(const struct zpt_stage *stage) {
@@ -73,9 +85,51 @@ static bool replayable_stage(const struct zpt_stage *stage) {
     return false;
 }
 
-bool zpt_capture_pipeline_replayable(const struct zpt_pipeline *pipeline) {
+static bool is_strategy(const struct zpt_stage *stage, const char *strategy) {
+    return strcmp(stage->api->strategy_id, strategy) == 0;
+}
+
+/* The suppression policy a stage references, for the stages that take one. */
+static const struct zpt_suppression_policy *stage_guard(const struct zpt_stage *stage) {
+    if (is_strategy(stage, "coherent-displacement")) {
+        return ((const struct zpt_coherent_displacement_stage_config *)stage->config)->suppression;
+    }
+    if (is_strategy(stage, "axis-intent")) {
+        return ((const struct zpt_axis_intent_stage_config *)stage->config)->suppression;
+    }
+    if (is_strategy(stage, "axis-constraint")) {
+        return ((const struct zpt_axis_constraint_config *)stage->config)->suppression;
+    }
+    if (is_strategy(stage, "scroll-batcher")) {
+        return ((const struct zpt_scroll_batcher_config *)stage->config)->suppression;
+    }
+    return NULL;
+}
+
+static bool freezable(const struct zpt_suppression_policy *guard) {
+    return guard != NULL && guard->freeze_keypress != NULL && guard->thaw_keypress != NULL;
+}
+
+/* The keypress guard the pipeline's stages reference, if it can be frozen;
+ * capture records key presses only for such a guard. */
+static const struct zpt_suppression_policy *find_guard(const struct zpt_pipeline *pipeline) {
     for (size_t i = 0; i < pipeline->stage_count; i++) {
-        if (!replayable_stage(pipeline->stages[i])) {
+        const struct zpt_suppression_policy *guard = stage_guard(pipeline->stages[i]);
+        if (freezable(guard)) {
+            return guard;
+        }
+    }
+    return NULL;
+}
+
+/* Replay knows every stage, and the stages that take a keypress guard
+ * share one that capture can freeze, so the recording holds every key
+ * press they decide with. */
+bool zpt_capture_pipeline_replayable(const struct zpt_pipeline *pipeline) {
+    const struct zpt_suppression_policy *guard = find_guard(pipeline);
+    for (size_t i = 0; i < pipeline->stage_count; i++) {
+        const struct zpt_suppression_policy *own = stage_guard(pipeline->stages[i]);
+        if (!replayable_stage(pipeline->stages[i]) || (own != NULL && own != guard)) {
             return false;
         }
     }
@@ -85,7 +139,7 @@ bool zpt_capture_pipeline_replayable(const struct zpt_pipeline *pipeline) {
 static const struct zpt_stage *find_stage(const struct zpt_pipeline *pipeline,
                                           const char *strategy) {
     for (size_t i = 0; i < pipeline->stage_count; i++) {
-        if (strcmp(pipeline->stages[i]->api->strategy_id, strategy) == 0) {
+        if (is_strategy(pipeline->stages[i], strategy)) {
             return pipeline->stages[i];
         }
     }
@@ -101,19 +155,6 @@ uint8_t zpt_capture_pipeline_link(const struct zpt_pipeline *pipeline) {
     const enum zpt_cursor_link link =
         config->current_link != NULL ? config->current_link() : ZPT_CURSOR_LINK_USB;
     return link == ZPT_CURSOR_LINK_BLE ? ZPT_CAPTURE_LINK_BLE : ZPT_CAPTURE_LINK_USB;
-}
-
-/* The keypress guard the pipeline's motion gate references, if it can be
- * frozen; capture records key presses only for such a guard. */
-static const struct zpt_suppression_policy *find_guard(const struct zpt_pipeline *pipeline) {
-    const struct zpt_stage *stage = find_stage(pipeline, "coherent-displacement");
-    if (stage == NULL) {
-        return NULL;
-    }
-    const struct zpt_coherent_displacement_stage_config *config = stage->config;
-    const struct zpt_suppression_policy *guard = config->suppression;
-    return guard != NULL && guard->freeze_keypress != NULL && guard->thaw_keypress != NULL ? guard
-                                                                                           : NULL;
 }
 
 static void submit_kind(const struct zpt_capture_tap *tap, uint8_t kind, uint32_t time_ms) {
@@ -144,19 +185,45 @@ static void reset_and_enter(struct zpt_capture_tap *tap) {
     enter(tap);
 }
 
-/* How long the pipeline must rest before a resync: the acceleration
- * stage's restart gap, or the coalescer's report interval if longer, so a
- * reset coalescer sends the next report when the running one would. */
-static uint32_t resync_rest_ms(const struct zpt_pipeline *pipeline) {
-    const struct zpt_stage *stage = find_stage(pipeline, "cursor-coalescer");
-    uint32_t interval = 0;
-    if (stage != NULL) {
+/* The longest a stage remembers motion across a pause: its idle timeout
+ * or report interval. */
+static uint32_t stage_memory_ms(const struct zpt_pipeline *pipeline,
+                                const struct zpt_stage *stage) {
+    if (is_strategy(stage, "cursor-coalescer")) {
         const struct zpt_cursor_coalescer_config *config = stage->config;
-        interval = zpt_capture_pipeline_link(pipeline) == ZPT_CAPTURE_LINK_BLE
-                       ? config->ble_report_interval_ms
-                       : config->usb_report_interval_ms;
+        return zpt_capture_pipeline_link(pipeline) == ZPT_CAPTURE_LINK_BLE
+                   ? config->ble_report_interval_ms
+                   : config->usb_report_interval_ms;
     }
-    return interval > ZPT_CAPTURE_RESYNC_REST_MS ? interval : ZPT_CAPTURE_RESYNC_REST_MS;
+    if (is_strategy(stage, "axis-intent")) {
+        return ((const struct zpt_axis_intent_stage_config *)stage->config)->idle_timeout_ms;
+    }
+    if (is_strategy(stage, "axis-constraint")) {
+        const struct zpt_axis_constraint_config *config = stage->config;
+        /* It forgets its axis after the idle timeout, but a held remainder
+         * waits for the fold interval, so the longer of the two. */
+        return config->idle_timeout_ms > config->fold_interval_ms ? config->idle_timeout_ms
+                                                                  : config->fold_interval_ms;
+    }
+    if (is_strategy(stage, "scroll-batcher")) {
+        return ((const struct zpt_scroll_batcher_config *)stage->config)->report_interval_ms;
+    }
+    if (is_strategy(stage, "text-nav")) {
+        return ((const struct zpt_text_nav_config *)stage->config)->idle_timeout_ms;
+    }
+    return 0;
+}
+
+/* How long the pipeline must rest before a resync: the acceleration
+ * stage's restart gap, or the longest any stage remembers motion if
+ * longer, so the reset clears only what a rest leaves behind. */
+static uint32_t resync_rest_ms(const struct zpt_pipeline *pipeline) {
+    uint32_t rest = ZPT_CAPTURE_RESYNC_REST_MS;
+    for (size_t i = 0; i < pipeline->stage_count; i++) {
+        const uint32_t memory = stage_memory_ms(pipeline, pipeline->stages[i]);
+        rest = memory > rest ? memory : rest;
+    }
+    return rest;
 }
 
 /* After a drop, a settings change, or a source change, resync at rest: no
@@ -244,7 +311,7 @@ static void tap_input(const struct zpt_pipeline *pipeline, const struct zpt_sign
     tap->have_last_frame = true;
 }
 
-static void tap_input_done(const struct zpt_pipeline *pipeline, void *user_data) {
+static void tap_done(const struct zpt_pipeline *pipeline, void *user_data) {
     (void)pipeline;
     struct zpt_capture_tap *tap = user_data;
     if (tap->frozen) {
@@ -257,6 +324,10 @@ static void tap_flush(const struct zpt_pipeline *pipeline, uint32_t now_ms, void
     (void)pipeline;
     struct zpt_capture_tap *tap = user_data;
     if (tap->sink->recording(tap->sink->context)) {
+        /* A flush can hand held motion to a stage that asks the guard, as
+         * the axis constraint does to the scroll batcher; freeze it and
+         * record a new key press first, as for a frame. */
+        record_keypress(tap);
         submit_kind(tap, ZPT_CAPTURE_RECORD_FLUSH, now_ms);
         /* A flush can send a report, so the rest counts from it too. */
         tap->last_frame_ms = now_ms;
@@ -287,8 +358,9 @@ void zpt_capture_tap_attach(struct zpt_capture_tap *tap, struct zpt_pipeline *pi
     };
     pipeline->observer = (struct zpt_pipeline_observer){
         .input = tap_input,
-        .input_done = tap_input_done,
+        .input_done = tap_done,
         .flush = tap_flush,
+        .flush_done = tap_done,
         .lifecycle = tap_lifecycle,
         .user_data = tap,
     };
@@ -544,14 +616,21 @@ static size_t fixed_settings(const struct zpt_pipeline *pipeline, const struct z
         settings[2] = (struct fixed_setting){"invert-y", config->invert_y};
         return 3;
     }
-    if (strcmp(strategy, "coherent-displacement") == 0) {
-        /* Capture records key presses only for a guard it can freeze. */
-        const struct zpt_suppression_policy *guard = find_guard(pipeline);
-        const uint32_t window = guard != NULL ? guard->keypress_window_ms : 0U;
-        settings[0] = (struct fixed_setting){"suppress-after-keypress-ms", (int32_t)window};
-        return 1;
+    size_t count = 0;
+    if (strcmp(strategy, "axis-intent") == 0) {
+        const struct zpt_axis_intent_stage_config *config = stage->config;
+        settings[count++] = (struct fixed_setting){"policy", (int32_t)config->policy};
     }
-    return 0;
+    if (strcmp(strategy, "coherent-displacement") == 0 || strcmp(strategy, "axis-intent") == 0 ||
+        strcmp(strategy, "axis-constraint") == 0 || strcmp(strategy, "scroll-batcher") == 0) {
+        /* Capture records key presses only for a guard it can freeze; a
+         * stage without one replays without it. */
+        const struct zpt_suppression_policy *guard = find_guard(pipeline);
+        const uint32_t window =
+            guard != NULL && stage_guard(stage) == guard ? guard->keypress_window_ms : 0U;
+        settings[count++] = (struct fixed_setting){"suppress-after-keypress-ms", (int32_t)window};
+    }
+    return count;
 }
 
 struct writer {

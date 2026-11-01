@@ -19,7 +19,14 @@
  * mid-stroke, as an agent's A/B preview does; the tap resyncs at the next
  * rest after each.
  *
- *   capture_session [buffer-bytes [credits [interval-us]]]
+ *   capture_session [buffer-bytes [credits [interval-us [mode]]]]
+ *
+ * The mode picks the pipeline: cursor (the default), or scroll or text, a
+ * chain of axis intent, axis constraint, and the scroll batcher or text
+ * navigation, all under the same keypress guard and with the adaptive axis
+ * policy; scroll-gated puts a motion gate without a keypress guard in front
+ * of the guarded scroll stages; text-horizontal is the text chain locked to
+ * the horizontal axis.
  *
  * Prints one JSON object: the protocol bytes a host would receive (the
  * capture description and batches, as hex), the settings as a tuner
@@ -39,6 +46,8 @@
 #include <zmk/pointing_tools/core/pipeline.h>
 #include <zmk/pointing_tools/observer/capture.h>
 #include <zmk/pointing_tools/policy/suppression.h>
+#include <zmk/pointing_tools/stage/axis_constraint.h>
+#include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/cursor_acceleration.h>
 #include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/cursor_quantizer.h>
@@ -46,7 +55,9 @@
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 #include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/resolution_normalize.h>
+#include <zmk/pointing_tools/stage/scroll_batcher.h>
 #include <zmk/pointing_tools/stage/stage_tuning.h>
+#include <zmk/pointing_tools/stage/text_nav.h>
 
 #define STAGE_COUNT 7
 #define MAX_STREAM 65536
@@ -88,8 +99,25 @@ static const struct setting acceleration_settings[] = {
 static const struct setting transfer_settings[] = {{"scale-multiplier", 3}, {"scale-divisor", 2}};
 static const struct setting coalescer_settings[] = {{"usb-report-interval", 1},
                                                     {"ble-report-interval", 8}};
+/* Idle timeouts short enough that the resync rest stays the 40 ms one. */
+static const struct setting intent_settings[] = {
+    {"engage-ratio", 200}, {"release-ratio", 150}, {"activation-distance", 400},
+    {"window", 100},       {"idle-timeout", 30},
+};
+static const struct setting constraint_settings[] = {
+    {"discard-unclassified", 0}, {"idle-timeout", 30}, {"fold-interval", 20}};
+static const struct setting batcher_settings[] = {{"steps-per-meter", 20000},
+                                                  {"report-interval", 8}};
+static const struct setting text_settings[] = {
+    {"horizontal-threshold", 1500}, {"vertical-threshold", 2000}, {"idle-timeout", 30}};
+
+enum session_mode { MODE_CURSOR, MODE_SCROLL, MODE_TEXT };
 
 struct session {
+    enum session_mode mode;
+    enum zpt_axis_policy policy;
+    /* A motion gate without a keypress guard in front of the axis stages. */
+    bool unguarded_gate;
     uint32_t now_us;
     bool recording;
     bool have_keypress;
@@ -137,6 +165,14 @@ struct session {
     struct zpt_cursor_quantizer_state quantizer_state;
     struct zpt_cursor_coalescer_config coalescer;
     struct zpt_cursor_coalescer_state coalescer_state;
+    struct zpt_axis_intent_stage_config intent;
+    struct zpt_axis_intent_stage_state intent_state;
+    struct zpt_axis_constraint_config constraint;
+    struct zpt_axis_constraint_state constraint_state;
+    struct zpt_scroll_batcher_config batcher;
+    struct zpt_scroll_batcher_state batcher_state;
+    struct zpt_text_nav_config text;
+    struct zpt_text_nav_state text_state;
     struct zpt_stage stages[STAGE_COUNT];
     struct zpt_stage *stage_refs[STAGE_COUNT];
     struct zpt_sink sink;
@@ -183,21 +219,26 @@ static void guard_thaw(void *context) {
     session.frozen = false;
 }
 
+/* Cursor and scroll reports record their x and y; a text-navigation step
+ * records its direction and 0. */
 static int report_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     (void)sink;
     if (session.recording && session.trace >= 0 && session.output_count < MAX_OUTPUTS) {
         int32_t *output = session.outputs[session.output_count++];
+        const bool action = signal->kind == ZPT_SIGNAL_ACTION;
         output[0] = session.trace;
         output[1] = (int32_t)signal->metadata.observed_at_ms;
-        output[2] = signal->data.delta.x;
-        output[3] = signal->data.delta.y;
+        output[2] = action ? (int32_t)signal->data.action.id : signal->data.delta.x;
+        output[3] = action ? 0 : signal->data.delta.y;
     }
     return 0;
 }
 
 static const struct zpt_sink_api report_api = {
     .type_id = "report-capture",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_POINTER_DELTA),
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_POINTER_DELTA) |
+                      ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_SCROLL_STEPS) |
+                      ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_ACTION),
     .emit = report_emit,
 };
 
@@ -280,9 +321,10 @@ static void capture_submit(void *context, const struct zpt_capture_record *recor
     if (session.buffer.used > session.peak_used) {
         session.peak_used = session.buffer.used;
     }
-    /* A key press landing while the frame runs, after the tap read the
-     * guard for it: the stages must not see it until the next frame. */
-    if (record->kind == ZPT_CAPTURE_RECORD_FRAME && session.typing && random_between(0, 30) == 0) {
+    /* A key press landing while a frame or flush runs, after the tap read
+     * the guard for it: the stages must not see it until the next one. */
+    if ((record->kind == ZPT_CAPTURE_RECORD_FRAME || record->kind == ZPT_CAPTURE_RECORD_FLUSH) &&
+        session.typing && random_between(0, 30) == 0) {
         keypress();
         session.injected_keypresses++;
     }
@@ -331,6 +373,24 @@ static int apply_settings(const struct tuned_stage *stage) {
 
 static const struct tuned_stage *tuned_stages(size_t *count) {
     static struct tuned_stage stages[4];
+    if (session.mode != MODE_CURSOR) {
+        size_t n = 0;
+        if (session.unguarded_gate) {
+            stages[n++] = (struct tuned_stage){"axis-gate", &zpt_coherent_displacement_tuning_ops,
+                                               &session.gate, gate_settings, 5};
+        }
+        stages[n++] = (struct tuned_stage){"axis-intent", &zpt_axis_intent_tuning_ops,
+                                           &session.intent, intent_settings, 5};
+        stages[n++] = (struct tuned_stage){"axis-constraint", &zpt_axis_constraint_tuning_ops,
+                                           &session.constraint, constraint_settings, 3};
+        stages[n++] = session.mode == MODE_SCROLL
+                          ? (struct tuned_stage){"scroll-batcher", &zpt_scroll_batcher_tuning_ops,
+                                                 &session.batcher, batcher_settings, 2}
+                          : (struct tuned_stage){"text-nav", &zpt_text_nav_tuning_ops,
+                                                 &session.text, text_settings, 3};
+        *count = n;
+        return stages;
+    }
     stages[0] = (struct tuned_stage){"cursor-gate", &zpt_coherent_displacement_tuning_ops,
                                      &session.gate, gate_settings, 5};
     stages[1] = (struct tuned_stage){"cursor-acceleration", &zpt_cursor_acceleration_tuning_ops,
@@ -391,21 +451,51 @@ static int build_pipeline(void) {
     add_stage(0, "cursor-orientation", &zpt_orthogonal_orientation_stage_api, &session.orientation,
               NULL);
     add_stage(1, "cursor-normalize", &zpt_resolution_normalize_stage_api, NULL, NULL);
-    add_stage(2, "cursor-gate", &zpt_coherent_displacement_stage_api, &session.gate,
-              &session.gate_state);
-    add_stage(3, "cursor-acceleration", &zpt_cursor_acceleration_stage_api, &session.acceleration,
-              &session.acceleration_state);
-    add_stage(4, "cursor-transfer", &zpt_cursor_transfer_stage_api, &session.transfer, NULL);
-    add_stage(5, "cursor-quantizer", &zpt_cursor_quantizer_stage_api, NULL,
-              &session.quantizer_state);
-    add_stage(6, "cursor-coalescer", &zpt_cursor_coalescer_stage_api, &session.coalescer,
-              &session.coalescer_state);
-    session.sink = (struct zpt_sink){.stable_id = "cursor", .api = &report_api};
+    size_t stage_count = STAGE_COUNT;
+    if (session.mode == MODE_CURSOR) {
+        add_stage(2, "cursor-gate", &zpt_coherent_displacement_stage_api, &session.gate,
+                  &session.gate_state);
+        add_stage(3, "cursor-acceleration", &zpt_cursor_acceleration_stage_api,
+                  &session.acceleration, &session.acceleration_state);
+        add_stage(4, "cursor-transfer", &zpt_cursor_transfer_stage_api, &session.transfer, NULL);
+        add_stage(5, "cursor-quantizer", &zpt_cursor_quantizer_stage_api, NULL,
+                  &session.quantizer_state);
+        add_stage(6, "cursor-coalescer", &zpt_cursor_coalescer_stage_api, &session.coalescer,
+                  &session.coalescer_state);
+    } else {
+        session.intent.policy = session.policy;
+        session.intent.suppression = &session.suppression;
+        session.constraint.suppression = &session.suppression;
+        session.batcher.suppression = &session.suppression;
+        size_t next = 2;
+        if (session.unguarded_gate) {
+            /* Firmware lets every frame through this gate whatever the key
+             * presses; only the stages after it ask the guard. */
+            session.gate.suppression = NULL;
+            add_stage(next++, "axis-gate", &zpt_coherent_displacement_stage_api, &session.gate,
+                      &session.gate_state);
+        }
+        add_stage(next++, "axis-intent", &zpt_axis_intent_stage_api, &session.intent,
+                  &session.intent_state);
+        add_stage(next++, "axis-constraint", &zpt_axis_constraint_stage_api, &session.constraint,
+                  &session.constraint_state);
+        if (session.mode == MODE_SCROLL) {
+            add_stage(next++, "scroll-batcher", &zpt_scroll_batcher_stage_api, &session.batcher,
+                      &session.batcher_state);
+        } else {
+            add_stage(next++, "text-nav", &zpt_text_nav_stage_api, &session.text,
+                      &session.text_state);
+        }
+        stage_count = next;
+    }
+    session.sink = (struct zpt_sink){.stable_id = "output", .api = &report_api};
     session.pipeline = (struct zpt_pipeline){
-        .stable_id = "test-cursor",
+        .stable_id = session.mode == MODE_CURSOR   ? "test-cursor"
+                     : session.mode == MODE_SCROLL ? "test-scroll"
+                                                   : "test-text",
         .input_kind = ZPT_SIGNAL_RAW_MOTION,
         .stages = session.stage_refs,
-        .stage_count = STAGE_COUNT,
+        .stage_count = stage_count,
         .sink = &session.sink,
         .dispatch_budget = 16,
     };
@@ -438,6 +528,10 @@ static int run_deadlines(uint32_t until_ms) {
         session.now_us = flush_ms * 1000U;
         run_link(session.now_us);
         if (zpt_pipeline_flush(&session.pipeline, flush_ms, &result) < 0) {
+            return -EIO;
+        }
+        if (session.frozen) {
+            fputs("keypress guard left frozen after a flush\n", stderr);
             return -EIO;
         }
     }
@@ -515,6 +609,25 @@ static int stroke(uint32_t frames, int32_t step_x, int32_t step_y, uint32_t min_
     return 0;
 }
 
+#define STROKE_COUNT 9U
+
+/* The session's strokes: frames, step x, step y, and the gap range. */
+static const int32_t (*session_strokes(void))[5] {
+    static const int32_t cursor_strokes[STROKE_COUNT][5] = {
+        {120, 1, 0, 1500, 9000},  {60, 0, -2, 800, 3000},   {80, 14, 9, 900, 1300},
+        {30, -1, 1, 3000, 45000}, {90, -6, 3, 700, 1100},   {50, 2, 2, 1000, 20000},
+        {300, 70, -40, 400, 700}, {250, -90, 60, 400, 700}, {60, 1, 1, 1500, 4000},
+    };
+    /* Scroll and text strokes mostly follow one axis, with diagonal ones
+     * that leave the axis undecided or free. */
+    static const int32_t axis_strokes[STROKE_COUNT][5] = {
+        {120, 0, 2, 1500, 9000},  {60, 3, 0, 800, 3000},   {80, 9, 9, 900, 1300},
+        {30, -1, 4, 3000, 45000}, {90, -6, 1, 700, 1100},  {50, 0, -3, 1000, 20000},
+        {300, 4, -60, 400, 700},  {250, -80, 5, 400, 700}, {60, 2, 1, 1500, 4000},
+    };
+    return session.mode == MODE_CURSOR ? cursor_strokes : axis_strokes;
+}
+
 static int run_session(uint32_t buffer_bytes) {
     session.rng = 0x1234567U;
     session.trace = -1;
@@ -530,12 +643,8 @@ static int run_session(uint32_t buffer_bytes) {
     /* Slow aims, flicks, typing shake, and pauses past the idle timeouts;
      * the two flicks near the end read the sensor about every half
      * millisecond, with no typing, then a slow aim follows them. */
-    static const int32_t strokes[][5] = {
-        {120, 1, 0, 1500, 9000},  {60, 0, -2, 800, 3000},   {80, 14, 9, 900, 1300},
-        {30, -1, 1, 3000, 45000}, {90, -6, 3, 700, 1100},   {50, 2, 2, 1000, 20000},
-        {300, 70, -40, 400, 700}, {250, -90, 60, 400, 700}, {60, 1, 1, 1500, 4000},
-    };
-    for (size_t i = 0; ret == 0 && i < sizeof(strokes) / sizeof(strokes[0]); i++) {
+    const int32_t (*strokes)[5] = session_strokes();
+    for (size_t i = 0; ret == 0 && i < STROKE_COUNT; i++) {
         /* An A/B preview mid-stroke. */
         if (i == 4) {
             ret = ret < 0 ? ret
@@ -600,13 +709,25 @@ static void export_profile(char *out, size_t capacity) {
 }
 
 /* A tuning change landing between frames, as the service's
- * zpt_capture_settings_changed reports it. */
+ * zpt_capture_settings_changed reports it: the cursor gain, the scroll
+ * speed, or the horizontal text step. */
 static int change_settings(void) {
-    for (size_t j = 0; j < zpt_cursor_transfer_tuning_ops.parameter_count; j++) {
-        const struct zpt_tuning_parameter *parameter =
-            &zpt_cursor_transfer_tuning_ops.parameters[j];
-        if (strcmp(parameter->key, "scale-multiplier") == 0 &&
-            zpt_cursor_transfer_tuning_ops.put(&session.transfer, parameter->id, 2) < 0) {
+    const struct zpt_stage_tuning_ops *ops =
+        session.mode == MODE_CURSOR   ? &zpt_cursor_transfer_tuning_ops
+        : session.mode == MODE_SCROLL ? &zpt_scroll_batcher_tuning_ops
+                                      : &zpt_text_nav_tuning_ops;
+    void *config = session.mode == MODE_CURSOR   ? (void *)&session.transfer
+                   : session.mode == MODE_SCROLL ? (void *)&session.batcher
+                                                 : (void *)&session.text;
+    const char *key = session.mode == MODE_CURSOR   ? "scale-multiplier"
+                      : session.mode == MODE_SCROLL ? "steps-per-meter"
+                                                    : "horizontal-threshold";
+    const int32_t value = session.mode == MODE_CURSOR   ? 2
+                          : session.mode == MODE_SCROLL ? 12000
+                                                        : 1000;
+    for (size_t j = 0; j < ops->parameter_count; j++) {
+        if (strcmp(ops->parameters[j].key, key) == 0 &&
+            ops->put(config, ops->parameters[j].id, value) < 0) {
             return -EINVAL;
         }
     }
@@ -618,13 +739,40 @@ static int change_settings(void) {
     return 0;
 }
 
+/* The pipeline and axis policy a mode names; false for an unknown mode. */
+static bool set_mode(const char *mode) {
+    static const struct {
+        const char *name;
+        enum session_mode mode;
+        enum zpt_axis_policy policy;
+        bool unguarded_gate;
+    } modes[] = {
+        {"cursor", MODE_CURSOR, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"scroll", MODE_SCROLL, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"scroll-gated", MODE_SCROLL, ZPT_AXIS_POLICY_ADAPTIVE, true},
+        {"text", MODE_TEXT, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"text-horizontal", MODE_TEXT, ZPT_AXIS_POLICY_HORIZONTAL, false},
+    };
+    for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        if (strcmp(mode, modes[i].name) == 0) {
+            session.mode = modes[i].mode;
+            session.policy = modes[i].policy;
+            session.unguarded_gate = modes[i].unguarded_gate;
+            return true;
+        }
+    }
+    return false;
+}
+
 int main(int argc, char **argv) {
     const uint32_t buffer_bytes = argc > 1 ? (uint32_t)strtoul(argv[1], NULL, 0) : 4096U;
     session.credits = argc > 2 ? (uint32_t)strtoul(argv[2], NULL, 0) : 2U;
     session.interval_us = argc > 3 ? (uint32_t)strtoul(argv[3], NULL, 0) : 7500U;
     if (buffer_bytes == 0U || buffer_bytes > sizeof(session.storage) || session.credits < 2U ||
-        session.interval_us == 0U) {
-        fputs("usage: capture_session [buffer-bytes [credits >= 2 [interval-us]]]\n", stderr);
+        session.interval_us == 0U || !set_mode(argc > 4 ? argv[4] : "cursor")) {
+        fputs("usage: capture_session [buffer-bytes [credits >= 2 [interval-us "
+              "[cursor|scroll|scroll-gated|text|text-horizontal]]]]\n",
+              stderr);
         return 2;
     }
     if (run_session(buffer_bytes) < 0) {

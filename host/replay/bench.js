@@ -12,7 +12,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { validateProfile } from "./fixture.js";
+import { isStageChain, validateProfile } from "./fixture.js";
 import { METRICS } from "./quality.js";
 import { loadFixture, runFixture } from "./runner.js";
 import { scoreFixtures } from "./score.js";
@@ -59,48 +59,44 @@ const SCROLL_TEXT_KEYS = new Set(["steps-per-meter", "report-interval", "engage-
   "release-ratio", "window", "discard-unclassified", "fold-interval", "horizontal-threshold",
   "vertical-threshold"]);
 
-/* A profile target that matches no cursor stage would change nothing and
- * leave every score at the baseline. Scroll and text targets are expected
- * in a full tuner export and only warned about; other unmatched targets
- * are warned about too, unless none of the profile's cursor targets
- * matches anything, which is an error. */
+/* A profile applies to stage-chain fixtures (cursor, and recorded scroll
+ * and text pipelines) by stage stable id. A profile none of whose targets
+ * matches a stage would change nothing and leave every score at the
+ * baseline, which is an error. Unmatched targets are warned about; scroll
+ * and text ones are expected in a full tuner export when no recorded
+ * scroll or text trace is scored. */
 function checkProfile(profile, fixtures, path) {
-  const stableIds = new Set(fixtures.filter(({ fixture }) => fixture.version === 2 &&
-    fixture.processor.kind === "cursor-pipeline")
-    .flatMap(({ fixture }) => fixture.processor.stages.map((stage) => stage.stableId)));
+  const chains = fixtures.filter(({ fixture }) => isStageChain(fixture));
+  const stableIds = new Set(chains.flatMap(({ fixture }) =>
+    fixture.processor.stages.map((stage) => stage.stableId)));
   const unmatched = profile.targets.filter((target) => !stableIds.has(target.stableId));
-  const scrollText = unmatched.filter((target) =>
-    target.parameters.some(({ key }) => SCROLL_TEXT_KEYS.has(key)));
-  const cursorTargets = profile.targets.filter((target) => !scrollText.includes(target));
-  const unmatchedCursor = unmatched.filter((target) => !scrollText.includes(target));
-  if (cursorTargets.length > 0 && unmatchedCursor.length === cursorTargets.length) {
-    throw new Error(`${path}: no target matches a cursor stage in any fixture ` +
-      `(${unmatchedCursor.map((target) => target.stableId).join(", ")}); known stages: ` +
+  if (unmatched.length === profile.targets.length) {
+    throw new Error(`${path}: no target matches a stage in any fixture ` +
+      `(${unmatched.map((target) => target.stableId).join(", ")}); known stages: ` +
       `${[...stableIds].sort().join(", ")}`);
   }
-  if (cursorTargets.length === 0) {
-    throw new Error(`${path}: the profile has no cursor targets; --profile only changes ` +
-      "cursor fixtures");
-  }
-  const shaping = profile.targets.filter((target) => !scrollText.includes(target) &&
+  const shaping = profile.targets.filter((target) => stableIds.has(target.stableId) &&
     target.parameters.some(({ key }) => /^(curve-|scale-)/.test(key)));
   if (shaping.length) {
     console.warn(`note: ${path} sets curve or gain keys; the benchmark scores how faithfully ` +
       "the pipeline follows its curve and gain, not whether they feel right. Check curve " +
       "changes on the keyboard (docs/trace-benchmark.md).");
   }
-  for (const target of unmatchedCursor) {
+  const scrollText = unmatched.filter((target) =>
+    target.parameters.some(({ key }) => SCROLL_TEXT_KEYS.has(key)));
+  for (const target of unmatched.filter((candidate) => !scrollText.includes(candidate))) {
     console.warn(`warning: ${path}: target ${target.stableId} matches no stage in any ` +
       "fixture and is ignored");
   }
   if (scrollText.length) {
-    console.warn(`warning: ${path}: scroll and text targets are ignored ` +
-      `(${scrollText.map((target) => target.stableId).join(", ")}); --profile only changes ` +
-      "cursor fixtures");
+    console.warn(`warning: ${path}: scroll and text targets match no recorded scroll or ` +
+      `text pipeline and are ignored (${scrollText.map((target) => target.stableId)
+        .join(", ")})`);
   }
-  const others = fixtures.filter(({ fixture }) => fixture.processor.kind !== "cursor-pipeline");
-  if (others.length) {
-    console.warn(`note: --profile doesn't change the ${others.length} scroll and text fixtures`);
+  const others = fixtures.length - chains.length;
+  if (others) {
+    console.warn(`note: --profile doesn't change the ${others} composed scroll, text, and ` +
+      "noise fixtures, which keep their own settings");
   }
 }
 

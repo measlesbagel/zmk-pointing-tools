@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 
 /*
- * Replays motion through a cursor pipeline assembled from the input.
+ * Replays motion through a stage chain assembled from the input: a cursor,
+ * scroll, or text-navigation pipeline, told apart by what its last stage
+ * sends (pointer deltas, scroll steps, or actions).
  *
  * Input is line based. A header names the source and the stages in order,
  * then events follow:
@@ -9,9 +11,16 @@
  *   R <cpi>                 sensor resolution of every frame
  *   L usb|ble               link the coalescer reads
  *   S <type> <stable-id>    append a stage: orientation, normalize, gate,
- *                           acceleration, transfer, quantizer, coalescer
+ *                           acceleration, transfer, quantizer, coalescer,
+ *                           axis-intent, axis-constraint, scroll-batcher,
+ *                           text-nav
  *   P <key> <value>         set a parameter of the last stage, by its
- *                           tuning key (the tuner profile's key)
+ *                           tuning key (the tuner profile's key); the
+ *                           gate, axis-intent, axis-constraint and
+ *                           scroll-batcher also take
+ *                           suppress-after-keypress-ms (0: no keypress
+ *                           guard), and axis-intent takes policy (0 free,
+ *                           1 adaptive, 2 horizontal, 3 vertical)
  *   F                       deadlines run only at F events (a recording)
  *   E                       end of header
  *   M <t_us> <x> <y> <span_us> [late_ms]  motion arriving at t_us; span 0
@@ -28,12 +37,22 @@
  * header asks for recorded flushes: then they run only where a recording
  * saw them run, and nothing runs after the last event.
  *
- * Output:
+ * Output of a cursor chain:
  *   D <t_ms> <x> <y> <remainder_x> <remainder_y> <clipped> <t_us> <speed> <gain>
  *     per input frame; speed is the acceleration stage's Q16 mm/s
  *     estimate and gain the Q16 sensitivity it applied, both -1 when the
  *     frame did not reach that stage
  *   O <t_ms> <x> <y> <t_us>  per cursor report
+ *
+ * Output of a scroll or text-navigation chain:
+ *   D <t_ms> <x> <y> <intent> <suppressed> <t_us>
+ *     per input frame; intent is the axis-intent stage's estimate after
+ *     the frame (0 undecided, 1 free, 2 horizontal, 3 vertical; -1
+ *     without that stage) and suppressed whether the keypress guard held
+ *     the frame
+ *   O <t_ms> <x> <y> <t_us>    per scroll report, in wheel steps
+ *   O <t_ms> <direction> <t_us> per text-navigation step (0 left, 1 right,
+ *                              2 up, 3 down)
  */
 
 #include <errno.h>
@@ -45,6 +64,8 @@
 
 #include <zmk/pointing_tools/core/pipeline.h>
 #include <zmk/pointing_tools/policy/suppression.h>
+#include <zmk/pointing_tools/stage/axis_constraint.h>
+#include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/cursor_acceleration.h>
 #include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/cursor_quantizer.h>
@@ -52,7 +73,9 @@
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
 #include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/resolution_normalize.h>
+#include <zmk/pointing_tools/stage/scroll_batcher.h>
 #include <zmk/pointing_tools/stage/stage_tuning.h>
+#include <zmk/pointing_tools/stage/text_nav.h>
 
 #define MAX_STAGES 8
 #define MAX_ID 64
@@ -66,11 +89,17 @@ enum stage_type {
     STAGE_TRANSFER,
     STAGE_QUANTIZER,
     STAGE_COALESCER,
+    STAGE_INTENT,
+    STAGE_CONSTRAINT,
+    STAGE_BATCHER,
+    STAGE_TEXT_NAV,
     STAGE_TYPE_COUNT,
 };
 
 static const char *const stage_names[STAGE_TYPE_COUNT] = {
-    "orientation", "normalize", "gate", "acceleration", "transfer", "quantizer", "coalescer",
+    "orientation",     "normalize",      "gate",      "acceleration",
+    "transfer",        "quantizer",      "coalescer", "axis-intent",
+    "axis-constraint", "scroll-batcher", "text-nav",
 };
 
 union stage_config {
@@ -79,6 +108,10 @@ union stage_config {
     struct zpt_cursor_acceleration_config acceleration;
     struct zpt_cursor_transfer_config transfer;
     struct zpt_cursor_coalescer_config coalescer;
+    struct zpt_axis_intent_stage_config intent;
+    struct zpt_axis_constraint_config constraint;
+    struct zpt_scroll_batcher_config batcher;
+    struct zpt_text_nav_config text_nav;
 };
 
 union stage_state {
@@ -86,6 +119,10 @@ union stage_state {
     struct zpt_cursor_acceleration_state acceleration;
     struct zpt_cursor_quantizer_state quantizer;
     struct zpt_cursor_coalescer_state coalescer;
+    struct zpt_axis_intent_stage_state intent;
+    struct zpt_axis_constraint_state constraint;
+    struct zpt_scroll_batcher_state batcher;
+    struct zpt_text_nav_state text_nav;
 };
 
 struct replay_stage {
@@ -94,6 +131,8 @@ struct replay_stage {
     union stage_config config;
     union stage_state state;
     uint32_t parameters_set[PARAMETER_SET_WORDS];
+    /* The keypress window this stage's guard has; 0 without a guard. */
+    uint16_t suppress_after_keypress_ms;
 };
 
 struct replay {
@@ -115,6 +154,9 @@ struct replay {
     const struct zpt_cursor_acceleration_config *acceleration;
     zpt_fixed_t frame_speed;
     bool have_frame_speed;
+    /* A scroll or text chain, not a cursor one: its frames print the axis
+     * intent instead of the cursor stages' state. */
+    bool axis_chain;
 };
 
 /* The coalescer reads the link through a plain function pointer. */
@@ -139,6 +181,14 @@ static const struct zpt_stage_tuning_ops *tuning_ops(enum stage_type type) {
         return &zpt_cursor_transfer_tuning_ops;
     case STAGE_COALESCER:
         return &zpt_cursor_coalescer_tuning_ops;
+    case STAGE_INTENT:
+        return &zpt_axis_intent_tuning_ops;
+    case STAGE_CONSTRAINT:
+        return &zpt_axis_constraint_tuning_ops;
+    case STAGE_BATCHER:
+        return &zpt_scroll_batcher_tuning_ops;
+    case STAGE_TEXT_NAV:
+        return &zpt_text_nav_tuning_ops;
     default:
         return NULL;
     }
@@ -146,10 +196,17 @@ static const struct zpt_stage_tuning_ops *tuning_ops(enum stage_type type) {
 
 static const struct zpt_stage_api *stage_api(enum stage_type type) {
     static const struct zpt_stage_api *const apis[STAGE_TYPE_COUNT] = {
-        &zpt_orthogonal_orientation_stage_api, &zpt_resolution_normalize_stage_api,
-        &zpt_coherent_displacement_stage_api,  &zpt_cursor_acceleration_stage_api,
-        &zpt_cursor_transfer_stage_api,        &zpt_cursor_quantizer_stage_api,
+        &zpt_orthogonal_orientation_stage_api,
+        &zpt_resolution_normalize_stage_api,
+        &zpt_coherent_displacement_stage_api,
+        &zpt_cursor_acceleration_stage_api,
+        &zpt_cursor_transfer_stage_api,
+        &zpt_cursor_quantizer_stage_api,
         &zpt_cursor_coalescer_stage_api,
+        &zpt_axis_intent_stage_api,
+        &zpt_axis_constraint_stage_api,
+        &zpt_scroll_batcher_stage_api,
+        &zpt_text_nav_stage_api,
     };
     return apis[type];
 }
@@ -163,17 +220,26 @@ static bool replay_suppressed(void *context, const struct zpt_signal *signal, ui
 
 static int capture_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     const struct replay *replay = sink->state;
-    if (signal->kind != ZPT_SIGNAL_POINTER_DELTA) {
+    switch (signal->kind) {
+    case ZPT_SIGNAL_POINTER_DELTA:
+    case ZPT_SIGNAL_SCROLL_STEPS:
+        printf("O\t%" PRIu32 "\t%d\t%d\t%" PRIu32 "\n", signal->metadata.observed_at_ms,
+               signal->data.delta.x, signal->data.delta.y, replay->now_us);
+        return 0;
+    case ZPT_SIGNAL_ACTION:
+        printf("O\t%" PRIu32 "\t%" PRIu32 "\t%" PRIu32 "\n", signal->metadata.observed_at_ms,
+               signal->data.action.id, replay->now_us);
+        return 0;
+    default:
         return -EPROTOTYPE;
     }
-    printf("O\t%" PRIu32 "\t%d\t%d\t%" PRIu32 "\n", signal->metadata.observed_at_ms,
-           signal->data.delta.x, signal->data.delta.y, replay->now_us);
-    return 0;
 }
 
 static const struct zpt_sink_api capture_api = {
-    .type_id = "pointer-capture",
-    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_POINTER_DELTA),
+    .type_id = "chain-capture",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_POINTER_DELTA) |
+                      ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_SCROLL_STEPS) |
+                      ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_ACTION),
     .emit = capture_emit,
 };
 
@@ -196,8 +262,8 @@ static int add_stage(struct replay *replay, const char *type_name, const char *s
             struct replay_stage *stage = &replay->replay_stages[replay->stage_count++];
             stage->type = (enum stage_type)type;
             memcpy(stage->stable_id, stable_id, id_length + 1U);
-            if (type == STAGE_GATE) {
-                stage->config.gate.suppression = &replay->suppression;
+            if (type == STAGE_INTENT) {
+                stage->config.intent.policy = ZPT_AXIS_POLICY_ADAPTIVE;
             } else if (type == STAGE_COALESCER) {
                 stage->config.coalescer.current_link = current_link;
             }
@@ -243,6 +309,26 @@ static int set_tuned(struct replay_stage *stage, const struct zpt_stage_tuning_o
     return -EINVAL;
 }
 
+static bool takes_guard(enum stage_type type) {
+    return type == STAGE_GATE || type == STAGE_INTENT || type == STAGE_CONSTRAINT ||
+           type == STAGE_BATCHER;
+}
+
+/* The keypress guard is a devicetree reference, not a tuning value. Every
+ * stage that has one shares the pipeline's one guard. */
+static int set_guard(struct replay *replay, struct replay_stage *stage, int32_t value) {
+    if (value < 0 || value > UINT16_MAX ||
+        (value > 0 && replay->suppress_after_keypress_ms > 0U &&
+         replay->suppress_after_keypress_ms != (uint16_t)value)) {
+        return fail("suppress-after-keypress-ms is out of range or differs between stages");
+    }
+    stage->suppress_after_keypress_ms = (uint16_t)value;
+    if (value > 0) {
+        replay->suppress_after_keypress_ms = (uint16_t)value;
+    }
+    return 0;
+}
+
 static int set_parameter(struct replay *replay, const char *key, int32_t value) {
     if (replay->stage_count == 0U) {
         return fail("parameter before any stage");
@@ -251,12 +337,14 @@ static int set_parameter(struct replay *replay, const char *key, int32_t value) 
     if (stage->type == STAGE_ORIENTATION) {
         return set_orientation(&stage->config.orientation, key, value);
     }
-    /* The keypress guard is a devicetree reference, not a tuning value. */
-    if (stage->type == STAGE_GATE && strcmp(key, "suppress-after-keypress-ms") == 0) {
-        if (value < 0 || value > UINT16_MAX) {
-            return fail("suppress-after-keypress-ms is out of range");
+    if (strcmp(key, "suppress-after-keypress-ms") == 0 && takes_guard(stage->type)) {
+        return set_guard(replay, stage, value);
+    }
+    if (stage->type == STAGE_INTENT && strcmp(key, "policy") == 0) {
+        if (value < ZPT_AXIS_POLICY_FREE || value > ZPT_AXIS_POLICY_VERTICAL) {
+            return fail("policy must be 0 to 3");
         }
-        replay->suppress_after_keypress_ms = (uint16_t)value;
+        stage->config.intent.policy = (enum zpt_axis_policy)value;
         return 0;
     }
     const struct zpt_stage_tuning_ops *ops = tuning_ops(stage->type);
@@ -344,12 +432,31 @@ static int build_pipeline(struct replay *replay) {
             .config = &source->config,
             .state = &source->state,
         };
+        const struct zpt_suppression_policy *guard =
+            source->suppress_after_keypress_ms > 0U ? &replay->suppression : NULL;
+        /* Only stages whose own window is set reference the guard, as in
+         * firmware, where a stage without a suppression property ignores
+         * key presses whatever its neighbours do. */
+        if (source->type == STAGE_GATE) {
+            source->config.gate.suppression = guard;
+        } else if (source->type == STAGE_INTENT) {
+            source->config.intent.suppression = guard;
+        } else if (source->type == STAGE_CONSTRAINT) {
+            source->config.constraint.suppression = guard;
+        } else if (source->type == STAGE_BATCHER) {
+            source->config.batcher.suppression = guard;
+        }
         if (source->type == STAGE_ACCELERATION) {
             replay->acceleration = &source->config.acceleration;
             replay->stages[i].observer.frame = record_speed;
             replay->stages[i].observer.user_data = replay;
         }
         replay->stage_refs[i] = &replay->stages[i];
+    }
+    if (replay->stage_count > 0U) {
+        const enum zpt_signal_kind output =
+            replay->stages[replay->stage_count - 1U].api->output_kind;
+        replay->axis_chain = output == ZPT_SIGNAL_SCROLL_STEPS || output == ZPT_SIGNAL_ACTION;
     }
     replay->sink = (struct zpt_sink){
         .stable_id = "capture",
@@ -409,8 +516,16 @@ static int push_motion(struct replay *replay, uint32_t t_us, uint32_t t_ms, int3
     struct zpt_pipeline_result result;
     replay->now_us = t_us;
     replay->have_frame_speed = false;
+    /* The guard's view of this frame, before the push records anything. */
+    const bool suppressed = replay_suppressed(replay, &signal, t_ms);
     if (zpt_pipeline_push(&replay->pipeline, &signal, &result) < 0) {
         return fail("pipeline push failed");
+    }
+    if (replay->axis_chain) {
+        const struct replay_stage *intent = find_stage(replay, STAGE_INTENT);
+        printf("D\t%" PRIu32 "\t%" PRId32 "\t%" PRId32 "\t%d\t%d\t%" PRIu32 "\n", t_ms, x, y,
+               intent != NULL ? (int)intent->state.intent.estimator.intent : -1, suppressed, t_us);
+        return 0;
     }
     const struct replay_stage *quantizer = find_stage(replay, STAGE_QUANTIZER);
     const zpt_fixed_t speed = replay->have_frame_speed ? replay->frame_speed : -1;

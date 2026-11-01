@@ -85,6 +85,42 @@ export function parseTextMetrics(output, fixture) {
   };
 }
 
+/* Runner output line lengths of a scroll or text stage chain: decisions
+ * (t_ms, x, y, intent, suppressed, t_us), then reports. */
+export const chainLineLengths = (fixture) =>
+  [6, fixture.processor.kind === "text-pipeline" ? 3 : 4];
+
+/* Metrics of a recorded scroll or text pipeline from the chain runner. */
+export function parseChainMetrics(output, fixture) {
+  const { decisions, outputs } = parseLines(output, fixture, ...chainLineLengths(fixture));
+  const intents = decisions.filter((decision) => decision[3] >= 0).map((decision) => decision[3]);
+  const intentFrames = Object.fromEntries(INTENTS.map((intent) => [intent, 0]));
+  for (const intent of intents) intentFrames[INTENTS[intent]] += 1;
+  const metrics = {
+    inputFrames: decisions.length,
+    durationMs: durationMs(fixture),
+    outputFrames: outputs.length,
+    outputCadence: outputCadence(outputs),
+  };
+  if (fixture.processor.kind === "text-pipeline") {
+    const stepNames = ["left", "right", "up", "down"];
+    const steps = Object.fromEntries(stepNames.map((name) => [name, 0]));
+    for (const emitted of outputs) steps[stepNames[emitted[1]]] += 1;
+    steps.total = outputs.length;
+    metrics.steps = steps;
+  } else {
+    metrics.horizontal = axisMetrics(outputs, 1);
+    metrics.vertical = axisMetrics(outputs, 2);
+  }
+  return {
+    ...metrics,
+    intentFrames,
+    intentTransitions: intents.slice(1).filter((intent, index) => intent !== intents[index])
+      .length,
+    suppressedFrames: decisions.filter((decision) => decision[4] !== 0).length,
+  };
+}
+
 export function parseCursorMetrics(output, fixture) {
   const { decisions, outputs } = parseLines(output, fixture, 9, 4);
   return {

@@ -51,7 +51,9 @@ test("flick lag compares input and output progress", () => {
 });
 
 test("axis metrics count decided frames and sideways steps", () => {
-  const fixture = { version: 2, id: "s", source, processor: { kind: "composed-scroll" },
+  /* 20000 steps per metre at 254 CPI is 2 steps per count. */
+  const fixture = { version: 2, id: "s", source,
+    processor: { kind: "composed-scroll", settings: { stepsPerMeter: 20000 } },
     events: [0, 1, 2, 3, 4, 5].map((i) => ["motion", i ? 8000 : 0, 0, 3]),
     truth: { strokes: [{ id: "v", activity: "scroll", intended: false, axis: "vertical",
       startUs: 0, endUs: 50000 }] } };
@@ -64,9 +66,29 @@ test("axis metrics count decided frames and sideways steps", () => {
   assert.equal(stroke.metrics.axisLockPercent, 80);
   assert.equal(stroke.metrics.axisSwitches, 2);
   assert.equal(stroke.metrics.sidewaysLeakPercent, 12.5);
-  assert.equal(stroke.metrics.unintendedOutput, 8);
+  /* Eight output steps are four ball counts at 2 steps per count. */
+  assert.ok(Math.abs(stroke.metrics.unintendedOutput - 4) < 1e-9);
   assert.deepEqual(aggregate([stroke, { metrics: { axisSwitches: 0 } }]).axisSwitches,
     { value: 1, strokes: 2 });
+});
+
+test("axis output is judged in the pipeline's orientation, on a text stroke's main axis", () => {
+  /* The ball moves 30 counts to -x and 5 to +y; an inverted x mounting
+   * makes that rightward. At 254 CPI a 1000 um threshold is 10 counts per
+   * step, so the ideal is three steps right and none up or down. */
+  const fixture = { version: 2, id: "t", source, processor: { kind: "text-pipeline", stages: [
+    { type: "orientation", stableId: "o", settings: { "swap-xy": 0, "invert-x": 1, "invert-y": 0 } },
+    { type: "text-nav", stableId: "n", settings: { "horizontal-threshold": 1000,
+      "vertical-threshold": 1000, "idle-timeout": 30 } },
+  ] }, events: [0, 1, 2].map((i) => ["motion", i ? 10000 : 0, -10, i === 1 ? 5 : 0]),
+  truth: { strokes: [{ id: "s", activity: "text", intended: true, startUs: 0, endUs: 30000,
+    path: { intervalUs: 10000, points: [[0, 0], [-10, 0], [-20, 5], [-30, 5]] } }] } };
+  const decisions = [0, 1, 2].map((i) => `D\t${10 * i}\t0\t0\t2\t0\t${10000 * i}`);
+  const score = (direction) => scoreFixture(fixture, [...decisions,
+    ...[0, 1, 2].map((i) => `O\t${10 * i}\t${direction}\t${10000 * i}`)].join("\n"))[0].metrics;
+  /* Three steps right are exact; three left are twice the intended length off. */
+  assert.ok(Math.abs(score(1).outputErrorPercent) < 1e-9);
+  assert.ok(Math.abs(score(0).outputErrorPercent - 200) < 1e-9);
 });
 
 test("ideal cursor output follows the replayed curve and gain but not orientation", () => {

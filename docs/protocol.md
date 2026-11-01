@@ -526,9 +526,15 @@ router runs it, firmware resets its stages so they start where replay starts,
 and sends an entered record. The reset is visible: it drops the quantizer's
 sub-pixel remainder and up to one report interval of motion the coalescer
 holds, returns the motion gate to idle, so motion already moving must
-qualify again, and restarts the acceleration speed estimate. Pipelines that
-aren't replayable are never reset; their recordings start at the next
-entered record. Every request receives:
+qualify again, and restarts the acceleration speed estimate; in a scroll or
+text pipeline it forgets the axis intent, the undecided motion the axis
+constraint holds, the scroll batcher's pending motion and sub-step
+remainder, and the travel toward the next text step. Pipelines that aren't
+replayable are never reset; their recordings start at the next entered
+record. A pipeline is replayable when the host knows every stage (the
+cursor stages, `axis-intent`, `axis-constraint`, `scroll-batcher`, and
+`text-nav`) and the stages that take a keypress guard share one that
+capture can freeze. Every request receives:
 
 ```text
 capture-schema-version:u8      /* 2 */
@@ -565,9 +571,11 @@ repeat stage-count times:
 
 Stages are in pipeline order. A stage's tunable settings come from tuning
 discovery under its stable id; the description adds only what tuning doesn't
-publish: an orientation's `swap-xy`, `invert-x`, and `invert-y`, and a motion
-gate's `suppress-after-keypress-ms` (the keypress guard it references, 0 for
-none). Unknown ids fail with an ordinary tuning result carrying request type
+publish: an orientation's `swap-xy`, `invert-x`, and `invert-y`; an axis
+intent's `policy` (`0` free, `1` adaptive, `2` horizontal, `3` vertical); and
+the `suppress-after-keypress-ms` of a motion gate, axis intent, axis
+constraint, or scroll batcher (the window of the keypress guard it
+references, 0 for none). Unknown ids fail with an ordinary tuning result carrying request type
 `0x11` and status unknown target.
 
 `settings-hash` identifies the tuning values the pipeline runs now: the sum,
@@ -640,10 +648,12 @@ firmware.
   next rest. `link` is `0` USB, `1` Bluetooth, or
   `0xff` without a cursor coalescer.
 - **Key press.** The latest key press the pipeline's keypress guard holds,
-  at the time it holds, recorded before the first frame it decides. The
-  guard is read once per frame and holds that view until the frame is done,
-  so a key press landing while a frame runs counts from the next frame, in
-  firmware and in replay alike. The first frame of a recording records the
+  at the time it holds, recorded before the first frame or flush it
+  decides. The guard is read once per frame and once per flush and holds
+  that view until the frame or flush is done, so a key press landing while
+  one runs counts from the next, in firmware and in replay alike. Flushes
+  need this too: the axis constraint's deadline hands the motion it held to
+  the scroll batcher, which asks the guard. The first frame of a recording records the
   guard's key press from before the recording; only a guard that capture can
   freeze this way is recorded.
 - **Entered** and **left.** The router activated or deactivated the pipeline;
@@ -700,15 +710,21 @@ same goes for a settings change, a CPI preview, and a switch of report link.
 The pipeline keeps running unchanged, since resetting it mid-motion would
 change how the cursor feels. Firmware resyncs at the next rest instead: at the first
 frame after at least 40 ms without a frame or flush (the acceleration
-stage's restart gap, or the coalescer's report interval if longer) and with
-no stage deadline pending, it resets the pipeline and sends an entered
+stage's restart gap, or longer if a stage remembers motion longer: the
+coalescer's or scroll batcher's report interval, or the idle timeout of the
+axis intent, axis constraint (or its fold interval), or text navigation) and
+with no stage deadline pending, it resets the pipeline and sends an entered
 record, and a new trace starts there. By then the motion gate is idle with
 nothing pending, the coalescer holds nothing and its interval has passed,
 and the acceleration stage restarts its speed estimate unless the next frame
 carries a sensor span shorter than 40 ms. The reset therefore changes only
 what a rest leaves behind: the quantizer's sub-pixel remainder (less than
 one count) and, for such a frame, the speed estimate the stage would have
-blended it into. Frames between the drop or change and the resync don't
+blended it into. In a scroll or text pipeline the reset clears the scroll
+batcher's sub-step remainder and the axis intent estimator; after the rest
+the estimator would have started over anyway unless its idle timeout is 0
+(never forgets), so only the remainder and that case differ from firmware
+that never resynced. Frames between the drop or change and the resync don't
 replay. Only replayable pipelines resync; for others the recording replays
 up to the first drop or change.
 
@@ -725,7 +741,7 @@ node host/replay/capture.js --stream capture.bin --profile a.json \
 node host/replay/bench.js --fixtures <dir with sets of traces>
 ```
 
-`capture.js` writes one cursor-pipeline trace per stretch the pipeline ran
+`capture.js` writes one trace per stretch the pipeline ran
 unchanged, from an entered record to a left record, a settings change, a
 drop, or a change of source, resolution, or link, and warns for each early
 end and for a recording whose first records were dropped. Each trace uses
@@ -737,11 +753,15 @@ deadlines where firmware ran them. An event recorded after a later one, such
 as a frame after a late flush, moves to that one's time and carries how many
 milliseconds earlier its stages saw it as a trailing `late` field (see
 [`trace-benchmark.md`](trace-benchmark.md#fixture-format-v2)), so replay hands
-every stage the millisecond firmware did. Key presses older than the gate's
-`suppress-after-keypress-ms` when the trace starts are left out, and so are
-all key presses for a pipeline without a guard. A clipped span becomes a 40
-ms span, which restarts the acceleration speed estimate as the clipped flag
-does in firmware. Only cursor pipelines convert so far.
+every stage the millisecond firmware did. Key presses older than the
+guard's `suppress-after-keypress-ms` when the trace starts are left out, and
+so are all key presses for a pipeline without a guard. A clipped span
+becomes a 40 ms span, which restarts the acceleration speed estimate as the
+clipped flag does in firmware. A pipeline ending in a scroll batcher becomes
+a `scroll-pipeline` trace and one ending in text navigation a
+`text-pipeline` trace; ground truth comes from optional labels and, on request, from the motion itself (see
+[`trace-benchmark.md`](trace-benchmark.md#recorded-traces-ground-truth));
+every other pipeline becomes a `cursor-pipeline` trace.
 
 The CTest `capture_replay` checks that this is faithful: it records a
 synthetic session through the firmware's cursor stages and capture tap
@@ -753,7 +773,12 @@ and with a 512-byte buffer that fills and drops records; every record must
 arrive in order or show as a counted gap, and the tap resyncs after each
 change and drop. It converts the capture with both profiles and
 requires each trace's replay to send exactly the reports the stages sent
-during it. The ztest `capture_records_pipeline_input` checks that the
+during it. `capture_replay_scroll` and `capture_replay_text` do the same
+through the firmware's axis intent, axis constraint, and scroll batcher or
+text navigation under one keypress guard, with key presses also landing
+while a flush runs; their `_full_buffer` variants drop records, and
+`capture_replay_text_horizontal` locks the axis so the recorded policy has
+to reach replay. The ztest `capture_records_pipeline_input` checks that the
 telemetry service starts a recording with the same records, keeps and
 resends batches the link refuses, counts a refused full batch, and resyncs
 after a drop and after a settings change.
