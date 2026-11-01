@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { encodeRunnerInput, runnerFor, validateFixture } from "./fixture.js";
 import {
   compareMetrics,
+  parseChainMetrics,
   parseCursorMetrics,
   parseNoiseFilterMetrics,
   parseScrollMetrics,
@@ -18,7 +19,7 @@ export function loadFixture(path) {
 }
 
 /* Run a fixture through its native runner and return the raw output. An
- * override profile replaces cursor stage settings by stable id. */
+ * override profile replaces stage-chain settings by stable id. */
 export function runFixture(fixture, runners, overrideProfile = null) {
   const result = spawnSync(resolve(runners[runnerFor(fixture)]), [], {
     input: encodeRunnerInput(fixture, overrideProfile),
@@ -40,7 +41,9 @@ export function replayFixture(path, runners, update = false) {
       ? parseTextMetrics(output, fixture)
       : fixture.processor.kind === "cursor-pipeline"
         ? parseCursorMetrics(output, fixture)
-        : parseNoiseFilterMetrics(output, fixture);
+        : ["scroll-pipeline", "text-pipeline"].includes(fixture.processor.kind)
+          ? parseChainMetrics(output, fixture)
+          : parseNoiseFilterMetrics(output, fixture);
   if (update) {
     fixture.expect = metrics;
     writeFileSync(path, `${JSON.stringify(fixture, null, 2)}\n`);

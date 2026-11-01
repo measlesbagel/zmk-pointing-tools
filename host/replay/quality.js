@@ -6,7 +6,7 @@
  */
 
 import { eventTimesUs, resolveCursorStages } from "./fixture.js";
-import { parseLines } from "./metrics.js";
+import { chainLineLengths, parseLines } from "./metrics.js";
 
 /* Metric names in report order, and whether a higher value is better. */
 export const METRICS = {
@@ -43,7 +43,9 @@ export function parseTrace(fixture, output) {
     .map((event, index) => ({ event, timeUs: times[index] }))
     .filter(({ event }) => event[0] === "motion");
   const kind = fixture.processor.kind;
-  const shape = kind === "cursor-pipeline" ? [9, 4] : kind === "composed-scroll" ? [12, 3] : [5, 2];
+  const chain = kind === "scroll-pipeline" || kind === "text-pipeline";
+  const shape = kind === "cursor-pipeline" ? [9, 4] : kind === "composed-scroll" ? [12, 3]
+    : chain ? chainLineLengths(fixture) : [5, 2];
   const { decisions, outputs } = parseLines(output, fixture, ...shape);
   if (decisions.length !== motions.length) {
     throw new Error(`${fixture.id}: ${decisions.length} decisions for ${motions.length} frames`);
@@ -55,13 +57,16 @@ export function parseTrace(fixture, output) {
     ...(kind === "cursor-pipeline"
       ? { speed: decision[7] < 0 ? null : decision[7] / 65536,
         gain: decision[8] < 0 ? null : decision[8] / 65536 }
-      : { intent: decision[1] }),
+      : chain ? { intent: decision[3] < 0 ? null : decision[3] } : { intent: decision[1] }),
   }));
+  /* Chain runner reports carry their microsecond time last. */
   const reports = outputs.map((report) => {
-    if (kind === "cursor-pipeline") return { tUs: report[3], x: report[1], y: report[2] };
+    if (kind === "cursor-pipeline" || kind === "scroll-pipeline") {
+      return { tUs: report.at(-1), x: report[1], y: report[2] };
+    }
     if (kind === "composed-scroll") return { tUs: report[0] * 1000, x: report[1], y: report[2] };
     const [x, y] = TEXT_DIRECTIONS[report[1]];
-    return { tUs: report[0] * 1000, x, y };
+    return { tUs: kind === "text-pipeline" ? report[2] : report[0] * 1000, x, y };
   });
   return { frames, reports };
 }
@@ -233,8 +238,15 @@ function flickLag(frames, reports) {
   return mean(input.map((time, index) => (output[index] - time) / 1000));
 }
 
+/* Axis metrics against the stroke's intended axis. Without one, as for an
+ * unlabelled recording, only axis switches apply: they need no truth. */
 function axisMetrics(stroke, frames, reports) {
-  const decided = frames.filter((frame) => frame.intent !== INTENT_UNDECIDED);
+  const decided = frames.filter((frame) => frame.intent !== null &&
+    frame.intent !== INTENT_UNDECIDED);
+  if (stroke.axis === undefined) {
+    return decided.length ? { axisSwitches: decided.slice(1)
+      .filter((frame, index) => frame.intent !== decided[index].intent).length } : {};
+  }
   const along = stroke.axis === "horizontal" ? "x" : "y";
   const across = stroke.axis === "horizontal" ? "y" : "x";
   const alongSteps = reports.reduce((total, report) => total + Math.abs(report[along]), 0);
@@ -287,7 +299,7 @@ function strokeMetrics(stroke, frames, reports, fixture, profile) {
       total + (cursor ? Math.hypot(report.x, report.y)
         : Math.abs(report.x) + Math.abs(report.y)), 0) / scale);
   }
-  if (!cursor && stroke.axis) {
+  if (!cursor && (stroke.axis || ["scroll", "text"].includes(stroke.activity))) {
     for (const [name, value] of Object.entries(axisMetrics(stroke, frames, reports))) {
       set(name, value);
     }

@@ -7,9 +7,26 @@ export const PROFILE_VERSION = 1;
 
 const MAX_TRACE_US = 0xffffffff;
 const POLICIES = { free: 0, adaptive: 1, horizontal: 2, vertical: 3 };
-const KINDS = ["composed-scroll", "composed-text", "composed-noise", "cursor-pipeline"];
+const KINDS = ["composed-scroll", "composed-text", "composed-noise", "cursor-pipeline",
+  "scroll-pipeline", "text-pipeline"];
 export const CURSOR_STAGE_TYPES = ["orientation", "normalize", "gate", "acceleration",
   "transfer", "quantizer", "coalescer"];
+/* Stage types of each stage-chain kind, and the stage it must end with.
+ * The chain runner tells the kinds apart by that last stage. */
+const INPUT_STAGE_TYPES = ["orientation", "normalize", "gate"];
+const AXIS_STAGE_TYPES = ["axis-intent", "axis-constraint"];
+const CHAIN_KINDS = {
+  "cursor-pipeline": { types: CURSOR_STAGE_TYPES },
+  "scroll-pipeline": { types: [...INPUT_STAGE_TYPES, ...AXIS_STAGE_TYPES, "scroll-batcher"],
+    last: "scroll-batcher" },
+  "text-pipeline": { types: [...INPUT_STAGE_TYPES, ...AXIS_STAGE_TYPES, "text-nav"],
+    last: "text-nav" },
+};
+
+/* A version 2 fixture whose processor is a stage chain: cursor, scroll, or
+ * text pipeline stages with their settings, replayed by the chain runner. */
+export const isStageChain = (fixture) =>
+  fixture.version === 2 && fixture.processor.kind in CHAIN_KINDS;
 const STROKE_ACTIVITIES = ["slow-aim", "tremor", "flick", "aim", "scroll", "text",
   "post-typing"];
 
@@ -120,8 +137,9 @@ function profileValues(profile, stableId) {
   return Object.fromEntries((target?.parameters ?? []).map(({ key, value }) => [key, value]));
 }
 
-/* The cursor stages with every settings source merged: inline settings,
- * then the fixture's embedded profile, then an override profile. */
+/* A stage chain's stages with every settings source merged: inline
+ * settings, then the fixture's embedded profile, then an override profile,
+ * each matched by stage stable id. */
 export function resolveCursorStages(fixture, overrideProfile = null) {
   return fixture.processor.stages.map((stage) => ({
     ...stage,
@@ -133,18 +151,25 @@ export function resolveCursorStages(fixture, overrideProfile = null) {
   }));
 }
 
-function validateCursorStages(processor, path) {
+function validateChainStages(processor, path) {
+  const { types, last } = CHAIN_KINDS[processor.kind];
   if (!Array.isArray(processor.stages) || processor.stages.length === 0) {
-    throw new Error(`${path}: cursor-pipeline v2 needs stages`);
+    throw new Error(`${path}: ${processor.kind} v2 needs stages`);
   }
-  if (!["usb", "ble"].includes(processor.link)) {
+  /* Only the cursor coalescer reads the link; other chains may leave it out. */
+  if (!["usb", "ble"].includes(processor.link) &&
+      !(processor.kind !== "cursor-pipeline" && processor.link === undefined)) {
     throw new Error(`${path}: processor.link must be usb or ble`);
   }
   if (processor.profile !== undefined) validateProfile(processor.profile, `${path}: profile`);
+  if (last !== undefined && processor.stages.at(-1)?.type !== last) {
+    throw new Error(`${path}: a ${processor.kind} ends with a ${last} stage`);
+  }
   for (const [index, stage] of processor.stages.entries()) {
-    if (!CURSOR_STAGE_TYPES.includes(stage?.type) || typeof stage.stableId !== "string" ||
+    if (!types.includes(stage?.type) || typeof stage.stableId !== "string" ||
         !/^[A-Za-z0-9_.-]{1,63}$/.test(stage.stableId)) {
-      throw new Error(`${path}: stage ${index} needs a known type and a stable id`);
+      throw new Error(`${path}: stage ${index} needs a type a ${processor.kind} takes ` +
+        `(${types.join(", ")}) and a stable id`);
     }
     for (const [key, value] of Object.entries(stage.settings ?? {})) {
       if (!Number.isSafeInteger(value) && typeof value !== "boolean") {
@@ -170,8 +195,8 @@ function validateEvents(fixture, path) {
     throw new Error(`${path}: events are required`);
   }
   /* Recorded deadline flushes and late stage times replay only through the
-   * cursor runner. */
-  const recorded = fixture.version === 2 && fixture.processor.kind === "cursor-pipeline";
+   * chain runner. */
+  const recorded = isStageChain(fixture);
   const motionLengths = fixture.version === 1 ? [4] : recorded ? [4, 5, 6] : [4, 5];
   const types = recorded ? ["motion", "keypress", "flush"] : ["motion", "keypress"];
   const times = eventTimesUs(fixture);
@@ -248,11 +273,14 @@ export function validateFixture(fixture, path = "fixture") {
     throw new Error(`${path}: id and a supported pipeline kind are required`);
   }
   if (fixture.version === 1) {
+    if (kind in CHAIN_KINDS && kind !== "cursor-pipeline") {
+      throw new Error(`${path}: ${kind} needs fixture version 2`);
+    }
     validateLegacySettings(kind, fixture.processor.settings, fixture.processor.policy, path);
   } else {
     validateSource(fixture.source, path);
-    if (kind === "cursor-pipeline") {
-      validateCursorStages(fixture.processor, path);
+    if (kind in CHAIN_KINDS) {
+      validateChainStages(fixture.processor, path);
     } else {
       validateLegacySettings(kind, { ...fixture.processor.settings, cpi: fixture.source.cpi },
         fixture.processor.policy, path);
@@ -270,7 +298,7 @@ function cursorHeader(fixture, overrideProfile) {
       "S transfer transfer", `P scale-multiplier ${scaleMultiplier}`,
       `P scale-divisor ${scaleDivisor}`, "S quantizer quantizer", "E"];
   }
-  const lines = [`R ${fixture.source.cpi}`, `L ${fixture.processor.link}`];
+  const lines = [`R ${fixture.source.cpi}`, `L ${fixture.processor.link ?? "usb"}`];
   for (const stage of resolveCursorStages(fixture, overrideProfile)) {
     lines.push(`S ${stage.type} ${stage.stableId}`);
     for (const [key, value] of Object.entries(stage.settings)) {
@@ -311,18 +339,21 @@ function legacyConfiguration(fixture) {
 }
 
 /* Which runner replays a fixture: noisePipeline, scrollPipeline,
- * textPipeline, or cursorPipeline. */
+ * textPipeline, or cursorPipeline. The cursor runner is the stage-chain
+ * runner: it replays cursor, scroll, and text pipeline fixtures. */
 export const runnerFor = (fixture) => ({
   "composed-scroll": "scrollPipeline",
   "composed-text": "textPipeline",
   "cursor-pipeline": "cursorPipeline",
+  "scroll-pipeline": "cursorPipeline",
+  "text-pipeline": "cursorPipeline",
 }[fixture.processor.kind] ?? "noisePipeline");
 
-/* Runner input. The cursor runner takes microsecond times and sample spans;
+/* Runner input. The chain runner takes microsecond times and sample spans;
  * the other runners take the millisecond arrival times firmware sees. */
 export function encodeRunnerInput(fixture, overrideProfile = null) {
   const times = eventTimesUs(fixture);
-  if (fixture.processor.kind === "cursor-pipeline") {
+  if (fixture.processor.kind in CHAIN_KINDS) {
     const lines = cursorHeader(fixture, overrideProfile);
     const useSpan = fixture.version === 2 && fixture.source.span === "sensor";
     fixture.events.forEach((event, index) => {

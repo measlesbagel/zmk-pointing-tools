@@ -69,7 +69,8 @@ const set = await scorer.scoreTraces(traces, profile); // profile: tuning profil
 // set: { fixtures, scores, fixtureResults }, one set as bench.js --json reports it
 ```
 
-`profile` replaces the traces' recorded cursor stage settings by stable id, as
+`profile` replaces the traces' recorded stage-chain settings (cursor, and recorded scroll and
+text pipelines) by stable id, as
 `bench.js --profile` does; `null` scores the recorded settings. The result has no baseline
 comparison: to compare candidates, score each and compare their `scores`. Everything comes from
 the traces and the profile, so nothing assumes a particular board, keymap or config repository.
@@ -117,7 +118,22 @@ Supported pipeline kinds are currently:
   orientation, resolution normalization, the coherent-displacement gate, cursor
   acceleration, the cursor transfer, the sub-pixel cursor quantizer, and the
   report coalescer. Version 1 fixtures run normalization, transfer, and
-  quantizer; version 2 fixtures list their stages and settings.
+  quantizer; version 2 fixtures list their stages and settings;
+- `scroll-pipeline` and `text-pipeline` (version 2 only), recorded scroll and
+  text-navigation pipelines: an ordered list of orientation, resolution
+  normalization, the motion gate, `axis-intent`, `axis-constraint`, and a last
+  `scroll-batcher` or `text-nav` stage, with their settings, as firmware input
+  capture describes them (`policy` and `suppress-after-keypress-ms` beside the
+  tuning keys). Unlike the composed kinds, they replay with microsecond event
+  times, recorded flushes, and late events (#123), and `--profile` applies to
+  them by stage stable id.
+
+`cursor-pipeline`, `scroll-pipeline`, and `text-pipeline` all replay through
+`zpt_cursor_pipeline_replay`, the stage-chain runner; it tells them apart by the
+kind of signal the last stage sends. Its scroll and text output is one
+`D <t_ms> <x> <y> <intent> <suppressed> <t_us>` line per frame, then
+`O <t_ms> <x> <y> <t_us>` per scroll report or `O <t_ms> <direction> <t_us>` per
+text step. The composed kinds and their fixtures are unchanged.
 
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as

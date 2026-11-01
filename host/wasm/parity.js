@@ -16,7 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { validateProfile } from "../replay/fixture.js";
+import { isStageChain, validateProfile } from "../replay/fixture.js";
 import { loadFixture, runFixture } from "../replay/runner.js";
 import { compileWasmRunners, runFixtureWasm, WASM_RUNNERS } from "../replay/wasm.js";
 
@@ -46,13 +46,13 @@ async function main() {
   const failures = [];
   for (const path of paths) {
     const fixture = loadFixture(path);
-    const cursor = fixture.processor.kind === "cursor-pipeline";
+    const chain = isStageChain(fixture);
     const variants = [{ name: "recorded settings", fixture, profile: null }];
     if (fixture.version === 2 && fixture.source.span !== "sensor") {
       variants.push({ name: "sensor spans",
         fixture: { ...fixture, source: { ...fixture.source, span: "sensor" } }, profile: null });
     }
-    if (cursor && fixture.version === 2) {
+    if (chain) {
       for (const { name, profile } of profiles) variants.push({ name, fixture, profile });
     }
     for (const variant of variants) {
