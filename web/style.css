@@ -66,6 +66,11 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .agent-question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .agent-question-actions input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); background: #090b0e; color: var(--text); padding: 8px; font: inherit; }
 .agent-snapshots:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+.agent-run { border-left-color: var(--warning); }
+.agent-run p.muted { margin: 0 0 10px; font-size: 13px; }
+.agent-run-note { color: var(--text); }
+.agent-windows:not([hidden]) { display: grid; gap: 6px; margin-bottom: 10px; }
+.agent-windows div { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 3px solid var(--accent); background: #11141a; color: var(--muted); font-size: 13px; }
 .agent-snapshots button.current { border-color: var(--accent); color: var(--accent); }
 .playground-dialog { width: min(1050px, calc(100vw - 24px)); max-width: none; height: min(820px, calc(100vh - 24px)); max-height: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 18px; }
 .playground-dialog::backdrop { background: #05070bd9; backdrop-filter: blur(3px); }

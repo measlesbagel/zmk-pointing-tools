@@ -1,10 +1,13 @@
 /* Tools an AI agent can call to work with the tuner (#115), exposed through
  * WebMCP by agent-bridge.js. They describe the connected keyboard and what
  * the tuner has measured, preview values through the same requests the
- * panels send, keep named snapshots, and ask the user questions. Previews
+ * panels send, keep named snapshots, ask the user questions, and (in
+ * agent-experiments.js) ask for labelled runs and record telemetry. Previews
  * stay temporary: nothing persists, flashes or changes telemetry levels.
  * Everything comes from the keyboard and this browser, so the tools know
  * nothing about any particular board or config repository. */
+
+import { RunRequests, TelemetryWindows, createExperimentTools, stageNames } from "./agent-experiments.js";
 
 const TELEMETRY_DEFAULT = 100;
 const TELEMETRY_LIMIT = 500;
@@ -76,7 +79,7 @@ function recentTelemetry(context, { stage, limit } = {}) {
   const count = Math.min(Math.max(Math.trunc(Number(limit) || TELEMETRY_DEFAULT), 1), TELEMETRY_LIMIT);
   const status = context.stateStatus();
   const stableIds = new Map([...context.targets().values()].map(({ id, stableId }) => [id, stableId]));
-  const name = (targetId) => status.labels.get(targetId) || stableIds.get(targetId) || `target ${targetId}`;
+  const name = stageNames(context);
   const matches = (targetId) => !stage || stage === name(targetId) || stage === stableIds.get(targetId);
   const events = context.stateEvents().filter(({ targetId }) => matches(targetId)).slice(-count);
   return {
@@ -193,6 +196,15 @@ export class AgentSession {
     this.context = context;
     this.onUpdate = onUpdate;
     this.questions = new Map();
+    this.runs = new RunRequests({
+      onUpdate,
+      settings: {
+        capture: () => this.#runSettings(),
+        changesSince: (values) => (values && values.connection === context.connection()
+          ? diffValues(context, values, captureValues(context)) : null),
+      },
+    });
+    this.windows = new TelemetryWindows(context, onUpdate);
     this.tools = createAgentTools(context, this);
   }
 
@@ -222,6 +234,32 @@ export class AgentSession {
       changedValues: this.changed,
       snapshots: this.snapshots,
       openQuestions: this.#openQuestions().length,
+      openRuns: this.runs.open.map(({ id }) => id),
+      recordingTelemetryWindows: this.windows.recording.map(({ id }) => id),
+    };
+  }
+
+  /* The values a run starts with: what differs from compiled defaults, and
+   * which snapshots match. */
+  #runSettings() {
+    if (this.context.connection() === null) return { values: null, report: null };
+    const modified = [];
+    for (const target of this.context.targets().values()) {
+      for (const parameter of target.parameters) {
+        if (parameter.current !== parameter.compiled) {
+          modified.push({ target: targetName(target), parameter: parameterName(parameter), value: parameter.current, compiled: parameter.compiled });
+        }
+      }
+    }
+    for (const device of this.context.devices().values()) {
+      const { description } = device;
+      if (description && description.currentCpi !== description.defaultCpi) {
+        modified.push({ device: device.label, parameter: "cpi", value: description.currentCpi, compiled: description.defaultCpi });
+      }
+    }
+    return {
+      values: captureValues(this.context),
+      report: { matchingSnapshots: this.snapshots.filter((name) => this.snapshotMatches(name)), modified },
     };
   }
 
@@ -373,9 +411,12 @@ export class AgentSession {
     return { questionId: id, question: entry.question, status: entry.status, answer: entry.answer };
   }
 
-  /* Access turned off: open questions can't be answered through it. */
+  /* Access turned off: open questions and run requests can't be answered
+   * through it, and telemetry windows stop. */
   close() {
     for (const { id } of this.questions.values()) this.#settle(id, "cancelled");
+    this.runs.close();
+    this.windows.close();
   }
 }
 
@@ -413,7 +454,7 @@ export function createAgentTools(context, session) {
     },
     {
       name: "get_recent_telemetry",
-      description: `Read the stage telemetry the tuner has already captured, oldest first, with a readable summary of each event. Each stage's detail level (off, decisions, every-frame) is set by the user in the Stage decisions panel; this tool doesn't change it. The tuner keeps the latest 2000 events. Returns at most ${TELEMETRY_LIMIT}.`,
+      description: `Read the stage telemetry the tuner has already captured, oldest first, with a readable summary of each event. Each stage's detail level (off, decisions, every-frame) is set by the user in the Stage decisions panel; this tool doesn't change it. The tuner keeps only the latest 2000 events, a few seconds of every-frame telemetry: to measure a stretch of use, record it with start_telemetry_window instead. Returns at most ${TELEMETRY_LIMIT}.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -642,5 +683,6 @@ export function createAgentTools(context, session) {
         return json(await session.awaitAnswer(String(questionId ?? ""), seconds));
       },
     },
+    ...createExperimentTools(context, session),
   ];
 }

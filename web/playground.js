@@ -53,10 +53,12 @@ function element(tag, className, text) {
 }
 
 export class PointingPlayground {
-  constructor(root, { getContext, onExport }) {
+  constructor(root, { getContext, onExport, onRunStart = () => {}, onRunEnd = () => {} }) {
     this.root = root;
     this.getContext = getContext;
     this.onExport = onExport;
+    this.onRunStart = onRunStart;
+    this.onRunEnd = onRunEnd;
     this.dialog = root.querySelector("dialog");
     this.activity = root.querySelector("[data-playground-activity]");
     this.surface = root.querySelector("[data-playground-surface]");
@@ -113,6 +115,21 @@ export class PointingPlayground {
     this.renderActivity();
   }
 
+  /* Opens the playground on the activity an agent asked for, with its
+   * label, for the user to start. */
+  prepare({ activity, label, acquire }) {
+    if (this.running) this.finish(false);
+    this.activity.value = activity;
+    if (activity === "cursor-precision") {
+      this.label.value = label;
+      if (acquire) this.acquire.value = acquire;
+    }
+    this.run = undefined;
+    if (!this.dialog.open) this.dialog.showModal();
+    this.renderActivity();
+    this.startButton.focus();
+  }
+
   stop() {
     clearInterval(this.timer);
     clearTimeout(this.dwellTimer);
@@ -136,6 +153,7 @@ export class PointingPlayground {
     this.status.textContent = "Running";
     this.timer = setInterval(() => this.renderMetrics(), 100);
     this.renderMetrics();
+    this.onRunStart(this.activity.value);
   }
 
   finish(completed = true) {
@@ -151,6 +169,15 @@ export class PointingPlayground {
     this.finishButton.disabled = true;
     this.status.textContent = completed ? "Completed" : "Stopped";
     this.renderMetrics();
+    const { activity, durationMs, metrics, precision } = this.run;
+    this.onRunEnd(activity.id, {
+      completed,
+      result: {
+        durationMs,
+        metrics: { ...metrics },
+        ...(precision ? { precision: { label: precision.label, acquire: precision.acquire, trials: precision.trials.length, summary: precision.summary ?? null } } : {}),
+      },
+    });
   }
 
   complete() { this.finish(true); }

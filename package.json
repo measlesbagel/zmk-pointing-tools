@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test web/*.test.js host/replay/*.test.js",
-    "check": "node --check web/app.js && node --check web/transport.js && node --check web/agent-tools.js && node --check web/agent-bridge.js && node --check web/curve-editor.js && node --check web/protocol.js && node --check web/playground.js && node --check web/calibration.js && node --check host/replay/cli.js && node --check host/replay/bench.js && node --check host/replay/capture.js && node --check host/replay/capture-check.js && node --check host/bench/generate.js"
+    "check": "node --check web/app.js && node --check web/transport.js && node --check web/agent-tools.js && node --check web/agent-experiments.js && node --check web/agent-bridge.js && node --check web/curve-editor.js && node --check web/protocol.js && node --check web/playground.js && node --check web/calibration.js && node --check host/replay/cli.js && node --check host/replay/bench.js && node --check host/replay/capture.js && node --check host/replay/capture-check.js && node --check host/bench/generate.js"
   }
 }
