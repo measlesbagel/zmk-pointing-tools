@@ -433,6 +433,11 @@ void zpt_capture_buffer_reset(struct zpt_capture_buffer *buffer) {
 bool zpt_capture_buffer_put(struct zpt_capture_buffer *buffer,
                             const struct zpt_capture_record *record) {
     buffer->next_sequence++;
+    /* Every trace starts with a whole frame, so a host that lost its place
+     * picks up again at the next entered record. */
+    if (record->kind == ZPT_CAPTURE_RECORD_ENTERED) {
+        buffer->have_previous = false;
+    }
     uint8_t encoded[ZPT_CAPTURE_RECORD_MAX_SIZE + 2U];
     size_t length = 0;
     const bool frame = record->kind == ZPT_CAPTURE_RECORD_FRAME;

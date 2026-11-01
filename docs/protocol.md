@@ -595,7 +595,9 @@ MTU. Batches come from the [burst buffer](#burst-buffer) whenever the link
 has room.
 
 Capture schema 2 (this one) added delta frames and the buffer fill in the
-status; schema 1 firmware sent every frame whole and had no buffer.
+status; schema 1 firmware sent every frame whole and had no buffer. The
+tools read only schema 2: record schema 1 streams again with current
+firmware.
 
 | Kind | Record | Fields |
 | --- | --- | --- |
@@ -625,10 +627,14 @@ status; schema 1 firmware sent every frame whole and had no buffer.
   most 5 bytes. Without bit 2 the flags are the previous frame's. Bits 0–1
   give the span: `0` the previous frame's span, `1` equal to `elapsed`, `2`
   an `svarint` difference from `elapsed` follows, `3` the span as an
-  unsigned varint follows. Firmware sends a frame whole at the start of a
-  recording, as the first frame after a drop, and when the delta wouldn't
-  be shorter; a delta frame after a sequence gap is an error. Delta frames
-  carry everything a whole frame does, exactly.
+  unsigned varint follows. The 5th byte of a varint holds only the top 4
+  bits (at most `0x0f`), so every signed field fits 32 bits. Firmware sends
+  a frame whole at the start of a recording, as the first frame after a
+  drop and after every entered record, and when the delta wouldn't be
+  shorter. A host that meets a delta frame with no frame to follow (after a
+  sequence gap or an entered record) skips it and every delta after it
+  until the next whole frame, and treats the skipped records as a gap.
+  Delta frames carry everything a whole frame does, exactly.
 - **Source.** Sent before the first frame and whenever the source id,
   resolution, or report link changes; a change makes firmware resync at the
   next rest. `link` is `0` USB, `1` Bluetooth, or
@@ -657,20 +663,30 @@ frames a second, whatever the cursor report rate; over Bluetooth, with the
 default two notifications per connection event, the link carries about 120
 bytes per event (see [Bandwidth](#bandwidth)). So firmware stores and
 forwards: each record is encoded as it is recorded, into a RAM ring of
-`CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE` bytes (default 16384,
-about 2700 frames, close to three seconds of continuous motion), and the
-protocol worker sends batches from it whenever the link has room, mostly in
-the rests between strokes. Only the average record rate has to fit the
+`CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE` bytes (default 4096,
+about 680 frames; at least 512), and the protocol worker sends batches from
+it whenever the link has room, mostly in the rests between strokes. Raise
+the option for long bursts on slow links; each byte is static RAM whether
+or not a recording runs. Only the average record rate has to fit the
 link, not a flick's peak. The buffer changes when records leave, never what
 the pipeline does. `buffer-used` in the capture status shows how full it is.
 Stopping a recording sends everything stored, waiting for the link, before
 the status that confirms the stop; if the link fails meanwhile, what is left
-is dropped and counted. Capture records don't use the state-sample queue.
+is dropped and counted. A full default buffer takes about 0.25 s to drain on
+a 7.5 ms connection interval and about 1 s at 30 ms (two notifications per
+event); a buffer raised to 16 KB takes about 4 s at 30 ms, close to the
+tuner's 5 s request timeout. Capture records don't use the state-sample
+queue. Records are stored with interrupts masked for a few hundred cycles
+per record; the worker copies a batch out with interrupts enabled, and
+skips building one while the Bluetooth link has no notification credit.
 
 In the host test's simulated link (`capture_replay`), frames average about
 5.7 bytes; two credits per 7.5 ms connection event keep up with fast flicks
 read every half millisecond, and at 15 ms the buffer holds the bursts with
-under 1 KB in use. These are simulations, not hardware measurements.
+under 1 KB in use (also run with a 1 KB buffer, so the ring wraps without
+drops). The simulation is generous: every connection event refills both
+credits, and HID reports never share the connection. These are
+simulations, not hardware measurements.
 
 ### Drops and resyncs
 

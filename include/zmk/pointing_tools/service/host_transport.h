@@ -29,6 +29,10 @@ struct zpt_host_transport {
      * truncated frame. */
     int (*send)(const uint8_t *header, size_t header_length, const uint8_t *payload,
                 size_t payload_length, bool droppable);
+    /* Optional. False when send would refuse any droppable frame right
+     * now, so the caller can skip building one. NULL for links that always
+     * have room. */
+    bool (*has_room)(void);
 };
 
 /* Wakes the protocol worker after a transport queued received bytes. Safe

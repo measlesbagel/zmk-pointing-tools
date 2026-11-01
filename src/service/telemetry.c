@@ -685,8 +685,8 @@ static void zpt_capture_submit(void *context, const struct zpt_capture_record *c
     ARG_UNUSED(context);
     bool stored = true;
     /* Records are numbered and stored in one step, so the host reads every
-     * gap as a drop; none lands after the recording stopped. Encoding a
-     * record takes a few dozen instructions. */
+     * gap as a drop; none lands after the recording stopped. Encoding and
+     * storing a record masks interrupts for a few hundred cycles. */
     K_SPINLOCK(&zpt_capture_lock) {
         if (atomic_get(&zpt_capture_recording) != ZPT_CAPTURE_NONE) {
             stored = zpt_capture_buffer_put(&zpt_capture_buffer, capture);
@@ -761,12 +761,21 @@ void zpt_capture_settings_changed(void) {
  * loses what is left, counted as dropped. */
 static void zpt_capture_drain(bool wait) {
     for (;;) {
+        /* A link with no room keeps the records; skip encoding a batch it
+         * would refuse. */
+        if (!wait && zpt_host_link->has_room != NULL && !zpt_host_link->has_room()) {
+            return;
+        }
+        /* Copy the bookkeeping under the lock and build the batch from the
+         * copy without it, so interrupts stay enabled while records are
+         * copied out. Taps only write past head + used, and only this
+         * worker consumes, discards, or resets, so the copied range stays
+         * intact until it is consumed below. */
+        struct zpt_capture_buffer snapshot;
+        K_SPINLOCK(&zpt_capture_lock) { snapshot = zpt_capture_buffer; }
         uint8_t payload[ZPT_CAPTURE_BATCH_MAX_PAYLOAD];
         struct zpt_capture_take take;
-        size_t length;
-        K_SPINLOCK(&zpt_capture_lock) {
-            length = zpt_capture_buffer_peek(&zpt_capture_buffer, payload, sizeof(payload), &take);
-        }
+        const size_t length = zpt_capture_buffer_peek(&snapshot, payload, sizeof(payload), &take);
         if (length == 0U) {
             return;
         }

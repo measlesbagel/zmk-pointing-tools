@@ -1149,7 +1149,7 @@ static size_t delta_frame_size(const uint8_t *record) {
     return size;
 }
 
-static void capture_resync(uint32_t settings_hash, bool whole_frame, uint32_t *sequence) {
+static void capture_resync(uint32_t settings_hash, uint32_t *sequence) {
     uint8_t records[64];
     struct zpt_pipeline_result result;
     k_sleep(K_MSEC(150));
@@ -1163,9 +1163,10 @@ static void capture_resync(uint32_t settings_hash, bool whole_frame, uint32_t *s
     zassert_equal(sys_get_le32(&records[1]), settings_hash);
     zassert_equal(records[5], 2, "source");
     zassert_equal(records[11], 3, "the guard's key press, again");
-    /* After a drop the next frame goes whole; otherwise it is a delta. */
-    zassert_equal(bytes, 5 + 6 + 5 + (whole_frame ? 20 : delta_frame_size(&records[16])));
-    zassert_equal(records[16], whole_frame ? 1 : 0x80);
+    /* Every trace starts with a whole frame, whether a drop or a settings
+     * change ended the one before. */
+    zassert_equal(bytes, 5 + 6 + 5 + 20);
+    zassert_equal(records[16], 1);
 }
 
 ZTEST(zpt_unit, capture_records_pipeline_input) {
@@ -1273,7 +1274,7 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
     sequence += dropped;
     /* The pipeline kept running; at the next rest the tap resyncs, and the
      * first frame after the drop goes whole. */
-    capture_resync(hash, true, &sequence);
+    capture_resync(hash, &sequence);
 
     /* A tuning change while recording: the next entered record, at the
      * next rest, carries the new settings' hash. */
@@ -1286,7 +1287,7 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
     capture_resync(zpt_capture_settings_hash_add(
                        hash - zpt_capture_settings_hash_add(0, "zpt-test-target-a", "gain", gain),
                        "zpt-test-target-a", "gain", gain + 5),
-                   false, &sequence);
+                   &sequence);
     zassert_ok(zpt_tuning_set(0, 0, gain));
 
     /* Stopping sends what is still stored before the status, whatever the

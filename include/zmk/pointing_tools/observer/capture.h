@@ -202,7 +202,11 @@ bool zpt_capture_buffer_put(struct zpt_capture_buffer *buffer,
 
 /* Encode the oldest stored records into one capture batch payload of at
  * most capacity bytes, without removing them; records after a gap go in
- * the next batch. Returns the payload length, 0 when nothing is stored. */
+ * the next batch. Returns the payload length, 0 when nothing is stored.
+ * Reads only stored bytes and the bookkeeping, never writes: it may run on
+ * a copy of the struct taken under the owner's lock, while puts continue,
+ * as long as nothing consumes, discards, or resets until the batch is
+ * consumed. */
 size_t zpt_capture_buffer_peek(const struct zpt_capture_buffer *buffer, uint8_t *out,
                                size_t capacity, struct zpt_capture_take *take);
 

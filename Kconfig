@@ -146,16 +146,20 @@ config ZMK_POINTING_TOOLS_INPUT_CAPTURE
 
 config ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE
     int "Input capture burst buffer (bytes)"
-    default 16384
+    default 4096
     range 512 131072
     depends on ZMK_POINTING_TOOLS_INPUT_CAPTURE
     help
       Static RAM that holds encoded capture records until the link has
       room for them, so a recording keeps every frame through bursts
       faster than the link and sends them during the rests that follow.
-      A frame takes about 6 bytes, so the default holds about 2700 frames,
-      close to three seconds of continuous motion read every millisecond.
-      Records are dropped, and counted, only when it is full.
+      A frame takes about 6 bytes, so the default holds about 680 frames,
+      under a second of continuous motion read every millisecond; flicks
+      in simulation peak below 2.6 KB even on a 60 ms Bluetooth link.
+      Records are dropped, and counted, only when it is full. Raise it
+      for long bursts on slow links. Stopping a recording sends what is
+      buffered first: about 1 s per 4 KB on a slow Bluetooth link, so keep
+      a full buffer's drain under the host's request timeout.
 
 config ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES
     int "Maximum recordable pipelines"

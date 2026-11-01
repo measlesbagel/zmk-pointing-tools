@@ -12,7 +12,9 @@
  * it. Partway through, a recording starts through zpt_capture_tap_start,
  * as the telemetry service starts one. Records go through the firmware's
  * burst buffer and leave over a simulated Bluetooth link: a few credits of
- * 62-byte notifications per connection event. Fast flicks outrun the link;
+ * 62-byte notifications per connection event. The simulation is generous:
+ * every event refills the whole credit budget and HID reports never share
+ * the connection, so a real link is slower. Fast flicks outrun the link;
  * a small buffer fills and drops records, and a tuning change lands
  * mid-stroke, as an agent's A/B preview does; the tap resyncs at the next
  * rest after each.
@@ -215,14 +217,15 @@ static void stream_frame(uint8_t type, const uint8_t *payload, size_t length) {
 }
 
 /* Send batches while the link has credits, as the telemetry worker does;
- * a batch needs one credit per 62-byte notification of its frame. Returns
- * whether the buffer is empty. */
+ * a batch needs one credit per 62-byte notification of its frame. Like the
+ * worker, peek from a copy of the bookkeeping. Returns whether the buffer
+ * is empty. */
 static bool send_batches(uint32_t credits) {
-    for (;;) {
+    while (credits > 0U) {
+        const struct zpt_capture_buffer snapshot = session.buffer;
         uint8_t payload[ZPT_CAPTURE_BATCH_MAX_PAYLOAD];
         struct zpt_capture_take take;
-        const size_t length =
-            zpt_capture_buffer_peek(&session.buffer, payload, sizeof(payload), &take);
+        const size_t length = zpt_capture_buffer_peek(&snapshot, payload, sizeof(payload), &take);
         if (length == 0U) {
             return true;
         }
@@ -234,6 +237,7 @@ static bool send_batches(uint32_t credits) {
         stream_frame(CAPTURE_BATCH_EVENT, payload, length);
         zpt_capture_buffer_consume(&session.buffer, &take);
     }
+    return session.buffer.used == 0U;
 }
 
 /* The connection events up to now_us, each with a fresh credit budget. */
@@ -615,7 +619,7 @@ static int change_settings(void) {
 }
 
 int main(int argc, char **argv) {
-    const uint32_t buffer_bytes = argc > 1 ? (uint32_t)strtoul(argv[1], NULL, 0) : 16384U;
+    const uint32_t buffer_bytes = argc > 1 ? (uint32_t)strtoul(argv[1], NULL, 0) : 4096U;
     session.credits = argc > 2 ? (uint32_t)strtoul(argv[2], NULL, 0) : 2U;
     session.interval_us = argc > 3 ? (uint32_t)strtoul(argv[3], NULL, 0) : 7500U;
     if (buffer_bytes == 0U || buffer_bytes > sizeof(session.storage) || session.credits < 2U ||

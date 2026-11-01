@@ -74,7 +74,7 @@ export function decodeCaptureStream(bytes) {
     }
   }
   if (description === null) throw new Error("stream has no capture description");
-  return { description, statuses, records };
+  return { description, statuses, records, skipped: batches.skipped };
 }
 
 /* The profile whose settings hash is the one the device ran a trace with,
@@ -210,6 +210,9 @@ export function captureToFixtures(capture, profiles, options = {}) {
   const windowMs = description.stages.find((stage) => stage.strategy === "coherent-displacement")
     ?.fixed["suppress-after-keypress-ms"] ?? 0;
   const warnings = [];
+  if (capture.skipped > 0) {
+    warnings.push(`${capture.skipped} delta frames had no frame to follow and were skipped`);
+  }
   /* A stretch without frames (only flushes or key presses) replays nothing. */
   const parts = segments(records, warnings).filter((segment) => segment.source !== null)
     .map((segment) => ({ segment, converted: fixtureEvents(segment, windowMs),

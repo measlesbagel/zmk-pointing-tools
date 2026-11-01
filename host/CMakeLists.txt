@@ -152,6 +152,13 @@ add_test(
     --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
     --buffer 512 --interval-us 15000 --expect drops
 )
+add_test(
+  NAME capture_replay_wraparound
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+    --buffer 1024 --interval-us 15000 --expect no-drops --min-peak 500
+)
 
 # Scores the benchmark sets and prints the table. Scores never fail it; it
 # fails only if the benchmark can't run.
