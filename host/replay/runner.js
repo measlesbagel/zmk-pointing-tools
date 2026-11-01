@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { encodeRunnerInput, validateFixture } from "./fixture.js";
+import { encodeRunnerInput, runnerFor, validateFixture } from "./fixture.js";
 import {
   compareMetrics,
   parseCursorMetrics,
@@ -20,10 +20,7 @@ export function loadFixture(path) {
 /* Run a fixture through its native runner and return the raw output. An
  * override profile replaces cursor stage settings by stable id. */
 export function runFixture(fixture, runners, overrideProfile = null) {
-  const runner = fixture.processor.kind === "composed-scroll" ? runners.scrollPipeline
-    : fixture.processor.kind === "composed-text" ? runners.textPipeline
-    : fixture.processor.kind === "cursor-pipeline" ? runners.cursorPipeline : runners.noisePipeline;
-  const result = spawnSync(resolve(runner), [], {
+  const result = spawnSync(resolve(runners[runnerFor(fixture)]), [], {
     input: encodeRunnerInput(fixture, overrideProfile),
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

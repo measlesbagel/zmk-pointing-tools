@@ -60,6 +60,12 @@ let
   clangTidyPinned =
     if pkgs ? llvmPackages_22 then pkgs.llvmPackages_22.clang-tools
     else pkgs.clang-tools;
+
+  # WASI clang, wasi-libc and wasm-ld for the WebAssembly replay runners
+  # (host/wasm, docs/trace-replay.md), pinned with nixpkgs by devenv.lock.
+  # Exposed through env vars rather than packages so the cross tools never
+  # shadow the native compiler on PATH.
+  wasi = pkgs.pkgsCross.wasi32;
 in
 {
   packages = [
@@ -79,6 +85,11 @@ in
     compliancePython
     clangFormatDiffPy
   ];
+
+  env = {
+    ZPT_WASI_CC = "${wasi.stdenv.cc}/bin/${wasi.stdenv.cc.targetPrefix}cc";
+    ZPT_WASI_LD_DIR = "${wasi.buildPackages.llvmPackages.lld}/bin";
+  };
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
 
@@ -201,6 +212,18 @@ in
       after = [ "host:build" ];
     };
 
+    "wasm:build" = {
+      description = "Build the WebAssembly replay runners and browser replay module";
+      exec = "ZPT_WASM_BUILD_DIR=\"$DEVENV_STATE/wasm-build\" host/wasm/build.sh \"$DEVENV_STATE/wasm-site\"";
+    };
+
+    "wasm:test" = {
+      description = "Check WebAssembly replay matches native replay and test the browser scoring API";
+      exec = "node host/wasm/parity.js --native-dir \"$DEVENV_STATE/host-build\" --wasm-dir \"$DEVENV_STATE/wasm-site\" "
+        + "&& ZPT_NATIVE_DIR=\"$DEVENV_STATE/host-build\" ZPT_WASM_DIR=\"$DEVENV_STATE/wasm-site\" node --test host/wasm/*.test.js";
+      after = [ "host:build" "wasm:build" ];
+    };
+
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
@@ -212,6 +235,7 @@ in
         "javascript:check"
         "javascript:test"
         "host:test"
+        "wasm:test"
       ];
       before = [ "devenv:enterTest" ];
     };

@@ -13,8 +13,9 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { validateProfile } from "./fixture.js";
-import { aggregate, METRICS, scoreFixture } from "./quality.js";
+import { METRICS } from "./quality.js";
 import { loadFixture, runFixture } from "./runner.js";
+import { scoreFixtures } from "./score.js";
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const BASELINE_SCHEMA = "zmk-pointing-tools/benchmark-baseline";
@@ -46,13 +47,11 @@ function loadSet(directory, sensorSpans) {
 }
 
 function scoreSet(loaded, native, profile) {
-  const fixtures = loaded.map(({ path, fixture }) => {
-    const strokes = scoreFixture(fixture, runFixture(fixture, native, profile), profile);
-    return { id: fixture.id, path: relative(REPOSITORY, path),
-      synthetic: fixture.metadata?.synthetic === true, scores: aggregate(strokes), strokes };
-  });
-  return { fixtures: fixtures.length, scores: aggregate(fixtures.flatMap((f) => f.strokes)),
-    fixtureResults: fixtures };
+  const result = scoreFixtures(loaded.map(({ fixture }) => fixture),
+    (fixture) => runFixture(fixture, native, profile), profile);
+  result.fixtureResults = result.fixtureResults.map(({ id, ...scores }, index) =>
+    ({ id, path: relative(REPOSITORY, loaded[index].path), ...scores }));
+  return result;
 }
 
 /* Tuning keys only scroll and text stages publish. */

@@ -3,12 +3,25 @@ name: Deploy tuner to GitHub Pages
 # Publishes web/ as a static site at
 # https://measlesbagel.github.io/zmk-pointing-tools/. web/ has no build step:
 # the deploy copies it as is, minus the tests, and stamps the commit into the
-# page footer so the open version is identifiable.
+# page footer so the open version is identifiable. The browser replay module
+# is built into replay/ next to it: the replay runners and firmware stage
+# code compiled to WebAssembly with the WASI toolchain devenv.lock pins, and
+# the shared scoring code from host/replay (docs/trace-replay.md). The
+# deploy fails unless the WebAssembly runners replay every regression and
+# benchmark fixture exactly as the native ones do.
 on:
   push:
     branches: [main]
     paths:
       - "web/**"
+      - "host/CMakeLists.txt"
+      - "host/replay/**"
+      - "host/runners/**"
+      - "host/wasm/**"
+      - "include/**"
+      - "src/**"
+      - "devenv.nix"
+      - "devenv.lock"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -24,7 +37,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,10 +45,23 @@ jobs:
           node-version: 22
       - name: Run web tests
         run: node --test web/*.test.js
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Configure the Devenv binary cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: devenv
+      - name: Install Devenv
+        run: nix profile add github:cachix/devenv/v2.2#devenv
+      - name: Build browser replay and check it against native replay
+        run: |
+          devenv shell -- bash -c 'host/wasm/build.sh _replay &&
+            cmake -S host -B build/host -G Ninja && cmake --build build/host &&
+            node host/wasm/parity.js --native-dir build/host --wasm-dir _replay'
       - name: Assemble site
         run: |
           cp -r web _site
           find _site -name '*.test.js' -delete
+          cp -r _replay _site/replay
           short=${GITHUB_SHA::7}
           date=$(git log -1 --format=%cs)
           url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"

@@ -23,5 +23,9 @@ replay client.
 `host/bench` against their committed baseline; see
 [`../docs/trace-benchmark.md`](../docs/trace-benchmark.md).
 
-The native binaries are build artifacts and are never committed or included
+`host/wasm` builds the same runners for WebAssembly, so the hosted tuner can
+replay and score traces in the browser, and checks they match native replay;
+see [`../docs/trace-replay.md`](../docs/trace-replay.md#replay-in-the-browser).
+
+The native and WebAssembly binaries are build artifacts and are never committed or included
 in keyboard firmware.
