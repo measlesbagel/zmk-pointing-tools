@@ -205,3 +205,9 @@ test("delta frame fields are int32: a fifth varint byte holds only the top 4 bit
   assert.throws(() => batch(0x80, 0, 0xff, 0xff, 0xff, 0xff, 0x10, 0), /Malformed varint/);
   assert.throws(() => batch(0x80, 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0), /Malformed varint/);
 });
+
+test("the converter the tuner loads has no Node imports", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("./capture-convert.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /from "node:/);
+});

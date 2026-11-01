@@ -26,3 +26,8 @@ cp "$build"/zpt_{noise,scroll,cursor,text_nav}_pipeline_replay.wasm "$out/"
 for module in fixture metrics quality wasm score score-worker score-client; do
   cp "$root/host/replay/$module.js" "$out/"
 done
+# The capture converter imports the tuner's protocol.js, which sits one
+# level up from replay/ in the Pages site.
+sed 's|"\.\./\.\./web/protocol\.js"|"../protocol.js"|' "$root/host/replay/capture-convert.js" \
+  > "$out/capture-convert.js"
+grep -q '"\.\./protocol\.js"' "$out/capture-convert.js"

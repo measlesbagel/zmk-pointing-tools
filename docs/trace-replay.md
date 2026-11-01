@@ -57,6 +57,7 @@ replay runners and the firmware stage code they link to WebAssembly and publishe
 | `score.js` | `scoreTraces(traces, profile, runners)`: validates fixture v1 or v2 traces, replays them, and scores them with `quality.js`. `bench.js` scores its sets through the same `scoreFixtures`. |
 | `score-worker.js`, `score-client.js` | Run scoring in a module Web Worker, so pointing in the tuner stays smooth. |
 | `fixture.js`, `metrics.js`, `quality.js` | Shared unchanged with the host tools. |
+| `capture-convert.js` | `decodeCaptureStream` and `captureToFixtures`: firmware input captures to fixture v2 traces, shared with `capture.js`. Its import of the tuner's `protocol.js` is rewritten to `../protocol.js`, so `replay/` must sit next to the tuner. |
 
 A page scores traces like this:
 
