@@ -12,15 +12,19 @@
  *                           acceleration, transfer, quantizer, coalescer
  *   P <key> <value>         set a parameter of the last stage, by its
  *                           tuning key (the tuner profile's key)
+ *   F                       deadlines run only at F events (a recording)
  *   E                       end of header
  *   M <t_us> <x> <y> <span_us>  motion arriving at t_us; span 0 = none
  *   K <t_us>                physical keypress
+ *   F <t_us>                run the deadlines due at t_us, as recorded
  *
  * Tunable stages take every tuning parameter exactly once and run the
  * firmware's own tuning conversions, so profile values replay exactly as a
  * device applies them. Frames carry the millisecond arrival time firmware
  * timestamps with, plus the sensor span when the source has one. Deadlines
- * flush at their own time, as the firmware's work queue does.
+ * flush at their own time, as the firmware's work queue does, unless the
+ * header asks for recorded flushes: then they run only where a recording
+ * saw them run, and nothing runs after the last event.
  *
  * Output:
  *   D <t_ms> <x> <y> <remainder_x> <remainder_y> <clipped> <t_us> <speed> <gain>
@@ -95,6 +99,7 @@ struct replay {
     enum zpt_cursor_link link;
     uint16_t suppress_after_keypress_ms;
     bool keypress_seen;
+    bool recorded_flushes;
     uint32_t last_keypress_ms;
     struct zpt_suppression_policy suppression;
     struct replay_stage replay_stages[MAX_STAGES];
@@ -310,6 +315,9 @@ static int read_header_line(struct replay *replay, const char *line, bool *done)
             return fail("parameter needs a key and an integer value");
         }
         return set_parameter(replay, word, value);
+    case 'F':
+        replay->recorded_flushes = true;
+        return 0;
     case 'E':
         *done = true;
         return 0;
@@ -424,8 +432,15 @@ static int replay_event(struct replay *replay, const char *line) {
     uint32_t span_us;
     int fields = sscanf(line, " %c %" SCNu32 " %" SCNd32 " %" SCNd32 " %" SCNu32, &type, &t_us, &x,
                         &y, &span_us);
-    if (fields < 2 || flush_until(replay, t_us / 1000U, false) < 0) {
+    if (fields < 2 || (!replay->recorded_flushes && flush_until(replay, t_us / 1000U, false) < 0)) {
         return fail("invalid replay event");
+    }
+    if (type == 'F' && fields == 2 && replay->recorded_flushes) {
+        struct zpt_pipeline_result result;
+        replay->now_us = t_us;
+        return zpt_pipeline_flush(&replay->pipeline, t_us / 1000U, &result) < 0
+                   ? fail("pipeline flush failed")
+                   : 0;
     }
     if (type == 'K' && fields == 2) {
         replay->keypress_seen = true;
@@ -458,6 +473,9 @@ int main(void) {
         if (replay_event(&replay, line) < 0) {
             return 2;
         }
+    }
+    if (replay.recorded_flushes) {
+        return 0;
     }
     return flush_until(&replay, 0U, true) < 0 ? 2 : 0;
 }

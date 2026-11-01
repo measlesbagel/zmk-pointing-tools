@@ -30,6 +30,7 @@ add_library(zpt_models STATIC
   "${ZPT_ROOT}/src/core/pipeline.c"
   "${ZPT_ROOT}/src/core/router.c"
   "${ZPT_ROOT}/src/core/route_override.c"
+  "${ZPT_ROOT}/src/observer/capture.c"
   "${ZPT_ROOT}/src/source/frame_assembler.c"
   "${ZPT_ROOT}/src/source/motion_source.c"
   "${ZPT_ROOT}/src/source/source_ingress.c"
@@ -86,6 +87,7 @@ zpt_host_executable(cursor_acceleration_test tests/cursor_acceleration_test.c)
 # The test checks the integer curve against a floating-point reference.
 target_link_libraries(cursor_acceleration_test PRIVATE m)
 zpt_host_executable(cursor_coalescer_test tests/cursor_coalescer_test.c)
+zpt_host_executable(capture_session tests/capture_session.c)
 zpt_host_executable(zpt_noise_pipeline_replay runners/noise_pipeline_replay.c)
 zpt_host_executable(zpt_scroll_pipeline_replay runners/scroll_pipeline_replay.c)
 zpt_host_executable(zpt_cursor_pipeline_replay runners/cursor_pipeline_replay.c)
@@ -122,6 +124,15 @@ add_test(
     --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
     --text-pipeline-runner "$<TARGET_FILE:zpt_text_nav_pipeline_replay>"
     ${ZPT_TRACE_FIXTURES}
+)
+
+# Input capture is faithful: a capture recorded from the firmware's stages
+# replays to exactly the reports they sent.
+add_test(
+  NAME capture_replay
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
 )
 
 # Scores the benchmark sets and prints the table. Scores never fail it; it

@@ -314,6 +314,9 @@ int zpt_pipeline_activate(struct zpt_pipeline *pipeline, enum zpt_reset_reason r
         }
     }
     pipeline->active = true;
+    if (pipeline->observer.lifecycle != NULL) {
+        pipeline->observer.lifecycle(pipeline, true, pipeline->observer.user_data);
+    }
     return 0;
 }
 
@@ -341,9 +344,22 @@ int zpt_pipeline_push(struct zpt_pipeline *pipeline, const struct zpt_signal *si
         return -EPROTOTYPE;
     }
 
+    if (pipeline->observer.input != NULL) {
+        pipeline->observer.input(pipeline, signal, pipeline->observer.user_data);
+    }
     struct zpt_pipeline_operation operation =
         begin_operation(pipeline, signal->metadata.observed_at_ms, result);
     return drain(&operation, dispatch_at(&operation, 0U, signal));
+}
+
+static bool deadline_due(const struct zpt_pipeline *pipeline, uint32_t now_ms) {
+    for (size_t index = 0; index < pipeline->stage_count; index++) {
+        const struct zpt_stage *stage = pipeline->stages[index];
+        if (stage->deadline_pending && time_reached(now_ms, stage->deadline_ms)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
@@ -356,6 +372,9 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
         return -EACCES;
     }
 
+    if (pipeline->observer.flush != NULL && deadline_due(pipeline, now_ms)) {
+        pipeline->observer.flush(pipeline, now_ms, pipeline->observer.user_data);
+    }
     struct zpt_pipeline_operation operation = begin_operation(pipeline, now_ms, result);
     for (size_t index = 0; index < pipeline->stage_count; index++) {
         struct zpt_stage *stage = pipeline->stages[index];
@@ -440,5 +459,8 @@ int zpt_pipeline_deactivate(struct zpt_pipeline *pipeline, uint32_t now_ms,
 
     pipeline->active = false;
     zpt_pipeline_reset(pipeline, reason);
+    if (pipeline->observer.lifecycle != NULL) {
+        pipeline->observer.lifecycle(pipeline, false, pipeline->observer.user_data);
+    }
     return first_error;
 }

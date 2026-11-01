@@ -25,4 +25,7 @@ target_sources(app PRIVATE
   test_tuning.c
   test_telemetry.c
   test_devices.c
+  # The capture case drives a pipeline; the app builds without ZMK, so the
+  # module's pipeline core (CONFIG_ZMK_POINTING_TOOLS_PIPELINE) is off.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/pipeline.c
 )

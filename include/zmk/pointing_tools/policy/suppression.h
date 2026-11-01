@@ -20,4 +20,7 @@ typedef bool (*zpt_suppressed_t)(void *context, const struct zpt_signal *signal,
 struct zpt_suppression_policy {
     zpt_suppressed_t is_suppressed;
     void *context;
+    /* How long a keypress suppresses motion, for input capture to describe
+     * the policy; zero when it isn't a keypress window. */
+    uint32_t keypress_window_ms;
 };

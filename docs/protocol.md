@@ -4,7 +4,8 @@ The protocol runs over USB CDC-ACM serial (Web Serial) and, optionally, over a
 Bluetooth GATT service (Web Bluetooth). Both carry the same framed byte stream;
 see [Transports](#transports). All multi-byte integers are little-endian.
 
-The current protocol is version 7. Firmware and host are updated together; the
+The current protocol is version 8. Version 8 added input capture and the
+capture drop counter in acknowledgements. Firmware and host are updated together; the
 tuner rejects every other version instead of carrying compatibility parsers or
 feature gates for older firmware.
 
@@ -15,7 +16,8 @@ feature gates for older firmware.
 ```
 
 The host initiates requests. Stage-state samples are unsolicited only while
-the host has explicitly enabled the corresponding per-target level.
+the host has explicitly enabled the corresponding per-target level, and
+capture batches only while the host runs a recording.
 
 Hosts send at most one tuning request at a time and wait for its matching
 response before advancing discovery. This provides transport-level flow
@@ -158,8 +160,10 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 | `0x0d` | host → device | List pointing devices | empty |
 | `0x0e` | host → device | Describe pointing device | `device-id:u8` |
 | `0x0f` | host → device | Preview device CPI | `device-id:u8, cpi:u16` |
+| `0x10` | host → device | Capture control/status | empty to query, or `pipeline-id:u8`; `0xff` stops |
+| `0x11` | host → device | Describe capture pipeline | `pipeline-id:u8` |
 | `0x81` | device → host | Describe response | described below |
-| `0x82` | device → host | Acknowledgement | `state-dropped:u32` |
+| `0x82` | device → host | Acknowledgement | `state-dropped:u32, capture-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
@@ -169,7 +173,10 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 | `0x89` | device → host | Processor-state status | described below |
 | `0x8a` | device → host | Pointing devices | described below |
 | `0x8b` | device → host | Pointing device description | described below |
+| `0x8c` | device → host | Capture status | described below |
+| `0x8d` | device → host | Capture pipeline description | described below |
 | `0x91` | device → host | Stage-state sample | described below |
+| `0x92` | device → host | Capture batch | described below |
 
 ### Describe response
 
@@ -480,3 +487,146 @@ reads every-frame samples from a resolution-normalize stage (see
 Reserved values and unknown flags must be ignored for forward compatibility.
 Firmware disables all state levels after the ordinary host heartbeat timeout
 or an explicit all-targets-off request.
+
+## Input capture
+
+Input capture records what goes into one pipeline: every input frame with its
+raw counts, microsecond arrival time, and sensor sample span, the key presses
+the keypress guard sees, and the moments stage deadlines run. A host turns a
+recording into a [fixture v2 trace](trace-benchmark.md#fixture-format-v2) with
+`host/replay/capture.js`, and the trace replays through the firmware's own
+stage code (see [Turning a capture into a trace](#turning-a-capture-into-a-trace)).
+The stage-state samples above can't do this: they carry millisecond times and
+what stages emit, not what went in.
+
+`CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE` is on wherever the pipeline runtime
+and the telemetry service are. Capture is off at runtime until a host starts a
+recording, and it stops on an explicit stop, on another recording, or after
+the ordinary host heartbeat timeout. While nothing records, each frame costs
+one atomic read in every recordable pipeline. Every devicetree pipeline is
+recordable, in devicetree order, up to
+`CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES` (default 8).
+
+### Capture control
+
+An empty request queries the status. `pipeline-id` starts recording that
+pipeline, ending any recording before it, and `0xff` stops. Firmware sends
+every record of the previous recording before the status that answers. A
+start is applied between frames, as tuning changes are: firmware resets the
+pipeline's stages so they start where replay starts, which drops at most a
+sub-pixel remainder and one report interval of pending motion. Every request
+receives:
+
+```text
+capture-schema-version:u8      /* 1 */
+recording:u8                   /* pipeline id, or 0xff when none */
+capture-dropped:u32
+pipeline-count:u8
+repeat pipeline-count times:
+  pipeline-id:u8
+  active:u8                    /* 1 while the router runs this pipeline */
+  stage-count:u8
+  label-length:u8
+  label:utf8[label-length]     /* the pipeline's stable id, at most 27 bytes */
+```
+
+### Capture pipeline description
+
+```text
+pipeline-id:u8
+stable-id-length:u8, stable-id:utf8[..]
+stage-count:u8
+repeat stage-count times:
+  strategy-length:u8, strategy:utf8[..]      /* e.g. cursor-acceleration */
+  stable-id-length:u8, stable-id:utf8[..]
+  setting-count:u8
+  repeat setting-count times:
+    key-length:u8, key:utf8[..]
+    value:i32
+```
+
+Stages are in pipeline order. A stage's tunable settings come from tuning
+discovery under its stable id; the description adds only what tuning doesn't
+publish: an orientation's `swap-xy`, `invert-x`, and `invert-y`, and a motion
+gate's `suppress-after-keypress-ms` (the keypress guard it references, 0 for
+none). Unknown ids fail with an ordinary tuning result carrying request type
+`0x11` and status unknown target.
+
+### Capture batches
+
+```text
+first-sequence:u32
+record-count:u8
+repeat record-count times:
+  kind:u8, then the kind's fields
+```
+
+Records are numbered from zero at the start of each recording, and the
+records of a batch are consecutive, so a gap between batches is a drop. A
+batch is at most 119 bytes of payload, two notifications at the 65-byte ATT
+MTU. Firmware sends a batch when it is full or when the queue is empty.
+
+| Kind | Record | Fields |
+| --- | --- | --- |
+| `1` | Frame | `flags:u8, time-ms:u32, time-us:u16, x:i32, y:i32, span-us:u32` |
+| `2` | Source | `link:u8, source-id:u16, cpi:u16` |
+| `3` | Key press | `time-ms:u32` |
+| `4` | Entered | none |
+| `5` | Left | none |
+| `6` | Settings changed | none |
+| `7` | Flush | `time-ms:u32` |
+
+- **Frame.** An input frame as the pipeline received it. `time-ms` is the
+  uptime millisecond its stages see; `time-us` is how far into that
+  millisecond it arrived (999 when it waited past it). `x` and `y` are raw
+  counts, saturated to 32 bits, and `span-us` is the sensor sample span, 0
+  when the source has none. `flags` are the signal metadata flags bits 0 to 7
+  (local, transported, coalesced, timing estimated, clipped, sequence gap,
+  discontinuity, span clipped).
+- **Source.** Sent before the first frame and whenever the source id,
+  resolution, or report link changes. `link` is `0` USB, `1` Bluetooth, or
+  `0xff` without a cursor coalescer.
+- **Key press.** At the time the keypress guard records. A recording starts
+  with the latest key press before it, if there was one.
+- **Entered** and **left.** The router activated or deactivated the pipeline;
+  entered follows a start too. Stages start from reset after entered.
+- **Settings changed.** A tuning change landed; frames after it ran with
+  other settings than the host read before recording.
+- **Flush.** Stage deadlines that were due ran at `time-ms`, before any frame
+  recorded after it.
+
+### Drops
+
+Records travel through the same bounded queue as state samples. A record that
+doesn't fit the queue, and a batch the link has no room for (see
+[Bandwidth](#bandwidth)), is dropped whole and counted in `capture-dropped`
+(capture status and heartbeat acknowledgements), the way `dropped-state-records`
+counts state samples. At the 1 ms USB report rate a moving trackball produces
+about a thousand frames a second, 20 bytes each; USB serial carries that, and
+over Bluetooth expect drops at speed unless the credit budget is raised. A
+recording replays only between drops.
+
+### Turning a capture into a trace
+
+Before starting a recording, read the pipeline description and the current
+settings of its stages (tuning discovery, or a tuner profile export). Keep
+the device's bytes from the description on. Then:
+
+```sh
+node host/replay/capture.js --stream capture.bin --profile profile.json \
+  --out trace.json --device right-ball
+node host/replay/bench.js --fixtures <dir with sets of traces>
+```
+
+`capture.js` writes one cursor-pipeline trace per stretch the pipeline ran
+unchanged, from an entered record to a left record, a settings change, a
+drop, or a change of source, resolution, or link, and warns for each early
+end. Event times count from the earliest event. Recorded flushes become
+`flush` events, so replay runs deadlines where firmware ran them; a clipped
+span becomes a 40 ms span, which restarts the acceleration speed estimate as
+the clipped flag does in firmware. Only cursor pipelines convert so far.
+
+The CTest `capture_replay` checks that this is faithful: it records a
+synthetic session through the firmware's cursor stages
+(`host/tests/capture_session.c`), converts the capture, and requires replay to
+send exactly the reports the stages sent.

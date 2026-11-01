@@ -43,18 +43,19 @@ test("decodes fragmented and adjacent frames", () => {
 });
 
 test("parses the version-only description", () => {
-  assert.deepEqual(parseDescribe(Uint8Array.of(7)), { version: 7 });
+  assert.deepEqual(parseDescribe(Uint8Array.of(8)), { version: 8 });
   assert.throws(
-    () => parseDescribe(Uint8Array.of(6)),
+    () => parseDescribe(Uint8Array.of(7)),
     /does not match tuner protocol/,
   );
 });
 
 test("parses acknowledgements", () => {
-  const ack = new Uint8Array(4);
+  const ack = new Uint8Array(8);
   new DataView(ack.buffer).setUint32(0, 42, true);
-  assert.deepEqual(parseAck(ack), { stateDropped: 42 });
-  assert.throws(() => parseAck(new Uint8Array(5)), /Invalid acknowledgement length/);
+  new DataView(ack.buffer).setUint32(4, 7, true);
+  assert.deepEqual(parseAck(ack), { stateDropped: 42, captureDropped: 7 });
+  assert.throws(() => parseAck(new Uint8Array(4)), /Invalid acknowledgement length/);
 
 });
 

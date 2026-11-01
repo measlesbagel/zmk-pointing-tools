@@ -6,6 +6,9 @@
 
 #include <zmk/pointing_tools/platform/zmk/router.h>
 #include <zmk/pointing_tools/platform/zmk/stage_tuning.h>
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+#include <zmk/pointing_tools/service/capture.h>
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -18,6 +21,10 @@ static int apply_between_frames(void *current, const void *candidate, size_t siz
         return ret;
     }
     memcpy(current, candidate, size);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    /* Marks where the recorded settings stop applying. */
+    zpt_capture_settings_changed();
+#endif
     return zpt_zmk_router_unlock_all();
 }
 

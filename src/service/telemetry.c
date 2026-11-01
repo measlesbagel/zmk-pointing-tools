@@ -29,6 +29,10 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 #include <zmk/pointing_tools/observer/state.h>
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+#include <zmk/pointing_tools/observer/capture.h>
+#include <zmk/pointing_tools/service/capture.h>
+#endif
 
 /* ZMK_LOG_LEVEL is an application Kconfig symbol (zmk/app/Kconfig); it is
  * absent when this module builds against plain Zephyr (e.g. the
@@ -44,7 +48,7 @@ LOG_MODULE_REGISTER(zpt_telemetry, ZPT_TELEMETRY_LOG_LEVEL);
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
              "exactly one measlesbagel,zpt-telemetry node is supported");
 
-#define ZPT_PROTOCOL_VERSION 7
+#define ZPT_PROTOCOL_VERSION 8
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -62,6 +66,8 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_DEVICE_LIST 0x0d
 #define ZPT_REQ_DEVICE_DESCRIBE 0x0e
 #define ZPT_REQ_DEVICE_PREVIEW 0x0f
+#define ZPT_REQ_CAPTURE_CONTROL 0x10
+#define ZPT_REQ_CAPTURE_DESCRIBE 0x11
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
@@ -73,7 +79,10 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_RESP_STATE_STATUS 0x89
 #define ZPT_RESP_DEVICE_LIST 0x8a
 #define ZPT_RESP_DEVICE_DESCRIPTION 0x8b
+#define ZPT_RESP_CAPTURE_STATUS 0x8c
+#define ZPT_RESP_CAPTURE_DESCRIPTION 0x8d
 #define ZPT_EVENT_STATE 0x91
+#define ZPT_EVENT_CAPTURE 0x92
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_DESCRIBE_PAYLOAD 512
@@ -135,16 +144,23 @@ static struct zpt_frame_parser zpt_parsers[ARRAY_SIZE(zpt_transports)];
 static const struct zpt_host_transport *zpt_host_link;
 
 enum zpt_record_kind {
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
     ZPT_RECORD_STATE,
-#endif
+    ZPT_RECORD_CAPTURE,
 };
 
 struct zpt_telemetry_record {
     uint8_t kind;
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    /* Capture records: the recording they belong to. */
+    uint8_t generation;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY) ||                                       \
+    IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
     union {
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
         struct zpt_state_sample state;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+        struct zpt_capture_record capture;
+#endif
     } sample;
 #endif
 };
@@ -158,6 +174,9 @@ K_SEM_DEFINE(zpt_wake, 0, 1); // NOLINT(misc-use-internal-linkage)
 
 static atomic_t zpt_sequence;
 static atomic_t zpt_last_contact;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+static atomic_t zpt_capture_dropped;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
 static atomic_t zpt_state_dropped;
 /* One past the highest state-only target id handed out; status responses
@@ -266,13 +285,14 @@ static void zpt_send_describe(void) {
 }
 
 static void zpt_send_ack(void) {
+    uint8_t payload[8] = {0};
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
-    uint8_t payload[4];
     sys_put_le32((uint32_t)atomic_get(&zpt_state_dropped), &payload[0]);
-    zpt_send_frame(ZPT_RESP_ACK, payload, sizeof(payload));
-#else
-    zpt_send_frame(ZPT_RESP_ACK, NULL, 0);
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    sys_put_le32((uint32_t)atomic_get(&zpt_capture_dropped), &payload[4]);
+#endif
+    zpt_send_frame(ZPT_RESP_ACK, payload, sizeof(payload));
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -601,6 +621,238 @@ static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) 
 
 #endif /* CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING */
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+
+#define ZPT_CAPTURE_NONE UINT8_MAX
+#define ZPT_CAPTURE_LABEL_MAX_LENGTH 27
+
+struct zpt_capture_entry {
+    struct zpt_pipeline *pipeline;
+    struct zpt_capture_tap tap;
+};
+
+static void zpt_drain_records(void);
+
+static struct zpt_capture_entry
+    zpt_capture_entries[CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES];
+static size_t zpt_capture_count;
+/* The entry being recorded, or ZPT_CAPTURE_NONE. Read on every frame of
+ * every registered pipeline, the only cost while nothing records. */
+static atomic_t zpt_capture_recording = ATOMIC_INIT(ZPT_CAPTURE_NONE);
+/* Numbers recordings, so the worker drops records of an earlier one, and
+ * the records of the current one; both under the lock. */
+static struct k_spinlock zpt_capture_lock;
+static uint8_t zpt_capture_generation;
+static uint32_t zpt_capture_sequence;
+/* The latest key press, which the keypress guard still remembers when a
+ * recording starts. */
+static atomic_t zpt_capture_last_keypress_ms;
+static atomic_t zpt_capture_have_keypress;
+/* Only the worker thread fills and sends it. */
+static struct zpt_capture_batch zpt_capture_batch;
+
+static bool zpt_capture_entry_recording(void *context) {
+    const struct zpt_capture_entry *entry = context;
+    return atomic_get(&zpt_capture_recording) == (atomic_val_t)(entry - zpt_capture_entries);
+}
+
+static void zpt_capture_submit(const struct zpt_capture_record *capture) {
+    struct zpt_telemetry_record record = {
+        .kind = ZPT_RECORD_CAPTURE,
+        .sample.capture = *capture,
+    };
+    int ret;
+    /* Frames come from the input thread and key presses from ZMK's event
+     * thread: records enter the queue in the order they are numbered, so
+     * the host reads every gap as a drop. */
+    K_SPINLOCK(&zpt_capture_lock) {
+        record.generation = zpt_capture_generation;
+        record.sample.capture.sequence = zpt_capture_sequence++;
+        ret = k_msgq_put(&zpt_record_queue, &record, K_NO_WAIT);
+    }
+    /* A full queue drops the record; the host sees the sequence gap. */
+    if (ret < 0) {
+        atomic_inc(&zpt_capture_dropped);
+        return;
+    }
+    k_sem_give(&zpt_wake);
+}
+
+static void zpt_capture_entry_submit(void *context, const struct zpt_capture_record *record) {
+    ARG_UNUSED(context);
+    zpt_capture_submit(record);
+}
+
+static uint16_t zpt_capture_sub_ms_us(void *context, uint32_t time_ms) {
+    ARG_UNUSED(context);
+    const uint64_t now_us = k_ticks_to_us_floor64(k_uptime_ticks());
+    /* A frame that waited past its millisecond keeps that millisecond, which
+     * is what its stages see, and sorts last within it. */
+    return (uint32_t)(now_us / 1000U) == time_ms ? (uint16_t)(now_us % 1000U) : 999U;
+}
+
+/* One sink per entry, whose context is the entry. */
+static struct zpt_capture_sink zpt_capture_sinks[ARRAY_SIZE(zpt_capture_entries)];
+
+int zpt_capture_register_pipeline(struct zpt_pipeline *pipeline) {
+    if (pipeline == NULL) {
+        return -EINVAL;
+    }
+    if (zpt_capture_count >= ARRAY_SIZE(zpt_capture_entries)) {
+        return -ENOSPC;
+    }
+    struct zpt_capture_entry *entry = &zpt_capture_entries[zpt_capture_count];
+    struct zpt_capture_sink *sink = &zpt_capture_sinks[zpt_capture_count];
+    *sink = (struct zpt_capture_sink){
+        .recording = zpt_capture_entry_recording,
+        .submit = zpt_capture_entry_submit,
+        .sub_ms_us = zpt_capture_sub_ms_us,
+        .context = entry,
+    };
+    entry->pipeline = pipeline;
+    zpt_capture_tap_attach(&entry->tap, pipeline, sink);
+    zpt_capture_count++;
+    return 0;
+}
+
+static bool zpt_capture_active(void) {
+    return atomic_get(&zpt_capture_recording) != ZPT_CAPTURE_NONE;
+}
+
+void zpt_capture_keypress(uint32_t time_ms) {
+    atomic_set(&zpt_capture_last_keypress_ms, (atomic_val_t)time_ms);
+    atomic_set(&zpt_capture_have_keypress, 1);
+    if (zpt_capture_active()) {
+        const struct zpt_capture_record record = {
+            .kind = ZPT_CAPTURE_RECORD_KEYPRESS,
+            .time_ms = time_ms,
+        };
+        zpt_capture_submit(&record);
+    }
+}
+
+void zpt_capture_settings_changed(void) {
+    if (zpt_capture_active()) {
+        const struct zpt_capture_record record = {.kind = ZPT_CAPTURE_RECORD_SETTINGS_CHANGED};
+        zpt_capture_submit(&record);
+    }
+}
+
+static void zpt_capture_send_batch(void) {
+    if (zpt_capture_batch.count == 0U) {
+        return;
+    }
+    /* A link without room refuses the whole batch; the host sees the gap
+     * and the drop counter counts its records, like state samples. */
+    if (zpt_send_frame_on_link(ZPT_EVENT_CAPTURE, zpt_capture_batch.payload,
+                               zpt_capture_batch.length, true) < 0) {
+        atomic_add(&zpt_capture_dropped, zpt_capture_batch.count);
+    }
+    zpt_capture_batch_clear(&zpt_capture_batch);
+}
+
+static void zpt_capture_take(const struct zpt_telemetry_record *record) {
+    uint8_t generation;
+    K_SPINLOCK(&zpt_capture_lock) { generation = zpt_capture_generation; }
+    if (record->generation != generation) {
+        return;
+    }
+    if (!zpt_capture_batch_add(&zpt_capture_batch, &record->sample.capture)) {
+        zpt_capture_send_batch();
+        (void)zpt_capture_batch_add(&zpt_capture_batch, &record->sample.capture);
+    }
+}
+
+static void zpt_capture_stop(void) { atomic_set(&zpt_capture_recording, ZPT_CAPTURE_NONE); }
+
+/* Runs while no frame is in any pipeline, so the reset and the first
+ * records come before the recording's first frame. */
+static void zpt_capture_start_between_frames(void *arg) {
+    struct zpt_capture_entry *entry = arg;
+    K_SPINLOCK(&zpt_capture_lock) {
+        zpt_capture_generation++;
+        zpt_capture_sequence = 0;
+    }
+    zpt_capture_tap_restart(&entry->tap);
+    atomic_set(&zpt_capture_recording, (atomic_val_t)(entry - zpt_capture_entries));
+    if (entry->pipeline->active) {
+        /* Replay starts from reset stages, so the recorded pipeline does
+         * too. This drops at most a sub-pixel remainder and one report
+         * interval of pending motion. */
+        zpt_pipeline_reset(entry->pipeline, ZPT_RESET_ADMINISTRATIVE);
+        const struct zpt_capture_record entered = {.kind = ZPT_CAPTURE_RECORD_ENTERED};
+        zpt_capture_submit(&entered);
+    }
+    if (atomic_get(&zpt_capture_have_keypress) != 0) {
+        const struct zpt_capture_record keypress = {
+            .kind = ZPT_CAPTURE_RECORD_KEYPRESS,
+            .time_ms = (uint32_t)atomic_get(&zpt_capture_last_keypress_ms),
+        };
+        zpt_capture_submit(&keypress);
+    }
+}
+
+static void zpt_send_capture_status(void) {
+    uint8_t payload[8 + CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES *
+                            (4 + ZPT_CAPTURE_LABEL_MAX_LENGTH)];
+    size_t offset = 0;
+    payload[offset++] = ZPT_CAPTURE_SCHEMA_VERSION;
+    payload[offset++] = (uint8_t)atomic_get(&zpt_capture_recording);
+    sys_put_le32((uint32_t)atomic_get(&zpt_capture_dropped), &payload[offset]);
+    offset += 4;
+    payload[offset++] = (uint8_t)zpt_capture_count;
+    for (size_t i = 0; i < zpt_capture_count; i++) {
+        const struct zpt_pipeline *pipeline = zpt_capture_entries[i].pipeline;
+        const size_t label_length = MIN(strlen(pipeline->stable_id), ZPT_CAPTURE_LABEL_MAX_LENGTH);
+        payload[offset++] = (uint8_t)i;
+        payload[offset++] = pipeline->active ? 1U : 0U;
+        payload[offset++] = (uint8_t)pipeline->stage_count;
+        payload[offset++] = (uint8_t)label_length;
+        // NOLINTNEXTLINE(bugprone-not-null-terminated-result)
+        memcpy(&payload[offset], pipeline->stable_id, label_length);
+        offset += label_length;
+    }
+    zpt_send_frame(ZPT_RESP_CAPTURE_STATUS, payload, (uint16_t)offset);
+}
+
+static void zpt_handle_capture_control(const uint8_t *payload, uint16_t length) {
+    if (length == 1) {
+        /* Stopping or switching recordings sends everything recorded so
+         * far before the status that confirms it. */
+        zpt_capture_stop();
+        zpt_drain_records();
+        zpt_capture_batch_clear(&zpt_capture_batch);
+        if (payload[0] < zpt_capture_count) {
+            int ret = zpt_capture_between_frames(zpt_capture_start_between_frames,
+                                                 &zpt_capture_entries[payload[0]]);
+            if (ret < 0) {
+                zpt_capture_stop();
+                LOG_WRN("Input capture didn't start (%d)", ret);
+            }
+        }
+    }
+    zpt_send_capture_status();
+}
+
+static void zpt_send_capture_description(const uint8_t *payload, uint16_t length) {
+    if (length != 1 || payload[0] >= zpt_capture_count) {
+        zpt_send_tuning_result(ZPT_REQ_CAPTURE_DESCRIBE, -ENODEV,
+                               length == 1 ? payload[0] : UINT8_MAX, UINT8_MAX, 0);
+        return;
+    }
+    /* Only the worker thread describes pipelines. */
+    static uint8_t description[ZPT_MAX_DESCRIBE_PAYLOAD];
+    const int ret = zpt_capture_describe_pipeline(zpt_capture_entries[payload[0]].pipeline,
+                                                  payload[0], description, sizeof(description));
+    if (ret < 0) {
+        zpt_send_tuning_result(ZPT_REQ_CAPTURE_DESCRIBE, ret, payload[0], UINT8_MAX, 0);
+        return;
+    }
+    zpt_send_frame(ZPT_RESP_CAPTURE_DESCRIPTION, description, (uint16_t)ret);
+}
+
+#endif /* CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE */
+
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 static void zpt_dispatch_tuning(uint8_t type, const uint8_t *payload, uint16_t length) {
     switch (type) {
@@ -889,6 +1141,16 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
         zpt_handle_state_control(payload, length);
         break;
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    case ZPT_REQ_CAPTURE_CONTROL:
+        zpt_note_contact();
+        zpt_handle_capture_control(payload, length);
+        break;
+    case ZPT_REQ_CAPTURE_DESCRIBE:
+        zpt_note_contact();
+        zpt_send_capture_description(payload, length);
+        break;
+#endif
     default:
         LOG_WRN("Unknown telemetry request 0x%02x", type);
         break;
@@ -964,30 +1226,50 @@ static void zpt_receive(void) {
     }
 }
 
+static void zpt_drain_records(void) {
+    struct zpt_telemetry_record record;
+    while (k_msgq_get(&zpt_record_queue, &record, K_NO_WAIT) == 0) {
+        const uint32_t elapsed = k_uptime_get_32() - (uint32_t)atomic_get(&zpt_last_contact);
+        if (elapsed > CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS) {
+            k_msgq_purge(&zpt_record_queue);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+            zpt_state_disable_all();
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+            zpt_capture_stop();
+            zpt_capture_batch_clear(&zpt_capture_batch);
+#endif
+            return;
+        }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+        if (record.kind == ZPT_RECORD_STATE &&
+            zpt_state_telemetry_level(record.sample.state.target_id) != ZPT_STATE_LEVEL_OFF) {
+            zpt_send_state(&record.sample.state);
+        }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+        if (record.kind == ZPT_RECORD_CAPTURE) {
+            zpt_capture_take(&record);
+        }
+#endif
+    }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    /* Send what is batched once the queue is empty, so records wait no
+     * longer than the worker takes to drain the queue. */
+    zpt_capture_send_batch();
+#endif
+}
+
 static void zpt_thread(void) {
     zpt_host_link = zpt_transports[0];
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    zpt_capture_batch_clear(&zpt_capture_batch);
+#endif
     for (;;) {
         k_sem_take(&zpt_wake, K_FOREVER);
 
         zpt_receive();
-
-        struct zpt_telemetry_record record;
-        while (k_msgq_get(&zpt_record_queue, &record, K_NO_WAIT) == 0) {
-            const uint32_t elapsed = k_uptime_get_32() - (uint32_t)atomic_get(&zpt_last_contact);
-            if (elapsed > CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS) {
-                k_msgq_purge(&zpt_record_queue);
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
-                zpt_state_disable_all();
-#endif
-                break;
-            }
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
-            if (record.kind == ZPT_RECORD_STATE &&
-                zpt_state_telemetry_level(record.sample.state.target_id) != ZPT_STATE_LEVEL_OFF) {
-                zpt_send_state(&record.sample.state);
-            }
-#endif
-        }
+        zpt_drain_records();
     }
 }
 

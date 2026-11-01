@@ -164,8 +164,11 @@ function validateEvents(fixture, path) {
     throw new Error(`${path}: events are required`);
   }
   const motionLengths = fixture.version === 1 ? [4] : [4, 5];
+  /* Recorded deadline flushes replay only through the cursor runner. */
+  const types = fixture.version === 2 && fixture.processor.kind === "cursor-pipeline"
+    ? ["motion", "keypress", "flush"] : ["motion", "keypress"];
   for (const [index, event] of fixture.events.entries()) {
-    if (!Array.isArray(event) || !["motion", "keypress"].includes(event[0])) {
+    if (!Array.isArray(event) || !types.includes(event[0])) {
       throw new Error(`${path}: invalid event ${index}`);
     }
     requireInteger(event[1], `${path}: event ${index} delta`, 0);
@@ -178,7 +181,7 @@ function validateEvents(fixture, path) {
       requireInteger(event[3], `${path}: event ${index} y`);
       if (event.length === 5) requireInteger(event[4], `${path}: event ${index} span`, 0);
     } else if (event.length !== 2) {
-      throw new Error(`${path}: keypress event ${index} only accepts delta`);
+      throw new Error(`${path}: ${event[0]} event ${index} only accepts delta`);
     }
   }
   /* Runners read times as 32-bit microseconds: about 71.6 minutes. */
@@ -260,9 +263,15 @@ function cursorHeader(fixture, overrideProfile) {
       lines.push(`P ${key} ${Number(value)}`);
     }
   }
+  if (hasRecordedFlushes(fixture)) lines.push("F");
   lines.push("E");
   return lines;
 }
+
+/* A recording's flush events say where firmware ran stage deadlines; replay
+ * then runs them only there. */
+export const hasRecordedFlushes = (fixture) =>
+  fixture.events.some((event) => event[0] === "flush");
 
 function legacyConfiguration(fixture) {
   const settings = fixture.version === 1
@@ -297,7 +306,7 @@ export function encodeRunnerInput(fixture, overrideProfile = null) {
     fixture.events.forEach((event, index) => {
       lines.push(event[0] === "motion"
         ? `M ${times[index]} ${event[2]} ${event[3]} ${useSpan ? (event[4] ?? 0) : 0}`
-        : `K ${times[index]}`);
+        : `${event[0] === "flush" ? "F" : "K"} ${times[index]}`);
     });
     return `${lines.join("\n")}\n`;
   }

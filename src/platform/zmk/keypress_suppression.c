@@ -75,6 +75,7 @@ static int keypress_suppression_init(const struct device *dev) {
     data->policy = (struct zpt_suppression_policy){
         .is_suppressed = keypress_is_suppressed,
         .context = data,
+        .keypress_window_ms = config->suppress_after_ms,
     };
     return 0;
 }

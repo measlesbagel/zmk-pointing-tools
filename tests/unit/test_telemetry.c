@@ -5,7 +5,7 @@
  * zephyr/drivers/serial/serial_test.c): host requests are injected into
  * the RX queue, service responses are captured from the TX buffer.
  *
- * The wire protocol constants below are the public protocol (v6); they
+ * The wire protocol constants below are the public protocol (v8); they
  * mirror src/service/telemetry.c, which keeps its own private copies.
  *
  * All cases of this binary belong to the single zpt_unit suite (defined in
@@ -27,9 +27,9 @@
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/service/tuning.h>
 
-/* --- Wire protocol (v6) ---------------------------------------------- */
+/* --- Wire protocol (v8) ---------------------------------------------- */
 
-#define ZPT_PROTOCOL_VERSION 7
+#define ZPT_PROTOCOL_VERSION 8
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -68,11 +68,13 @@
 
 /* Record queue owned by the service; the drop test fills it directly.
  * Same layout as the private struct zpt_telemetry_record in
- * src/service/telemetry.c (kind byte, then a one-member union). */
+ * src/service/telemetry.c (kind and generation bytes, then a union whose
+ * largest member is the state sample). */
 extern struct k_msgq zpt_record_queue;
 
 struct zpt_test_record {
     uint8_t kind;
+    uint8_t generation;
     union {
         struct zpt_state_sample state;
     } sample;
@@ -318,8 +320,10 @@ ZTEST(zpt_unit, ping) {
     tx_frame(ZPT_REQ_PING, NULL, 0);
     zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
     zassert_equal(frame_type, ZPT_RESP_ACK);
-    zassert_equal(length, 4);
+    zassert_equal(length, 8);
     zassert_equal(sys_get_le32(&payload[0]), 0u);
+    /* payload[4..7] counts capture drops; capture_records_pipeline_input,
+     * which runs earlier, drops one on purpose. */
 }
 
 ZTEST(zpt_unit, parser_resync) {
@@ -952,4 +956,193 @@ ZTEST(zpt_unit, z_capacity_fill) {
     }
     zassert_equal(index, (size_t)ZPT_FILL_TARGETS);
     zassert_equal(zpt_tuning_register(&fill_overflow_target), -ENOMEM);
+}
+
+/* --- Input capture (protocol v8) ------------------------------------- */
+
+#include <zmk/pointing_tools/observer/capture.h>
+#include <zmk/pointing_tools/service/capture.h>
+
+#define ZPT_TEST_REQ_CAPTURE_CONTROL 0x10
+#define ZPT_TEST_REQ_CAPTURE_DESCRIBE 0x11
+#define ZPT_TEST_RESP_CAPTURE_STATUS 0x8c
+#define ZPT_TEST_RESP_CAPTURE_DESCRIPTION 0x8d
+#define ZPT_TEST_EVENT_CAPTURE 0x92
+
+/* The test app has no ZMK routers to hold, so no frame can be running. */
+int zpt_capture_between_frames(void (*fn)(void *arg), void *arg) {
+    fn(arg);
+    return 0;
+}
+
+static int capture_pass(struct zpt_stage *stage, const struct zpt_signal *signal,
+                        struct zpt_stage_context *context) {
+    ARG_UNUSED(stage);
+    return zpt_stage_emit(context, signal);
+}
+
+static const struct zpt_stage_api capture_pass_api = {
+    .strategy_id = "test-pass",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
+    .output_kind = ZPT_SIGNAL_RAW_MOTION,
+    .process = capture_pass,
+};
+
+static int capture_sink_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
+    ARG_UNUSED(sink);
+    ARG_UNUSED(signal);
+    return 0;
+}
+
+static const struct zpt_sink_api capture_sink_api = {
+    .type_id = "test-sink",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_RAW_MOTION),
+    .emit = capture_sink_emit,
+};
+
+static struct zpt_stage capture_stage = {.stable_id = "test-pass-stage", .api = &capture_pass_api};
+static struct zpt_stage *capture_stages[] = {&capture_stage};
+static struct zpt_sink capture_sink = {.stable_id = "test-sink", .api = &capture_sink_api};
+static struct zpt_pipeline capture_pipeline = {
+    .stable_id = "test-capture",
+    .input_kind = ZPT_SIGNAL_RAW_MOTION,
+    .stages = capture_stages,
+    .stage_count = 1,
+    .sink = &capture_sink,
+    .dispatch_budget = 4,
+};
+
+static void capture_push(int32_t x, int32_t y) {
+    const struct zpt_signal signal = {
+        .kind = ZPT_SIGNAL_RAW_MOTION,
+        .metadata = {.observed_at_ms = k_uptime_get_32(),
+                     .sample_span_us = 1500,
+                     .flags = ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED,
+                     .source_id = 9,
+                     .resolution_cpi = 800},
+        .data.raw_motion = {.x_counts = x, .y_counts = y},
+    };
+    struct zpt_pipeline_result result;
+    zassert_ok(zpt_pipeline_push(&capture_pipeline, &signal, &result));
+}
+
+static void capture_control(const uint8_t *payload, uint16_t length, uint8_t recording) {
+    uint8_t frame_type;
+    uint8_t response[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t response_length;
+
+    tx_frame(ZPT_TEST_REQ_CAPTURE_CONTROL, payload, length);
+    zassert_ok(rx_frame(&frame_type, response, &response_length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_STATUS);
+    zassert_equal(response[0], 1, "capture schema");
+    zassert_equal(response[1], recording);
+    zassert_equal(response[6], 1, "one recordable pipeline");
+    static const uint8_t entry[] = {0,   1,   1,   12,  't', 'e', 's', 't',
+                                    '-', 'c', 'a', 'p', 't', 'u', 'r', 'e'};
+    zassert_equal(response_length, 7 + sizeof(entry));
+    zassert_mem_equal(&response[7], entry, sizeof(entry));
+}
+
+/* Collects capture batches until count records arrived; returns the
+ * concatenated record bytes and checks the sequence continues. */
+static size_t capture_records(uint8_t *records, size_t count, uint32_t *sequence) {
+    size_t offset = 0;
+    size_t received = 0;
+    while (received < count) {
+        uint8_t frame_type;
+        uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+        uint16_t length;
+        zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+        zassert_equal(frame_type, ZPT_TEST_EVENT_CAPTURE);
+        zassert_equal(sys_get_le32(&payload[0]), *sequence);
+        *sequence += payload[4];
+        received += payload[4];
+        memcpy(&records[offset], &payload[5], length - 5U);
+        offset += length - 5U;
+    }
+    zassert_equal(received, count);
+    return offset;
+}
+
+ZTEST(zpt_unit, capture_records_pipeline_input) {
+    uint8_t frame_type;
+    uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t length;
+    uint8_t records[256];
+    uint32_t sequence = 0;
+
+    zassert_ok(zpt_pipeline_validate(&capture_pipeline));
+    zassert_ok(zpt_pipeline_activate(&capture_pipeline, ZPT_RESET_PIPELINE_ENTERED));
+    zassert_ok(zpt_capture_register_pipeline(&capture_pipeline));
+
+    /* Off by default: frames and key presses before a recording send
+     * nothing, but the guard's latest key press is remembered. */
+    capture_control(NULL, 0, 0xff);
+    zpt_capture_keypress(1234);
+    capture_push(1, 1);
+    expect_no_frame(200);
+
+    /* Starting resets the pipeline and replays the remembered key press. */
+    const uint8_t start = 0;
+    capture_control(&start, 1, 0);
+    size_t bytes = capture_records(records, 2, &sequence);
+    static const uint8_t opening[] = {4, 3, 0xd2, 0x04, 0, 0};
+    zassert_equal(bytes, sizeof(opening));
+    zassert_mem_equal(records, opening, sizeof(opening));
+
+    /* A frame describes its source first; a key press follows it. */
+    const uint32_t before_ms = k_uptime_get_32();
+    capture_push(-3, 70000);
+    zpt_capture_keypress(before_ms + 1);
+    bytes = capture_records(records, 3, &sequence);
+    zassert_equal(bytes, 6 + 20 + 5);
+    static const uint8_t source[] = {2, 0xff, 9, 0, 0x20, 0x03};
+    zassert_mem_equal(records, source, sizeof(source));
+    const uint8_t *frame = &records[6];
+    zassert_equal(frame[0], 1);
+    zassert_equal(frame[1], (uint8_t)ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED);
+    zassert_true(sys_get_le32(&frame[2]) - before_ms <= 1);
+    zassert_true(sys_get_le16(&frame[6]) < 1000);
+    zassert_equal((int32_t)sys_get_le32(&frame[8]), -3);
+    zassert_equal((int32_t)sys_get_le32(&frame[12]), 70000);
+    zassert_equal(sys_get_le32(&frame[16]), 1500);
+    zassert_equal(frame[20], 3);
+    zassert_equal(sys_get_le32(&frame[21]), before_ms + 1);
+
+    /* A full queue drops records and counts them like state samples. */
+    tx_frame(ZPT_REQ_PING, NULL, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_RESP_ACK);
+    const uint32_t dropped_before = sys_get_le32(&payload[4]);
+    struct zpt_test_record dummy = {.kind = 0xff};
+    for (int i = 0; i < CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE; i++) {
+        zassert_ok(k_msgq_put(&zpt_record_queue, &dummy, K_NO_WAIT));
+    }
+    capture_push(1, 0);
+    tx_frame(ZPT_REQ_PING, NULL, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_RESP_ACK);
+    zassert_equal(sys_get_le32(&payload[4]), dropped_before + 1);
+    expect_no_frame(200);
+
+    /* Stopping ends the stream. */
+    const uint8_t stop = 0xff;
+    capture_control(&stop, 1, 0xff);
+    capture_push(1, 0);
+    expect_no_frame(200);
+
+    /* The description names the pipeline and its stages. */
+    const uint8_t describe = 0;
+    tx_frame(ZPT_TEST_REQ_CAPTURE_DESCRIBE, &describe, 1);
+    static const uint8_t description[] = {
+        0,   12,  't', 'e', 's', 't', '-', 'c', 'a', 'p', 't', 'u', 'r', 'e',
+        1,   9,   't', 'e', 's', 't', '-', 'p', 'a', 's', 's', 15,  't', 'e',
+        's', 't', '-', 'p', 'a', 's', 's', '-', 's', 't', 'a', 'g', 'e', 0,
+    };
+    expect_frame(ZPT_TEST_RESP_CAPTURE_DESCRIPTION, description, sizeof(description));
+    const uint8_t unknown = 5;
+    tx_frame(ZPT_TEST_REQ_CAPTURE_DESCRIBE, &unknown, 1);
+    const uint8_t failure[] = {
+        ZPT_TEST_REQ_CAPTURE_DESCRIBE, ZPT_TUNING_STATUS_UNKNOWN_TARGET, 5, 0xff, 0, 0, 0, 0};
+    expect_frame(ZPT_RESP_TUNING_RESULT, failure, sizeof(failure));
 }
