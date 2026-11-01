@@ -7,6 +7,7 @@
 
 import { ACTIVITIES } from "./playground-model.js";
 import { SIGNAL_KIND, parseStageFrame } from "./calibration-model.js";
+import { RECORDED_TRUTH } from "./recording-model.js";
 
 const json = (value) => JSON.stringify(value, null, 2);
 const WAIT_DEFAULT = 20;
@@ -734,7 +735,7 @@ export function createExperimentTools(context, session) {
         const metrics = result.rows.map(({ metric, unit, higherIsBetter, truth, values: scored, change, better }) => ({
           metric, unit, higherIsBetter,
           current: scored[0], candidate: scored[1], change: change[1], better: better[1],
-          truth: scored.some(Boolean) ? truth ?? "labels in the recording" : null,
+          truth: scored.some(Boolean) ? truth ?? RECORDED_TRUTH : null,
         }));
         const wins = metrics.filter(({ better: b }) => b === true).length;
         const losses = metrics.filter(({ better: b }) => b === false).length;

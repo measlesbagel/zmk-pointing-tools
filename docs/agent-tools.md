@@ -170,9 +170,10 @@ It works without agent access too.
     `sensitivityStepPercent`;
   - a short stroke faster than 250 mm/s is a flick, for `flickLagMs`.
 
-  Metrics that need labels, such as unintended motion and the scroll and text
-  axis metrics, show no value. The table says where each metric's truth
-  comes from.
+  Traces that carry their own truth from the converter, such as labelled
+  strokes or the post-typing and axis strokes of scroll and text pipelines,
+  are scored on it instead. Metrics with no truth in the selected recordings
+  show no value. The table says where each metric's truth comes from.
 - **The benchmark doesn't judge curve shape or gain.** The ideal output
   follows the curve and gain being scored, so a flatter curve or a lower gain
   can win every metric while feeling worse. Scores narrow the candidates;

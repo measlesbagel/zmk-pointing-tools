@@ -14,7 +14,7 @@
 
 import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, parseCaptureBatch,
   parseCaptureDescription, parseCaptureStatus } from "./protocol.js";
-import { NO_TRUTH, SCORE_CAVEAT, addRecords, compareScoreSets, createRecordingStats,
+import { NO_TRUTH, RECORDED_TRUTH, SCORE_CAVEAT, addRecords, compareScoreSets, createRecordingStats,
   deriveTruth, exportRecording, importRecording, resyncs } from "./recording-model.js";
 
 const STATUS_TIMEOUT_MS = 2_500;
@@ -557,7 +557,7 @@ export class Recorder {
       <table class="score-table"><thead><tr><th>Metric</th>${columns.map((name) => `<th>${escapeHtml(name)}</th>`).join("")}<th>Truth in these recordings</th></tr></thead><tbody>${
         rows.map((row) => `<tr><th scope="row">${escapeHtml(row.metric)} <small>${row.higherIsBetter ? "higher is better" : "lower is better"}</small></th>${
           row.values.map((entry, index) => `<td>${format(entry, row.unit)}${change(row, index)}</td>`).join("")
-        }<td class="muted">${escapeHtml(row.values.some(Boolean) ? row.truth ?? "from labels in the recording" : row.truth ? `${row.truth}; none found` : NO_TRUTH)}</td></tr>`).join("")
+        }<td class="muted">${escapeHtml(row.values.some(Boolean) ? row.truth ?? RECORDED_TRUTH : row.truth ? `${row.truth}; none found` : NO_TRUTH)}</td></tr>`).join("")
       }</tbody></table>
       <p class="temporary-warning">${escapeHtml(caveat)}</p>
       ${warnings.length ? `<details><summary>${warnings.length} conversion warnings</summary><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>` : ""}`;

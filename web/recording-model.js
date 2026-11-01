@@ -37,6 +37,10 @@ export const DERIVED_TRUTH = {
   axisSwitches: null,
 };
 
+/* Truth the converter wrote into the trace itself: labelled strokes, and
+ * for scroll and text pipelines post-typing and unlabelled strokes. */
+export const RECORDED_TRUTH = "the trace's own strokes from the converter (labels, post-typing strokes)";
+
 export const NO_TRUTH = "needs strokes labelled in the recording (unintended motion, or a scroll or text axis)";
 
 export const SCORE_CAVEAT = "The benchmark doesn't judge curve shape or gain: the ideal output follows the curve and gain being scored, so a flatter curve or a lower gain can win every metric while feeling worse. Check curve and gain changes on the keyboard.";
