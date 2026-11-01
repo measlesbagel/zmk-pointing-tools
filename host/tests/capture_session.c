@@ -11,7 +11,8 @@
  * Some key presses land while a frame runs, after the guard was read for
  * it. Partway through, a recording starts through zpt_capture_tap_start,
  * as the telemetry service starts one. Later a few records are dropped as
- * a full queue drops them, and the tap resyncs at the next rest.
+ * a full queue drops them, and a tuning change lands mid-stroke, as an
+ * agent's A/B preview does; the tap resyncs at the next rest after each.
  *
  * Prints one JSON object: the protocol bytes a host would receive (the
  * capture description and batches, as hex), the settings as a tuner
@@ -44,7 +45,9 @@
 #define MAX_OUTPUTS 4096
 #define CAPTURE_DESCRIBE_RESPONSE 0x8d
 #define CAPTURE_BATCH_EVENT 0x92
-#define KEYPRESS_WINDOW_MS 40U
+/* Longer than the resync rest, so a key press is re-recorded after one. */
+#define KEYPRESS_WINDOW_MS 100U
+#define MAX_PROFILE 4096
 #define RESOLUTION_CPI 800U
 #define SOURCE_ID 3U
 
@@ -97,6 +100,10 @@ struct session {
     uint32_t dropped;
     uint32_t injected_keypresses;
     uint32_t late_flushes;
+    uint32_t settings_hash;
+    uint32_t start_hash;
+    /* Profile exports before and after the tuning change. */
+    char profiles[2][MAX_PROFILE];
     struct zpt_capture_batch batch;
     uint8_t stream[MAX_STREAM];
     size_t stream_length;
@@ -213,6 +220,8 @@ static void capture_submit(void *context, const struct zpt_capture_record *recor
     numbered.sequence = session.sequence++;
     if (record->kind == ZPT_CAPTURE_RECORD_ENTERED) {
         session.trace = (int32_t)session.entered++;
+    } else if (record->kind == ZPT_CAPTURE_RECORD_SETTINGS_CHANGED) {
+        session.trace = -1;
     }
     if (session.drop_remaining > 0U) {
         session.drop_remaining--;
@@ -231,6 +240,11 @@ static void capture_submit(void *context, const struct zpt_capture_record *recor
         keypress();
         session.injected_keypresses++;
     }
+}
+
+static uint32_t capture_settings_hash(void *context) {
+    (void)context;
+    return session.settings_hash;
 }
 
 static bool capture_take_resync(void *context) {
@@ -354,6 +368,7 @@ static int build_pipeline(void) {
         .submit = capture_submit,
         .sub_ms_us = capture_sub_ms_us,
         .take_resync = capture_take_resync,
+        .settings_hash = capture_settings_hash,
     };
     zpt_capture_tap_attach(&session.tap, &session.pipeline, &session.capture_sink);
     if (zpt_pipeline_validate(&session.pipeline) < 0 ||
@@ -403,8 +418,17 @@ static int push_frame(int32_t x, int32_t y, uint32_t span_us, uint32_t flags) {
         .data.raw_motion = {.x_counts = x, .y_counts = y},
     };
     struct zpt_pipeline_result result;
-    return zpt_pipeline_push(&session.pipeline, &signal, &result);
+    const int ret = zpt_pipeline_push(&session.pipeline, &signal, &result);
+    /* The tap must thaw the guard once the pipeline is done with a frame. */
+    if (session.frozen) {
+        fputs("keypress guard left frozen after a frame\n", stderr);
+        return -EIO;
+    }
+    return ret;
 }
+
+static int change_settings(void);
+static void export_profile(char *out, size_t capacity);
 
 /* What starting a recording does in the telemetry service
  * (zpt_capture_start_between_frames). */
@@ -412,6 +436,9 @@ static void start_recording(void) {
     session.sequence = 0;
     session.resync = false;
     session.trace = -1;
+    session.settings_hash = settings_hash();
+    session.start_hash = session.settings_hash;
+    export_profile(session.profiles[0], sizeof(session.profiles[0]));
     session.recording = true;
     zpt_capture_tap_start(&session.tap);
 }
@@ -462,11 +489,21 @@ static int run_session(void) {
                          (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
             session.drop_remaining = 3;
         }
+        /* An A/B preview mid-stroke. */
+        if (i == 4) {
+            ret = ret < 0 ? ret
+                          : stroke(30, (int32_t)strokes[i][1], (int32_t)strokes[i][2],
+                                   (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
+            ret = ret < 0 ? ret : change_settings();
+        }
         ret = ret < 0 ? ret
                       : stroke((uint32_t)strokes[i][0], strokes[i][1], strokes[i][2],
                                (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
         keypress();
-        ret = ret < 0 ? ret : advance(random_between(10000, 300000));
+        /* After the drop and the tuning change, rest just past the resync
+         * gap but inside the guard's window, so the resync re-records the
+         * key press that ended the stroke. */
+        ret = ret < 0 ? ret : advance(i == 2 || i == 4 ? 60000U : random_between(10000, 300000));
     }
     /* Let every pending deadline run, then end the recording. */
     ret = ret < 0 ? ret : advance(1000000);
@@ -480,24 +517,52 @@ static void print_hex(const uint8_t *bytes, size_t length) {
     }
 }
 
-static void print_profile(void) {
+/* The current settings as a tuner profile export. */
+static void export_profile(char *out, size_t capacity) {
     size_t count;
     const struct tuned_stage *tuned = tuned_stages(&count);
-    printf("\"profile\":{\"schema\":\"zmk-pointing-tools/tuning-profile\",\"version\":1,"
-           "\"targets\":[");
-    for (size_t i = 0; i < count; i++) {
-        printf("%s{\"stableId\":\"%s\",\"kind\":4,\"parameters\":[", i == 0 ? "" : ",",
-               tuned[i].stable_id);
-        for (size_t j = 0; j < tuned[i].ops->parameter_count; j++) {
+    size_t used = (size_t)snprintf(out, capacity,
+                                   "{\"schema\":\"zmk-pointing-tools/tuning-profile\","
+                                   "\"version\":1,\"targets\":[");
+    for (size_t i = 0; i < count && used < capacity; i++) {
+        used += (size_t)snprintf(&out[used], capacity - used,
+                                 "%s{\"stableId\":\"%s\",\"kind\":4,\"parameters\":[",
+                                 i == 0 ? "" : ",", tuned[i].stable_id);
+        for (size_t j = 0; j < tuned[i].ops->parameter_count && used < capacity; j++) {
             const struct zpt_tuning_parameter *parameter = &tuned[i].ops->parameters[j];
             int32_t value = 0;
             (void)tuned[i].ops->get(tuned[i].config, parameter->id, &value);
-            printf("%s{\"key\":\"%s\",\"value\":%" PRId32 ",\"compiled\":%" PRId32 "}",
-                   j == 0 ? "" : ",", parameter->key, value, value);
+            used += (size_t)snprintf(&out[used], capacity - used,
+                                     "%s{\"key\":\"%s\",\"value\":%" PRId32 ",\"compiled\":%" PRId32
+                                     "}",
+                                     j == 0 ? "" : ",", parameter->key, value, value);
         }
-        printf("]}");
+        if (used < capacity) {
+            used += (size_t)snprintf(&out[used], capacity - used, "]}");
+        }
     }
-    printf("]}");
+    if (used < capacity) {
+        (void)snprintf(&out[used], capacity - used, "]}");
+    }
+}
+
+/* A tuning change landing between frames, as the service's
+ * zpt_capture_settings_changed reports it. */
+static int change_settings(void) {
+    for (size_t j = 0; j < zpt_cursor_transfer_tuning_ops.parameter_count; j++) {
+        const struct zpt_tuning_parameter *parameter =
+            &zpt_cursor_transfer_tuning_ops.parameters[j];
+        if (strcmp(parameter->key, "scale-multiplier") == 0 &&
+            zpt_cursor_transfer_tuning_ops.put(&session.transfer, parameter->id, 2) < 0) {
+            return -EINVAL;
+        }
+    }
+    session.settings_hash = settings_hash();
+    const struct zpt_capture_record changed = {.kind = ZPT_CAPTURE_RECORD_SETTINGS_CHANGED};
+    capture_submit(NULL, &changed);
+    session.resync = true;
+    export_profile(session.profiles[1], sizeof(session.profiles[1]));
+    return 0;
 }
 
 int main(void) {
@@ -506,7 +571,7 @@ int main(void) {
         return 1;
     }
     uint8_t description[512];
-    const int length = zpt_capture_describe_pipeline(&session.pipeline, 0, settings_hash(),
+    const int length = zpt_capture_describe_pipeline(&session.pipeline, 0, session.start_hash,
                                                      description, sizeof(description));
     if (length < 0) {
         fputs("pipeline description failed\n", stderr);
@@ -520,7 +585,7 @@ int main(void) {
     print_hex(description, (size_t)length);
     print_hex(session.stream, session.stream_length);
     printf("\",");
-    print_profile();
+    printf("\"profiles\":[%s,%s]", session.profiles[0], session.profiles[1]);
     printf(",\"dropped\":%" PRIu32 ",\"injectedKeypresses\":%" PRIu32 ",\"lateFlushes\":%" PRIu32
            ",\"outputs\":[",
            session.dropped, session.injected_keypresses, session.late_flushes);

@@ -23,7 +23,8 @@ const description = { pipelineId: 0, stableId: "right-cursor", stages,
   settingsHash: captureSettingsHash(profile, stages.map((stage) => stage.stableId)) };
 
 let sequence = 0;
-const entered = () => ({ sequence: sequence++, kind: CAPTURE.RECORD_ENTERED });
+const entered = (settingsHash = description.settingsHash) =>
+  ({ sequence: sequence++, kind: CAPTURE.RECORD_ENTERED, settingsHash });
 const source = (cpi = 800, link = CAPTURE.LINK_BLE) =>
   ({ sequence: sequence++, kind: CAPTURE.RECORD_SOURCE, link, sourceId: 2, cpi });
 const frame = (timeMs, timeUs, x, flags = 0, spanUs = 1000) =>
@@ -84,19 +85,25 @@ test("a drop ends a trace and the resync at the next rest starts a full one", ()
   assert.deepEqual(warnings, ["3 records dropped before 15"]);
 });
 
-test("refuses a profile whose settings the device didn't record with", () => {
+test("each trace takes the profile its settings hash names", () => {
   sequence = 0;
-  const records = [entered(), source(), frame(10, 0, 1)];
-  const edited = structuredClone(profile);
-  edited.targets[0].parameters[0].value = 4;
-  assert.throws(() => captureToFixtures({ description, records }, edited),
-    /doesn't hold the settings right-cursor recorded with/);
-  /* A status sent while recording reports the settings too. */
-  const statuses = [{ recording: 0, pipelines: [{ id: 0, settingsHash: 1 }] }];
-  assert.throws(() => captureToFixtures({ description, statuses, records }, profile),
-    /settings hash 1,/);
-  assert.throws(() => captureToFixtures({ description: { ...description,
-    settingsHash: undefined }, records }, profile), /doesn't hold the settings/);
+  const previewed = structuredClone(profile);
+  previewed.targets[0].parameters[0].value = 4;
+  const previewedHash = captureSettingsHash(previewed, stages.map((stage) => stage.stableId));
+  /* An A/B preview mid-recording: firmware resyncs at the next rest with
+   * the new settings' hash on the entered record. */
+  const records = [entered(), source(), frame(10, 0, 1), frame(11, 0, 1),
+    { sequence: sequence++, kind: CAPTURE.RECORD_SETTINGS_CHANGED }, frame(12, 0, 1),
+    entered(previewedHash), source(), frame(60, 0, 1)];
+  const both = captureToFixtures({ description, records }, [previewed, profile]);
+  assert.deepEqual(both.fixtures.map((fixture) => fixture.processor.profile), [profile, previewed]);
+  assert.equal(both.fixtures[1].processor.stages[2].settings["scale-multiplier"], 4);
+  assert.deepEqual(both.fixtures.map((fixture) => fixture.events.length), [2, 1]);
+  /* A trace no profile matches is skipped, the rest still convert. */
+  const one = captureToFixtures({ description, records }, profile);
+  assert.deepEqual(one.fixtures.map((fixture) => fixture.events.length), [2]);
+  assert.match(one.warnings.at(-1), new RegExp(`trace from record 8 skipped: .*` +
+    `settings hash ${previewedHash.toString(16)}`));
 });
 
 test("events recorded after a later one carry the millisecond their stages saw", () => {
@@ -146,5 +153,5 @@ test("parses capture batches with consecutive sequences", () => {
 
 test("streams from firmware before protocol v8 are refused", () => {
   assert.throws(() => decodeCaptureStream(encodeFrame(MESSAGE.DESCRIBE_RESPONSE, Uint8Array.of(7))),
-    /firmware protocol 7 has no input capture/);
+    /Firmware protocol 7 does not match tuner protocol 8/);
 });

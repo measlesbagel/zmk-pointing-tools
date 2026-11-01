@@ -25,7 +25,6 @@ import {
   parseTuningResult,
   parseTuningTargetMetadata,
   parseTuningTargets,
-  supportsCapture,
 } from "./protocol.js";
 
 test("decodes fragmented and adjacent frames", () => {
@@ -47,25 +46,18 @@ test("decodes fragmented and adjacent frames", () => {
   );
 });
 
-test("accepts firmware from the oldest supported protocol on", () => {
+test("parses the version-only description", () => {
   assert.deepEqual(parseDescribe(Uint8Array.of(8)), { version: 8 });
-  /* v7 firmware keeps working; only capture needs v8. */
-  assert.deepEqual(parseDescribe(Uint8Array.of(7)), { version: 7 });
-  assert.equal(supportsCapture(7), false);
-  assert.equal(supportsCapture(8), true);
-  assert.throws(() => parseDescribe(Uint8Array.of(6)), /Firmware protocol 6 isn't supported/);
-  assert.throws(() => parseDescribe(Uint8Array.of(9)), /Firmware protocol 9 isn't supported/);
+  assert.throws(() => parseDescribe(Uint8Array.of(7)),
+    /Firmware protocol 7 does not match tuner protocol 8/);
 });
 
-test("parses acknowledgements with and without drop counters", () => {
+test("parses acknowledgements", () => {
   const ack = new Uint8Array(8);
   new DataView(ack.buffer).setUint32(0, 42, true);
   new DataView(ack.buffer).setUint32(4, 7, true);
   assert.deepEqual(parseAck(ack), { stateDropped: 42, captureDropped: 7 });
-  /* v7 firmware counts state drops only; without state telemetry, neither. */
-  assert.deepEqual(parseAck(ack.slice(0, 4)), { stateDropped: 42, captureDropped: null });
-  assert.deepEqual(parseAck(new Uint8Array()), { stateDropped: null, captureDropped: null });
-  assert.throws(() => parseAck(new Uint8Array(6)), /Invalid acknowledgement length/);
+  assert.throws(() => parseAck(new Uint8Array(4)), /Invalid acknowledgement length/);
 });
 
 test("parses capture status and descriptions with settings hashes", () => {

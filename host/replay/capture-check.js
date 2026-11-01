@@ -29,20 +29,27 @@ if (generated.status !== 0) {
 }
 const session = JSON.parse(generated.stdout);
 const bytes = Uint8Array.from(session.stream.match(/../g), (hex) => parseInt(hex, 16));
-const { fixtures, warnings } = captureToFixtures(decodeCaptureStream(bytes), session.profile,
+const { fixtures, warnings } = captureToFixtures(decodeCaptureStream(bytes), session.profiles,
   { id: "capture-check" });
 
 const failures = [];
-/* The session drops records once, so the recording replays as two traces:
- * the one before the drop, and the one the tap resynced at a rest. */
+/* The session drops records once and changes settings once; the tap
+ * resyncs at a rest after each, so every stretch replays as its own trace
+ * with the profile it ran. */
 const traces = Math.max(...session.outputs.map(([trace]) => trace)) + 1;
 if (session.dropped === 0) failures.push("the session should drop records");
-if (traces < 2) failures.push(`the session should resync after its drop (${traces} traces)`);
+if (traces < 3) failures.push(`the session should resync after its drop (${traces} traces)`);
 if (fixtures.length !== traces) failures.push(`expected ${traces} traces, got ${fixtures.length}`);
-const expectedWarnings = warnings.filter((warning) => !/records dropped before/.test(warning));
+const expectedWarnings = warnings.filter((warning) =>
+  !/records dropped before|settings changed while recording/.test(warning));
+const profilesUsed = new Set(fixtures.map((fixture) => JSON.stringify(fixture.processor.profile)));
+if (profilesUsed.size !== 2) failures.push(`expected traces of both profiles, got ${profilesUsed.size}`);
 if (expectedWarnings.length > 0) failures.push(`unexpected warnings: ${expectedWarnings.join("; ")}`);
 if (session.injectedKeypresses === 0 || session.lateFlushes === 0) {
   failures.push("the session should land key presses mid-frame and run flushes late");
+}
+if (!fixtures.slice(1).some((fixture) => fixture.events[0][0] === "keypress")) {
+  failures.push("a trace after a resync should start with the key press the guard still holds");
 }
 const events = fixtures.flatMap((fixture) => fixture.events);
 const count = (type) => events.filter((event) => event[0] === type).length;

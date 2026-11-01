@@ -58,9 +58,6 @@ const elements = Object.fromEntries(
 
 let transport;
 let protocolReady = false;
-/* The version the keyboard answered with; older firmware lacks newer
- * features (see web/protocol.js). */
-let protocolVersion = null;
 let simulator;
 let heartbeat;
 let tuningTargets = new Map();
@@ -132,7 +129,6 @@ function escapeHtml(value) {
 
 function setDescription(description) {
   protocolReady = true;
-  protocolVersion = description.version;
   stateDirty = true;
   notice(`Protocol v${description.version} connected.`);
 }
@@ -488,11 +484,9 @@ function handleFrame(frame) {
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
     updateHeartbeat();
-    if (ack.stateDropped !== null) {
-      stateStatus.dropped = ack.stateDropped;
-      stateDirty = true;
-      notice(`${ack.stateDropped} state samples dropped.`);
-    }
+    stateStatus.dropped = ack.stateDropped;
+    stateDirty = true;
+    notice(`${ack.stateDropped} state samples dropped.`);
   } else if (frame.type === MESSAGE.STATE_SAMPLE) addStateEvent(parseStateSample(frame.payload));
   else if (frame.type === MESSAGE.TUNING_TARGETS_RESPONSE) {
     tuningRequests.complete(MESSAGE.TUNING_TARGETS_REQUEST);
@@ -942,7 +936,7 @@ agentBridge = new AgentBridge(document.getElementById("agent"), {
       return {
         connection: transport ? "keyboard" : simulator ? "simulator" : "none",
         transport: transport?.label ?? null,
-        protocolVersion: protocolReady ? protocolVersion : null,
+        protocolVersion: protocolReady ? PROTOCOL_VERSION : null,
         tuningTargets: targets.length,
         modifiedParameters: targets.reduce((count, target) =>
           count + target.parameters.filter(({ current, compiled }) => current !== compiled).length, 0),

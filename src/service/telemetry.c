@@ -265,8 +265,20 @@ static void zpt_state_disable_all(void) {
 
 #endif
 
+#if IS_ENABLED(CONFIG_ZTEST)
+/* Unit tests make the link refuse this many droppable frames, as a
+ * Bluetooth link out of credits does. */
+atomic_t zpt_test_refuse_droppable; // NOLINT(misc-use-internal-linkage)
+#endif
+
 static int zpt_send_frame_on_link(uint8_t type, const uint8_t *payload, uint16_t length,
                                   bool droppable) {
+#if IS_ENABLED(CONFIG_ZTEST)
+    if (droppable && atomic_get(&zpt_test_refuse_droppable) > 0) {
+        atomic_dec(&zpt_test_refuse_droppable);
+        return -ENOBUFS;
+    }
+#endif
     const uint8_t header[] = {ZPT_FRAME_MAGIC_0, ZPT_FRAME_MAGIC_1, type, (uint8_t)(length & 0xff),
                               (uint8_t)(length >> 8)};
     return zpt_host_link->send(header, sizeof(header), payload, length, droppable);
@@ -635,7 +647,7 @@ static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) 
 BUILD_ASSERT(ZPT_CAPTURE_STATUS_HEADER_SIZE +
                      CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES *
                          ZPT_CAPTURE_STATUS_ENTRY_SIZE <=
-                 ZPT_MAX_DESCRIBE_PAYLOAD,
+                 sizeof(zpt_large_payload),
              "capture status exceeds the response buffer");
 
 struct zpt_capture_entry {
@@ -652,8 +664,11 @@ static size_t zpt_capture_count;
 /* The entry being recorded, or ZPT_CAPTURE_NONE. Read on every frame of
  * every registered pipeline, the only cost while nothing records. */
 static atomic_t zpt_capture_recording = ATOMIC_INIT(ZPT_CAPTURE_NONE);
-/* Records were dropped since the tap last resynced. */
+/* Records were dropped or settings changed since the tap last resynced. */
 static atomic_t zpt_capture_resync;
+/* The recorded pipeline's settings hash, for its entered records. Set
+ * while no frame runs: at the start and when a tuning change lands. */
+static atomic_t zpt_capture_hash;
 /* Numbers recordings, so the worker drops records of an earlier one, and
  * the records of the current one; both under the lock. */
 static struct k_spinlock zpt_capture_lock;
@@ -709,6 +724,13 @@ static bool zpt_capture_take_resync(void *context) {
     return atomic_clear(&zpt_capture_resync) != 0;
 }
 
+static uint32_t zpt_capture_current_hash(void *context) {
+    ARG_UNUSED(context);
+    return (uint32_t)atomic_get(&zpt_capture_hash);
+}
+
+static uint32_t zpt_capture_settings_hash(const struct zpt_pipeline *pipeline);
+
 int zpt_capture_register_pipeline(struct zpt_pipeline *pipeline) {
     if (pipeline == NULL) {
         return -EINVAL;
@@ -722,6 +744,7 @@ int zpt_capture_register_pipeline(struct zpt_pipeline *pipeline) {
         .submit = zpt_capture_submit,
         .sub_ms_us = zpt_capture_sub_ms_us,
         .take_resync = zpt_capture_take_resync,
+        .settings_hash = zpt_capture_current_hash,
         .context = entry,
     };
     entry->pipeline = pipeline;
@@ -731,10 +754,17 @@ int zpt_capture_register_pipeline(struct zpt_pipeline *pipeline) {
 }
 
 void zpt_capture_settings_changed(void) {
-    if (atomic_get(&zpt_capture_recording) != ZPT_CAPTURE_NONE) {
-        const struct zpt_capture_record record = {.kind = ZPT_CAPTURE_RECORD_SETTINGS_CHANGED};
-        zpt_capture_submit(NULL, &record);
+    const atomic_val_t recording = atomic_get(&zpt_capture_recording);
+    if (recording == ZPT_CAPTURE_NONE) {
+        return;
     }
+    /* Called with every router held, after the change landed: the next
+     * entered record, at the resync this asks for, carries the new hash. */
+    atomic_set(&zpt_capture_hash,
+               (atomic_val_t)zpt_capture_settings_hash(zpt_capture_entries[recording].pipeline));
+    const struct zpt_capture_record record = {.kind = ZPT_CAPTURE_RECORD_SETTINGS_CHANGED};
+    zpt_capture_submit(NULL, &record);
+    atomic_set(&zpt_capture_resync, 1);
 }
 
 /* Send the batch if the link has room, else keep it. A recording that
@@ -783,6 +813,7 @@ static void zpt_capture_start_between_frames(void *arg) {
         zpt_capture_sequence = 0;
     }
     atomic_clear(&zpt_capture_resync);
+    atomic_set(&zpt_capture_hash, (atomic_val_t)zpt_capture_settings_hash(entry->pipeline));
     atomic_set(&zpt_capture_recording, (atomic_val_t)(entry - zpt_capture_entries));
     zpt_capture_tap_start(&entry->tap);
 }

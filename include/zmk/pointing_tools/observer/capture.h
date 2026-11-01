@@ -25,9 +25,10 @@
  * header, so a batch fits the default Bluetooth credit budget. */
 #define ZPT_CAPTURE_BATCH_MAX_PAYLOAD 119
 #define ZPT_CAPTURE_RECORD_MAX_SIZE 20
-/* After a drop, the tap resyncs at the first frame that follows at least
- * this long a pause, or the coalescer's report interval if longer, with no
- * stage deadline pending: the acceleration stage's restart gap
+/* After a drop, a settings change, or a change of source, resolution, or
+ * link, the tap resyncs at the first frame that follows at least this long
+ * a pause, or the coalescer's report interval if longer, with no stage
+ * deadline pending: the acceleration stage's restart gap
  * (ZPT_CURSOR_ACCELERATION_RESTART_MS). */
 #define ZPT_CAPTURE_RESYNC_REST_MS 40U
 
@@ -39,7 +40,8 @@ enum zpt_capture_record_kind {
     /* The key press the pipeline's keypress guard decides the next frame
      * with, at the time the guard holds. */
     ZPT_CAPTURE_RECORD_KEYPRESS = 3,
-    /* The pipeline was activated or reset: its stages start from reset. */
+    /* The pipeline was activated or reset: its stages start from reset,
+     * with the settings the hash identifies. */
     ZPT_CAPTURE_RECORD_ENTERED = 4,
     /* The pipeline was deactivated. */
     ZPT_CAPTURE_RECORD_LEFT = 5,
@@ -74,6 +76,8 @@ struct zpt_capture_record {
     int32_t x;
     int32_t y;
     uint32_t span_us;
+    /* Entered record: the pipeline's settings hash. */
+    uint32_t settings_hash;
 };
 
 /* Encode one record without its sequence; out must hold
@@ -83,13 +87,16 @@ size_t zpt_capture_record_encode(const struct zpt_capture_record *record, uint8_
 /* Where a tap's records go. recording is checked first on every frame, so
  * it must be cheap; submit numbers and stores a record; sub_ms_us returns
  * how many microseconds into time_ms it is now, or 999 once time_ms has
- * passed; take_resync returns and clears whether records were dropped since
- * it was last asked. Callbacks run on the thread that drives the pipeline. */
+ * passed; take_resync returns and clears whether records were dropped or
+ * settings changed since it was last asked; settings_hash returns the
+ * recorded pipeline's settings hash now. Callbacks run on the thread that
+ * drives the pipeline. */
 struct zpt_capture_sink {
     bool (*recording)(void *context);
     void (*submit)(void *context, const struct zpt_capture_record *record);
     uint16_t (*sub_ms_us)(void *context, uint32_t time_ms);
     bool (*take_resync)(void *context);
+    uint32_t (*settings_hash)(void *context);
     void *context;
 };
 
@@ -110,6 +117,8 @@ struct zpt_capture_tap {
     bool have_last_frame;
     bool frozen;
     bool replayable;
+    /* The source, resolution, or link changed: resync at the next rest. */
+    bool resync_pending;
 };
 
 /* Install the tap as the pipeline's observer. Call while no frame runs. */

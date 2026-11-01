@@ -4,15 +4,18 @@
 /* Turns a firmware input capture (docs/protocol.md, "Input capture") into
  * fixture v2 traces that replay through the cursor runner.
  *
- *   node host/replay/capture.js --stream capture.bin --profile profile.json \
- *     --out trace.json [--id my-trace] [--device right-ball] [--provenance "…"]
+ *   node host/replay/capture.js --stream capture.bin --profile a.json \
+ *     [--profile b.json …] --out trace.json [--id my-trace] [--device right-ball] \
+ *     [--provenance "…"]
  *
  * The stream is the device's protocol bytes as received: a capture
  * description (0x8d) and the capture batches (0x92) of one recording; other
- * frames are ignored. The profile is the tuner's export
- * (zmk-pointing-tools/tuning-profile v1) of the settings the device ran
- * while recording. A recording becomes one trace per stretch the pipeline
- * ran unchanged; see captureToFixtures. */
+ * frames are ignored. Each profile is a tuner export
+ * (zmk-pointing-tools/tuning-profile v1) of settings the device ran while
+ * recording, such as the two sides of an A/B comparison. A recording
+ * becomes one trace per stretch the pipeline ran unchanged, each with the
+ * profile whose settings hash its entered record carries; see
+ * captureToFixtures. */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,7 +32,6 @@ import {
   parseCaptureDescription,
   parseCaptureStatus,
   parseDescribe,
-  supportsCapture,
 } from "../../web/protocol.js";
 
 /* Firmware stage strategies and the cursor runner's stage types. */
@@ -59,12 +61,8 @@ export function decodeCaptureStream(bytes) {
   const records = [];
   for (const frame of decoder.push(bytes)) {
     if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
-      /* Capture needs protocol v8; a stream that includes the handshake
-       * must show it. */
-      const { version } = parseDescribe(frame.payload);
-      if (!supportsCapture(version)) {
-        throw new Error(`firmware protocol ${version} has no input capture; it needs version 8`);
-      }
+      /* A stream that includes the handshake must be from v8 firmware. */
+      parseDescribe(frame.payload);
     } else if (frame.type === MESSAGE.CAPTURE_DESCRIPTION_RESPONSE) {
       description = parseCaptureDescription(frame.payload);
     } else if (frame.type === MESSAGE.CAPTURE_STATUS_RESPONSE) {
@@ -77,23 +75,11 @@ export function decodeCaptureStream(bytes) {
   return { description, statuses, records };
 }
 
-/* The profile must hold the settings the device ran: its hash has to match
- * the one the device reported in the description and in every status sent
- * while recording this pipeline. */
-function checkSettings({ description, statuses = [] }, profile) {
+/* The profile whose settings hash is the one the device ran a trace with,
+ * or undefined. */
+function matchingProfile(description, profiles, settingsHash) {
   const stageIds = description.stages.map((stage) => stage.stableId);
-  const expected = captureSettingsHash(profile, stageIds);
-  const reported = [description.settingsHash, ...statuses
-    .filter((status) => status.recording === description.pipelineId)
-    .map((status) => status.pipelines.find((entry) => entry.id === description.pipelineId)
-      ?.settingsHash)
-    .filter((hash) => hash !== undefined)];
-  const mismatch = reported.find((hash) => hash !== expected);
-  if (reported.some((hash) => hash !== expected)) {
-    throw new Error(`the profile doesn't hold the settings ${description.stableId} recorded ` +
-      `with (settings hash ${mismatch?.toString(16)}, profile ${expected.toString(16)}); ` +
-      "export the profile from the keyboard right before recording");
-  }
+  return profiles.find((profile) => captureSettingsHash(profile, stageIds) === settingsHash);
 }
 
 function cursorStages(description, profile) {
@@ -144,7 +130,7 @@ function segments(records, warnings) {
     switch (record.kind) {
       case CAPTURE.RECORD_ENTERED:
         end(current === null ? null : "the pipeline was entered again");
-        current = { source: null, events: [] };
+        current = { source: null, events: [], settingsHash: record.settingsHash };
         break;
       case CAPTURE.RECORD_LEFT:
         end(null);
@@ -208,23 +194,36 @@ function fixtureEvents(segment, windowMs) {
   return { events: out, spans, startMs: baseMs };
 }
 
-/* Fixture v2 traces from a decoded capture and the settings it ran with.
+/* Fixture v2 traces from a decoded capture and the settings it ran with:
+ * one profile, or several when settings changed while recording. A trace
+ * whose settings hash no profile matches is skipped with a warning.
  * Returns { fixtures, warnings }. */
-export function captureToFixtures(capture, profile, options = {}) {
+export function captureToFixtures(capture, profiles, options = {}) {
   const { description, records } = capture;
-  validateProfile(profile);
-  const stages = cursorStages(description, profile);
-  checkSettings(capture, profile);
+  profiles = Array.isArray(profiles) ? profiles : [profiles];
+  for (const profile of profiles) {
+    validateProfile(profile);
+    cursorStages(description, profile);
+  }
   const windowMs = description.stages.find((stage) => stage.strategy === "coherent-displacement")
     ?.fixed["suppress-after-keypress-ms"] ?? 0;
   const warnings = [];
   /* A stretch without frames (only flushes or key presses) replays nothing. */
   const parts = segments(records, warnings).filter((segment) => segment.source !== null)
-    .map((segment) => ({ segment,
-    converted: fixtureEvents(segment, windowMs) })).filter(({ converted }) => converted !== null);
+    .map((segment) => ({ segment, converted: fixtureEvents(segment, windowMs),
+      profile: matchingProfile(description, profiles, segment.settingsHash) }))
+    .filter(({ converted }) => converted !== null)
+    .filter(({ segment, profile }) => {
+      if (profile === undefined) {
+        warnings.push(`trace from record ${segment.events[0].sequence} skipped: no profile ` +
+          `holds the settings it ran with (settings hash ${segment.settingsHash?.toString(16)}); ` +
+          "export a profile from the keyboard for each setting the recording ran");
+      }
+      return profile !== undefined;
+    });
   if (parts.length === 0) warnings.push("the recording has no replayable frames");
   const id = options.id ?? `capture-${description.stableId}`;
-  const fixtures = parts.map(({ segment, converted }, index) => {
+  const fixtures = parts.map(({ segment, converted, profile }, index) => {
     const { events, spans, startMs } = converted;
     const frames = segment.events.filter((event) => event.kind === CAPTURE.RECORD_FRAME);
     const transported = frames.some((frame) => frame.flags & SIGNAL_FLAG_TRANSPORTED);
@@ -242,6 +241,7 @@ export function captureToFixtures(capture, profile, options = {}) {
           pipeline: description.stableId,
           sourceId: segment.source.sourceId,
           firstSequence: segment.events[0].sequence ?? null,
+          settingsHash: segment.settingsHash,
           /* Device uptime in milliseconds at fixture time zero. */
           startMs,
         },
@@ -255,7 +255,7 @@ export function captureToFixtures(capture, profile, options = {}) {
       processor: {
         kind: "cursor-pipeline",
         link: segment.source.link === CAPTURE.LINK_BLE ? "ble" : "usb",
-        stages,
+        stages: cursorStages(description, profile),
         profile,
       },
       events,
@@ -269,7 +269,7 @@ function main() {
   const { values } = parseArgs({
     options: {
       stream: { type: "string" },
-      profile: { type: "string" },
+      profile: { type: "string", multiple: true },
       out: { type: "string" },
       id: { type: "string" },
       device: { type: "string" },
@@ -277,12 +277,13 @@ function main() {
     },
   });
   if (!values.stream || !values.profile || !values.out) {
-    console.error("usage: capture.js --stream <bytes> --profile <profile.json> --out <trace.json>");
+    console.error("usage: capture.js --stream <bytes> --profile <profile.json> [--profile …] " +
+      "--out <trace.json>");
     process.exit(2);
   }
   const capture = decodeCaptureStream(new Uint8Array(readFileSync(values.stream)));
-  const profile = JSON.parse(readFileSync(values.profile, "utf8"));
-  const { fixtures, warnings } = captureToFixtures(capture, profile, values);
+  const profiles = values.profile.map((path) => JSON.parse(readFileSync(path, "utf8")));
+  const { fixtures, warnings } = captureToFixtures(capture, profiles, values);
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   fixtures.forEach((fixture, index) => {
     const path = fixtures.length === 1 ? values.out

@@ -43,6 +43,9 @@ size_t zpt_capture_record_encode(const struct zpt_capture_record *record, uint8_
     case ZPT_CAPTURE_RECORD_FLUSH:
         put_le32(&out[1], record->time_ms);
         return 5;
+    case ZPT_CAPTURE_RECORD_ENTERED:
+        put_le32(&out[1], record->settings_hash);
+        return 5;
     default:
         return 1;
     }
@@ -116,13 +119,22 @@ static void restart(struct zpt_capture_tap *tap) {
     tap->described = false;
     tap->keypress_recorded = false;
     tap->have_last_frame = false;
+    tap->resync_pending = false;
+}
+
+static void enter(const struct zpt_capture_tap *tap) {
+    const struct zpt_capture_record record = {
+        .kind = ZPT_CAPTURE_RECORD_ENTERED,
+        .settings_hash = tap->sink->settings_hash(tap->sink->context),
+    };
+    tap->sink->submit(tap->sink->context, &record);
 }
 
 static void reset_and_enter(struct zpt_capture_tap *tap) {
     /* Replay starts from reset stages, so the recorded pipeline does too. */
     zpt_pipeline_reset(tap->pipeline, ZPT_RESET_ADMINISTRATIVE);
     restart(tap);
-    submit_kind(tap, ZPT_CAPTURE_RECORD_ENTERED, 0U);
+    enter(tap);
 }
 
 /* How long the pipeline must rest before a resync: the acceleration
@@ -140,7 +152,8 @@ static uint32_t resync_rest_ms(const struct zpt_pipeline *pipeline) {
     return interval > ZPT_CAPTURE_RESYNC_REST_MS ? interval : ZPT_CAPTURE_RESYNC_REST_MS;
 }
 
-/* After a drop, resync at rest: no frame or flush for the rest time and no
+/* After a drop, a settings change, or a source change, resync at rest: no
+ * frame or flush for the rest time and no
  * deadline pending, so the gate is idle and the coalescer has nothing left
  * to send. The reset then clears only what a rest leaves behind: the
  * quantizer's sub-pixel remainder and the speed estimate the acceleration
@@ -149,11 +162,13 @@ static void resync_at_rest(struct zpt_capture_tap *tap, uint32_t now_ms) {
     uint32_t deadline_ms;
     if (!tap->replayable || !tap->have_last_frame ||
         (int32_t)(now_ms - tap->last_frame_ms) < (int32_t)resync_rest_ms(tap->pipeline) ||
-        zpt_pipeline_next_deadline(tap->pipeline, now_ms, &deadline_ms) ||
-        !tap->sink->take_resync(tap->sink->context)) {
+        zpt_pipeline_next_deadline(tap->pipeline, now_ms, &deadline_ms)) {
         return;
     }
-    reset_and_enter(tap);
+    const bool requested = tap->sink->take_resync(tap->sink->context);
+    if (requested || tap->resync_pending) {
+        reset_and_enter(tap);
+    }
 }
 
 static void describe_source(struct zpt_capture_tap *tap,
@@ -163,6 +178,8 @@ static void describe_source(struct zpt_capture_tap *tap,
         tap->resolution_cpi == metadata->resolution_cpi && tap->link == link) {
         return;
     }
+    /* Replay can't follow a change mid-trace; start a new one at rest. */
+    tap->resync_pending |= tap->described;
     tap->source_id = metadata->source_id;
     tap->resolution_cpi = metadata->resolution_cpi;
     tap->link = link;
@@ -247,8 +264,10 @@ static void tap_lifecycle(const struct zpt_pipeline *pipeline, bool active, void
     }
     if (active) {
         restart(tap);
+        enter(tap);
+    } else {
+        submit_kind(tap, ZPT_CAPTURE_RECORD_LEFT, 0U);
     }
-    submit_kind(tap, active ? ZPT_CAPTURE_RECORD_ENTERED : ZPT_CAPTURE_RECORD_LEFT, 0U);
 }
 
 void zpt_capture_tap_attach(struct zpt_capture_tap *tap, struct zpt_pipeline *pipeline,
@@ -308,7 +327,8 @@ struct fixed_setting {
     int32_t value;
 };
 
-static size_t fixed_settings(const struct zpt_stage *stage, struct fixed_setting settings[3]) {
+static size_t fixed_settings(const struct zpt_pipeline *pipeline, const struct zpt_stage *stage,
+                             struct fixed_setting settings[3]) {
     const char *strategy = stage->api->strategy_id;
     if (strcmp(strategy, "orthogonal-orientation") == 0) {
         const struct zpt_orientation_config *config = stage->config;
@@ -318,9 +338,9 @@ static size_t fixed_settings(const struct zpt_stage *stage, struct fixed_setting
         return 3;
     }
     if (strcmp(strategy, "coherent-displacement") == 0) {
-        const struct zpt_coherent_displacement_stage_config *config = stage->config;
-        const uint32_t window =
-            config->suppression != NULL ? config->suppression->keypress_window_ms : 0U;
+        /* Capture records key presses only for a guard it can freeze. */
+        const struct zpt_suppression_policy *guard = find_guard(pipeline);
+        const uint32_t window = guard != NULL ? guard->keypress_window_ms : 0U;
         settings[0] = (struct fixed_setting){"suppress-after-keypress-ms", (int32_t)window};
         return 1;
     }
@@ -385,7 +405,7 @@ int zpt_capture_describe_pipeline(const struct zpt_pipeline *pipeline, uint8_t p
     for (size_t i = 0; i < pipeline->stage_count; i++) {
         const struct zpt_stage *stage = pipeline->stages[i];
         struct fixed_setting settings[3];
-        const size_t count = fixed_settings(stage, settings);
+        const size_t count = fixed_settings(pipeline, stage, settings);
         write_string(&writer, stage->api->strategy_id);
         write_string(&writer, stage->stable_id);
         write_u8(&writer, (uint8_t)count);

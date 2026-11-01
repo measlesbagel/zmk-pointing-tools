@@ -5,12 +5,9 @@ Bluetooth GATT service (Web Bluetooth). Both carry the same framed byte stream;
 see [Transports](#transports). All multi-byte integers are little-endian.
 
 The current protocol is version 8. Version 8 added input capture and the
-capture drop counter in acknowledgements; version 7 added pointing-device
-discovery and preview. The tuner accepts older firmware back to version 7,
-and features that need a newer version are disabled: input capture, its tools
-(`host/replay/capture.js`), and any recording UI require version 8. A version
-bump marks a new capability the host must not use on older firmware, so
-firmware that only adds messages still bumps it.
+capture drop counter in acknowledgements. Firmware and host are updated
+together; the tuner rejects every other version instead of carrying
+compatibility parsers or feature gates for older firmware.
 
 ## Framing
 
@@ -166,7 +163,7 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 | `0x10` | host → device | Capture control/status | empty to query, or `pipeline-id:u8`; `0xff` stops |
 | `0x11` | host → device | Describe capture pipeline | `pipeline-id:u8` |
 | `0x81` | device → host | Describe response | described below |
-| `0x82` | device → host | Acknowledgement | `state-dropped:u32, capture-dropped:u32` (v8; see below) |
+| `0x82` | device → host | Acknowledgement | `state-dropped:u32, capture-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
 | `0x84` | device → host | Tuning target description | described below |
 | `0x85` | device → host | Tuning result | described below |
@@ -187,14 +184,11 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 protocol-version:u8
 ```
 
-The describe response is the protocol version handshake; the tuner accepts
-versions 7 and 8 and rejects others. While the host keeps streaming alive, it
-sends a heartbeat at least every five seconds. Firmware disables all state
-levels automatically when the host disappears.
-
-Version 8 firmware acknowledges with both counters, zero for a feature that
-isn't built. Version 7 firmware sends `state-dropped` only, and no payload at
-all without state telemetry; a host treats an absent counter as unknown.
+The describe response is the protocol version handshake; the tuner rejects
+every other version. While the host keeps streaming alive, it sends a
+heartbeat at least every five seconds. Firmware disables all state levels
+automatically when the host disappears. Acknowledgements always carry both
+drop counters, zero for a feature that isn't built.
 
 ## Runtime tuning
 
@@ -579,9 +573,9 @@ modulo 2³², of 32-bit FNV-1a over the stage's stable id, a NUL byte, the
 parameter key, a NUL byte, and the current value as 4 little-endian bytes,
 for every parameter of every stage of the pipeline that has a tuning target.
 Order doesn't matter, so a host computes it from a tuner profile export
-(`captureSettingsHash` in `web/protocol.js`). The converter refuses a profile
-whose hash doesn't match the description and every capture status sent
-while recording.
+(`captureSettingsHash` in `web/protocol.js`). Every entered record carries
+the hash the pipeline runs from then on, and the converter gives each trace
+the profile with that hash.
 
 ### Capture batches
 
@@ -605,7 +599,7 @@ only when it is full and the link still has no room.
 | `1` | Frame | `flags:u8, time-ms:u32, time-us:u16, x:i32, y:i32, span-us:u32` |
 | `2` | Source | `link:u8, source-id:u16, cpi:u16` |
 | `3` | Key press | `time-ms:u32` |
-| `4` | Entered | none |
+| `4` | Entered | `settings-hash:u32` |
 | `5` | Left | none |
 | `6` | Settings changed | none |
 | `7` | Flush | `time-ms:u32` |
@@ -620,7 +614,8 @@ only when it is full and the link still has no room.
   (local, transported, coalesced, timing estimated, clipped, sequence gap,
   discontinuity, span clipped).
 - **Source.** Sent before the first frame and whenever the source id,
-  resolution, or report link changes. `link` is `0` USB, `1` Bluetooth, or
+  resolution, or report link changes; a change makes firmware resync at the
+  next rest. `link` is `0` USB, `1` Bluetooth, or
   `0xff` without a cursor coalescer.
 - **Key press.** The latest key press the pipeline's keypress guard holds,
   at the time it holds, recorded before the first frame it decides. The
@@ -630,14 +625,16 @@ only when it is full and the link still has no room.
   guard's key press from before the recording; only a guard that capture can
   freeze this way is recorded.
 - **Entered** and **left.** The router activated or deactivated the pipeline;
-  entered also follows a start and a resync after a drop (see
-  [Drops](#drops)). Stages start from reset after entered.
-- **Settings changed.** A tuning change landed; frames after it ran with
-  other settings than the host read before recording.
+  entered also follows a start and a resync (see [Drops and resyncs](#drops-and-resyncs)). Stages
+  start from reset after entered, with the settings `settings-hash`
+  identifies.
+- **Settings changed.** A tuning change landed, such as a preview while
+  recording; frames after it ran with other settings. Firmware resyncs at
+  the next rest.
 - **Flush.** Stage deadlines that were due ran at `time-ms`, before any frame
   recorded after it.
 
-### Drops
+### Drops and resyncs
 
 Records travel through the same bounded queue as state samples. A record that
 doesn't fit the queue, and a full batch the link still has no room for (see
@@ -648,9 +645,10 @@ millisecond while the ball moves makes about a thousand a second, whatever
 the cursor report rate; USB serial carries that, and over Bluetooth expect
 drops at speed unless the credit budget is raised.
 
-After a drop, replay can't know what the stages held, so the trace ends. The
-pipeline keeps running unchanged, since resetting it mid-motion would change
-how the cursor feels. Firmware resyncs at the next rest instead: at the first
+After a drop, replay can't know what the stages held, so the trace ends; the
+same goes for a settings change, a CPI preview, and a switch of report link.
+The pipeline keeps running unchanged, since resetting it mid-motion would
+change how the cursor feels. Firmware resyncs at the next rest instead: at the first
 frame after at least 40 ms without a frame or flush (the acceleration
 stage's restart gap, or the coalescer's report interval if longer) and with
 no stage deadline pending, it resets the pipeline and sends an entered
@@ -660,26 +658,29 @@ and the acceleration stage restarts its speed estimate unless the next frame
 carries a sensor span shorter than 40 ms. The reset therefore changes only
 what a rest leaves behind: the quantizer's sub-pixel remainder (less than
 one count) and, for such a frame, the speed estimate the stage would have
-blended it into. Frames between the drop and the resync don't replay. Only
-replayable pipelines resync; for others the recording replays up to the
-first drop.
+blended it into. Frames between the drop or change and the resync don't
+replay. Only replayable pipelines resync; for others the recording replays
+up to the first drop or change.
 
 ### Turning a capture into a trace
 
 Before starting a recording, read the pipeline description and the current
-settings of its stages (tuning discovery, or a tuner profile export). Keep
+settings of its stages (tuning discovery, or a tuner profile export), and
+export a profile again after every settings change while recording. Keep
 the device's bytes from the description on. Then:
 
 ```sh
-node host/replay/capture.js --stream capture.bin --profile profile.json \
-  --out trace.json --device right-ball
+node host/replay/capture.js --stream capture.bin --profile a.json \
+  --profile b.json --out trace.json --device right-ball
 node host/replay/bench.js --fixtures <dir with sets of traces>
 ```
 
 `capture.js` writes one cursor-pipeline trace per stretch the pipeline ran
 unchanged, from an entered record to a left record, a settings change, a
 drop, or a change of source, resolution, or link, and warns for each early
-end and for a recording whose first records were dropped. Event times count
+end and for a recording whose first records were dropped. Each trace uses
+the profile whose settings hash its entered record carries; a trace no
+profile matches is skipped with a warning. Event times count
 from the earliest event, and `metadata.capture.startMs` holds the device
 uptime of time zero. Recorded flushes become `flush` events, so replay runs
 deadlines where firmware ran them. An event recorded after a later one, such
@@ -695,7 +696,10 @@ does in firmware. Only cursor pipelines convert so far.
 The CTest `capture_replay` checks that this is faithful: it records a
 synthetic session through the firmware's cursor stages and capture tap
 (`host/tests/capture_session.c`), with flushes running up to 3 ms late, key
-presses landing while a frame runs, and a drop followed by a resync. It
-converts the capture and requires each trace's replay to send exactly the
-reports the stages sent during it. The ztest `capture_records_pipeline_input`
-checks that the telemetry service starts a recording with the same records.
+presses landing while a frame runs, a drop, and a tuning change mid-stroke,
+each followed by a resync. It converts the capture with both profiles and
+requires each trace's replay to send exactly the reports the stages sent
+during it. The ztest `capture_records_pipeline_input` checks that the
+telemetry service starts a recording with the same records, keeps and
+resends batches the link refuses, counts a refused full batch, and resyncs
+after a drop and after a settings change.

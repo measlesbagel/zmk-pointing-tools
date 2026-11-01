@@ -33,15 +33,8 @@ export const MESSAGE = Object.freeze({
 });
 
 /* v7 added pointing-device discovery and preview messages; v8 input
- * capture and the capture drop counter in acknowledgements. The tuner
- * speaks the newest version and accepts older firmware back to the oldest
- * supported one; features need the version that added them. */
+ * capture and the capture drop counter in acknowledgements. */
 export const PROTOCOL_VERSION = 8;
-export const OLDEST_PROTOCOL_VERSION = 7;
-export const CAPTURE_PROTOCOL_VERSION = 8;
-
-/* Whether firmware speaking this protocol version can record input. */
-export const supportsCapture = (version) => version >= CAPTURE_PROTOCOL_VERSION;
 export const STATE_SCHEMA_VERSION = 2;
 
 /* Target kinds carried in tuning targets and state samples. Pipeline stages
@@ -130,21 +123,18 @@ export class FrameDecoder {
 
 export function parseDescribe(payload) {
   const version = payload[0];
-  if (!(version >= OLDEST_PROTOCOL_VERSION && version <= PROTOCOL_VERSION)) {
-    throw new Error(`Firmware protocol ${version} isn't supported: the tuner speaks ` +
-      `${OLDEST_PROTOCOL_VERSION} to ${PROTOCOL_VERSION}`);
+  if (version !== PROTOCOL_VERSION) {
+    throw new Error(`Firmware protocol ${version} does not match tuner protocol ${PROTOCOL_VERSION}`);
   }
   return { version };
 }
 
-/* Firmware without state telemetry acknowledges with no payload, v7
- * firmware with the state drop counter only. Absent counters are null. */
 export function parseAck(payload) {
-  if (![0, 4, 8].includes(payload.length)) throw new Error("Invalid acknowledgement length");
+  if (payload.length !== 8) throw new Error("Invalid acknowledgement length");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   return {
-    stateDropped: payload.length >= 4 ? view.getUint32(0, true) : null,
-    captureDropped: payload.length >= 8 ? view.getUint32(4, true) : null,
+    stateDropped: view.getUint32(0, true),
+    captureDropped: view.getUint32(4, true),
   };
 }
 
@@ -404,8 +394,7 @@ export function encodeDevicePreview(deviceId, cpi) {
   return encodeFrame(MESSAGE.DEVICE_PREVIEW_REQUEST, Uint8Array.of(deviceId, cpi & 0xff, (cpi >> 8) & 0xff));
 }
 
-/* --- Input capture (protocol v8) -------------------------------------
- * Only for firmware where supportsCapture(version) holds. */
+/* --- Input capture (protocol v8) ------------------------------------- */
 
 export const CAPTURE = Object.freeze({
   SCHEMA_VERSION: 1,
@@ -524,7 +513,11 @@ export function parseCaptureBatch(payload) {
       requireBytes(payload, offset, 5, "capture timed record");
       records.push({ sequence, kind, timeMs: view.getUint32(offset + 1, true) });
       offset += 5;
-    } else if (kind >= CAPTURE.RECORD_ENTERED && kind <= CAPTURE.RECORD_SETTINGS_CHANGED) {
+    } else if (kind === CAPTURE.RECORD_ENTERED) {
+      requireBytes(payload, offset, 5, "capture entered record");
+      records.push({ sequence, kind, settingsHash: view.getUint32(offset + 1, true) });
+      offset += 5;
+    } else if (kind === CAPTURE.RECORD_LEFT || kind === CAPTURE.RECORD_SETTINGS_CHANGED) {
       records.push({ sequence, kind });
       offset += 1;
     } else {
