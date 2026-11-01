@@ -46,8 +46,9 @@ When the firmware supports input capture (`list_recordings` says
    with the current values and the candidate and reports every metric's
    change. Nothing reaches the keyboard, so try as many as you like. Metrics
    without a value weren't scored. `truthStrokes` counts where each metric's
-   truth came from: `labels`, `derived` by the converter, or the `typing`
-   heuristic; derived truth is a guess, so weigh it below labels. A metric
+   truth came from: `derived` by the converter, or the `typing` heuristic.
+   Derived truth is a guess from the motion itself. Recordings with no truth
+   at all make `score_settings` fail rather than report no difference. A metric
    with a `note` counts as worse: the candidate left it unscored or scored
    other strokes. The benchmark doesn't judge curve shape
    or gain: a flatter curve or lower gain can win every metric and feel worse,

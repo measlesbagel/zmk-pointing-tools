@@ -63,10 +63,11 @@ test("truth sources are counted per metric over the strokes that scored it", () 
   ]);
   assert.deepEqual(truth, {
     outputErrorPercent: { derived: 1 },
-    unintendedOutput: { typing: 1, labels: 1 },
-    axisLockPercent: { labels: 1 },
+    /* An untagged stroke is never shown as labelled. */
+    unintendedOutput: { typing: 1, derived: 1 },
+    axisLockPercent: { derived: 1 },
   });
-  assert.equal(describeTruth(truth.unintendedOutput), "labels 1, typing heuristic 1");
+  assert.equal(describeTruth(truth.unintendedOutput), "derived 1, typing heuristic 1");
   assert.match(describeTruth(undefined), /no stroke/);
 });
 

@@ -164,13 +164,12 @@ It works without agent access too.
   candidate leaves unscored, or scores over different strokes, counts as
   worse, as in the benchmark: settings mustn't win by making strokes
   unscorable. Ground truth comes from the converter
-  (`host/replay/capture-convert.js` with `truth: "derive"`), whose rules are
-  in [the benchmark](trace-benchmark.md#recorded-traces-ground-truth): strokes
-  labelled in the recording win, the converter derives strokes for the rest
-  of the motion, and motion within 100 ms of a key press counts as
-  unintended (the typing heuristic). For each metric, the table shows how
-  many of its strokes came from each of the three. Metrics with no truth in
-  the selected recordings show no value.
+  (`host/replay/capture-convert.js` with `truth: "derive"`); its rules are in
+  [the benchmark](trace-benchmark.md#recorded-traces-ground-truth). For each
+  metric, the table shows how many of its strokes were derived and how many
+  came from the typing heuristic. Metrics with no truth in the selected
+  recordings show no value, and recordings with no truth at all give an
+  error instead of a table.
 - **The benchmark doesn't judge curve shape or gain.** The ideal output
   follows the curve and gain being scored, so a flatter curve or a lower gain
   can win every metric while feeling worse. Scores narrow the candidates;

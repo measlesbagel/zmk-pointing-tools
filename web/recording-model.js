@@ -14,17 +14,16 @@ export const RECORDING_VERSION = 1;
  * (host/replay/capture-convert.js, truth: "derive") owns the rules, in
  * docs/trace-benchmark.md, "Recorded traces: ground truth". */
 export const TRUTH_SOURCES = {
-  labels: "strokes labelled in the recording",
   derived: "strokes the converter derived from the motion",
-  typing: "motion within 100 ms of a key press, counted as unintended",
+  typing: "motion right after a key press, counted as unintended",
 };
 
 const NO_TRUTH = "no stroke in these recordings has truth for this metric";
 
-/* Source of one truth stroke: a TRUTH_SOURCES key. */
+/* Source of one truth stroke: a TRUTH_SOURCES key. The tuner passes the
+ * converter no labels, so every other stroke is derived, tagged or not. */
 export function truthSource(stroke) {
-  if (stroke.activity === "post-typing") return "typing";
-  return stroke.derived ? "derived" : "labels";
+  return stroke.activity === "post-typing" ? "typing" : "derived";
 }
 
 /* For each metric, how many of the strokes scoring it in any set came
@@ -54,7 +53,7 @@ export function metricTruth(traces, sets) {
 
 /* "derived 12, typing heuristic 3" */
 export function describeTruth(counts) {
-  const names = { labels: "labels", derived: "derived", typing: "typing heuristic" };
+  const names = { derived: "derived", typing: "typing heuristic" };
   const parts = Object.keys(names).filter((source) => counts?.[source]).map((source) => `${names[source]} ${counts[source]}`);
   return parts.length ? parts.join(", ") : NO_TRUTH;
 }

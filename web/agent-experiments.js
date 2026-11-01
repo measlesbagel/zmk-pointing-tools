@@ -713,7 +713,7 @@ export function createExperimentTools(context, session) {
     },
     {
       name: "score_settings",
-      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each benchmark metric for both, the change, whether it's better, and where the metric's ground truth comes from. Nothing is sent to the keyboard. The converter derives ground truth where no label gives it; each metric reports how many of its strokes came from labels, derivation or the typing heuristic, and a metric missing or scored over different strokes with the candidate counts as worse. The benchmark doesn't judge curve shape or gain: confirm such changes on the keyboard with a preview and an A/B run.",
+      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each benchmark metric for both, the change, whether it's better, and where the metric's ground truth comes from. Nothing is sent to the keyboard. The converter derives ground truth where no label gives it; each metric reports how many of its strokes were derived or came from the typing heuristic. Recordings without any truth fail with an error rather than scoring nothing, and a metric missing or scored over different strokes with the candidate counts as worse. The benchmark doesn't judge curve shape or gain: confirm such changes on the keyboard with a preview and an A/B run.",
       inputSchema: {
         type: "object",
         properties: {

@@ -195,13 +195,20 @@ export class Recorder {
 
   #request(type, pipelineId, timeoutMs) {
     const run = () => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#waiting = undefined;
-        reject(new Error("the keyboard didn't answer the capture request"));
-      }, timeoutMs);
-      this.#waiting = { type, resolve: (frame) => { clearTimeout(timer); this.#waiting = undefined; resolve(frame); },
-        reject: (error) => { clearTimeout(timer); this.#waiting = undefined; reject(error); } };
-      Promise.resolve(this.host.send(type, pipelineId)).catch((error) => this.#waiting?.reject(error));
+      /* Each settle clears this request's waiter only, never a later one. */
+      const settle = (finish, value) => {
+        clearTimeout(timer);
+        if (this.#waiting === waiter) this.#waiting = undefined;
+        finish(value);
+      };
+      const timer = setTimeout(() => settle(reject, new Error("the keyboard didn't answer the capture request")), timeoutMs);
+      const waiter = { type, resolve: (frame) => settle(resolve, frame), reject: (error) => settle(reject, error) };
+      this.#waiting = waiter;
+      try {
+        Promise.resolve(this.host.send(type, pipelineId)).catch(waiter.reject);
+      } catch (error) {
+        waiter.reject(error);
+      }
     });
     const result = this.#chain.then(run, run);
     this.#chain = result.catch(() => {});
@@ -497,6 +504,10 @@ export class Recorder {
       throw error;
     }
     const rows = compareScoreSets(scored, replay.METRICS, metricTruth(traces, scored));
+    /* Nothing scored isn't "no difference": say so instead of comparing. */
+    if (!rows.some(({ values }) => values[0])) {
+      throw new Error(`these recordings carry no ground truth yet, so no metric could be scored (${traces.length} traces). Nothing was compared.`);
+    }
     return {
       recordings: ids.map((id) => this.find(id).label),
       traces: traces.length,
