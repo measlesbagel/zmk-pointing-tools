@@ -225,6 +225,23 @@ function describeStateEvent(event) {
   return `values ${event.values.join("/")}`;
 }
 
+/* A short name for an event, to count events by kind. */
+function stateEventKind(event) {
+  if (event.targetKind === 4 && event.values[0] === STAGE_FRAME) return "frame";
+  if (event.targetKind === 4) return STAGE_EVENT_LABELS[event.values[0]] ?? `stage-event ${event.values[0]}`;
+  return `event ${event.event}`;
+}
+
+/* Asks the keyboard for its telemetry status, which carries the drop
+ * counter, without changing levels, and returns the counter. */
+async function refreshTelemetryStatus() {
+  if (transport && protocolReady) {
+    queueTuningRequest(MESSAGE.STATE_CONTROL_REQUEST);
+    await requestsSettled();
+  }
+  return stateStatus.dropped;
+}
+
 function renderDiagnostics() {
   if (!stateDirty) return;
   stateDirty = false;
@@ -284,6 +301,7 @@ function setStateLevel(targetId, level) {
 
 function addStateEvent(event) {
   calibration?.handleSample(event);
+  agentBridge?.session.windows.observe(event);
   stateEvents.push(event);
   if (stateEvents.length > MAX_STATE_EVENTS) stateEvents.splice(0, stateEvents.length - MAX_STATE_EVENTS);
   stateDirty = true;
@@ -882,8 +900,10 @@ function playgroundContext() {
   };
 }
 
-new PointingPlayground(document.getElementById("playground"), {
+const playground = new PointingPlayground(document.getElementById("playground"), {
   getContext: playgroundContext,
+  onRunStart: (activity) => agentBridge?.runStarted("playground", activity),
+  onRunEnd: (activity, outcome) => agentBridge?.runEnded("playground", activity, outcome),
   onExport: (result) => {
     downloadJson(
       result,
@@ -917,6 +937,8 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   canControl: () => Boolean(simulator) || (Boolean(transport) && protocolReady),
   setStateLevel,
   applyValues: applyCalibration,
+  onRunStart: () => agentBridge?.runStarted("calibration"),
+  onRunEnd: (outcome) => agentBridge?.runEnded("calibration", undefined, outcome),
   onExport: (result) => {
     downloadJson(
       result,
@@ -930,6 +952,28 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
 
 agentBridge = new AgentBridge(document.getElementById("agent"), {
   notice,
+  /* Opens the panel an accepted run request belongs to. Start is disabled
+   * while nothing can record, so focus goes to the panel then. */
+  openRun: (run) => {
+    if (run.kind === "calibration") {
+      const panel = document.getElementById("calibration");
+      const start = panel.querySelector("[data-calibration-start]");
+      panel.scrollIntoView({ block: "start" });
+      if (!start.disabled) start.focus({ preventScroll: true });
+      else {
+        panel.tabIndex = -1;
+        panel.focus({ preventScroll: true });
+      }
+    } else {
+      playground.prepare(run);
+    }
+  },
+  /* The user cancelled a run that's running: a calibration stops
+   * recording. A playground run can't be cancelled from the panel, since
+   * the playground dialog covers it. */
+  endRun: (run) => {
+    if (run.kind === "calibration") calibration.stop();
+  },
   context: {
     session: () => {
       const targets = [...tuningTargets.values()];
@@ -953,6 +997,8 @@ agentBridge = new AgentBridge(document.getElementById("agent"), {
     stateEvents: () => stateEvents,
     stateStatus: () => stateStatus,
     describeEvent: describeStateEvent,
+    eventKind: stateEventKind,
+    refreshTelemetryStatus,
     precisionHistory: loadPrecisionHistory,
     profile: () => createTuningProfile(tuningTargets),
     devicetree: () => renderDevicetreeSnippet(tuningTargets),

@@ -11,6 +11,7 @@
  * relay asks; a reload would drop the keyboard connection. */
 
 import { AgentSession, describeChanges } from "./agent-tools.js";
+import { describeRun } from "./agent-experiments.js";
 
 const RELAY_VERSION = "6.0.3";
 const RELAY_PORT = "9333";
@@ -48,9 +49,11 @@ export function relayConfig(origin) {
 }
 
 export class AgentBridge {
-  constructor(root, { context, notice }) {
+  constructor(root, { context, notice, openRun, endRun }) {
     this.context = context;
     this.notice = notice;
+    this.openRun = openRun;
+    this.endRun = endRun;
     this.log = [];
     this.session = new AgentSession(context, () => this.render());
     this.toggle = root.querySelector("[data-agent-toggle]");
@@ -60,6 +63,36 @@ export class AgentBridge {
     this.revertButton = root.querySelector("[data-agent-revert]");
     this.snapshotList = root.querySelector("[data-agent-snapshots]");
     this.questionList = root.querySelector("[data-agent-questions]");
+    this.runList = root.querySelector("[data-agent-runs]");
+    this.windowList = root.querySelector("[data-agent-windows]");
+    this.runList.addEventListener("click", (event) => {
+      const id = event.target.closest("[data-run]")?.dataset.run;
+      const run = id && this.session.runs.runs.get(id);
+      if (!run) return;
+      if (event.target.closest("[data-run-open]")) {
+        if (run.status === "requested") {
+          this.session.runs.accept(id);
+          this.record(`Accepted ${describeRun(run)}`);
+        }
+        this.openRun(run);
+      } else if (event.target.closest("[data-run-decline]")) {
+        const running = run.status === "running";
+        this.session.runs.decline(id);
+        /* Ends a calibration still recording; the run no longer counts. */
+        if (running) this.endRun(run);
+        this.record(`${running ? "Cancelled" : "Declined"} ${describeRun(run)}`);
+        /* The card is gone: keep focus in the panel. */
+        this.status.focus();
+      }
+    });
+    this.windowList.addEventListener("click", async (event) => {
+      const id = event.target.closest("[data-window-stop]")?.dataset.windowStop;
+      if (!id) return;
+      const stopping = this.session.windows.stop(id, "stopped by you");
+      this.status.focus();
+      const window = await stopping;
+      this.record(`Stopped telemetry window "${window.label}"`);
+    });
     this.revertButton.addEventListener("click", () => this.revert());
     this.snapshotList.addEventListener("click", (event) => {
       const button = event.target.closest("[data-snapshot]");
@@ -144,7 +177,7 @@ export class AgentBridge {
     const entry = this.#add({ name: tool.name, kind: tool.annotations.readOnlyHint ? "read" : "change" });
     try {
       const result = await tool.execute(input ?? {});
-      if (entry.kind === "change") entry.text = JSON.parse(result).summary;
+      entry.text = JSON.parse(result).summary;
       return result;
     } catch (error) {
       entry.ok = false;
@@ -177,11 +210,22 @@ export class AgentBridge {
 
   async applySnapshot(name) {
     try {
-      const { changes } = await this.session.applySnapshot(name);
+      const { changes } = await this.session.applySnapshot(name, { byUser: true });
       this.record(`Applied snapshot "${name}": ${describeChanges(changes)}`);
     } catch (error) {
       this.notice(`Could not apply snapshot "${name}": ${error.message}`, true);
     }
+  }
+
+  /* The playground or calibration panel started or ended a run. Runs
+   * nobody asked for change nothing. */
+  runStarted(kind, activity) {
+    this.session.runs.started(kind, activity);
+  }
+
+  runEnded(kind, activity, outcome) {
+    const run = this.session.runs.ended(kind, activity, outcome);
+    if (run) this.record(`${run.status === "finished" ? "Finished" : "Stopped"} ${describeRun(run)}`);
   }
 
   answer(id, text) {
@@ -238,7 +282,7 @@ export class AgentBridge {
       const tool = document.createElement("strong");
       tool.textContent = name;
       const result = document.createElement("span");
-      result.textContent = !ok ? `failed: ${error}` : kind === "read" ? "read" : text;
+      result.textContent = !ok ? `failed: ${error}` : text ?? "read";
       item.append(time, tool, result);
       return item;
     }));
@@ -260,6 +304,9 @@ export class AgentBridge {
     this.status.classList.toggle("changed", changed);
     this.revertButton.hidden = !changed;
     this.renderSnapshots();
+    /* Here, so a disconnect removes cards and windows it ended. */
+    this.renderRuns();
+    this.renderWindows();
   }
 
   /* Rebuilt only when the names change, so focus stays on a button. */
@@ -283,6 +330,84 @@ export class AgentBridge {
       button.classList.toggle("current", current);
       button.setAttribute("aria-label", `Preview snapshot ${button.dataset.snapshot}${current ? " (matches the current values)" : ""}`);
     }
+  }
+
+  /* One card per open run request, rebuilt only when its status changes,
+   * so focus stays on its buttons. */
+  renderRuns() {
+    const open = new Map(this.session.runs.open.map((run) => [run.id, run]));
+    for (const card of [...this.runList.children]) {
+      if (open.get(card.dataset.run)?.status !== card.dataset.status) card.remove();
+    }
+    const shown = new Set([...this.runList.children].map((card) => card.dataset.run));
+    for (const run of open.values()) {
+      if (shown.has(run.id)) continue;
+      const card = document.createElement("div");
+      card.className = "agent-question agent-run";
+      card.dataset.run = run.id;
+      card.dataset.status = run.status;
+      const heading = document.createElement("strong");
+      heading.textContent = "Your agent asks for a run";
+      const what = document.createElement("p");
+      what.textContent = describeRun(run);
+      card.append(heading, what);
+      if (run.note) {
+        /* Quoted and attributed, so it can't pass for the tuner's text. */
+        const note = document.createElement("blockquote");
+        note.className = "agent-run-note";
+        const from = document.createElement("strong");
+        from.textContent = "Agent's note: ";
+        note.append(from, run.note);
+        card.append(note);
+      }
+      const where = run.kind === "calibration" ? "calibration panel" : "playground";
+      const state = document.createElement("p");
+      state.className = "muted";
+      state.textContent = {
+        requested: `Open the ${where} to do it, or decline. The agent only asked; nothing has changed.`,
+        accepted: `Start it in the ${where}${run.kind === "calibration" ? ", then Stop when you're done" : ""}. The agent gets the result when it ends.`,
+        running: `Running in the ${where}. The agent gets the result when it ends.`,
+      }[run.status];
+      const actions = document.createElement("div");
+      actions.className = "agent-question-actions";
+      const openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.dataset.runOpen = "";
+      openButton.className = run.status === "requested" ? "primary" : "";
+      openButton.textContent = run.kind === "calibration" ? "Go to calibration" : "Open playground";
+      const decline = document.createElement("button");
+      decline.type = "button";
+      decline.dataset.runDecline = "";
+      decline.textContent = run.status === "requested" ? "Decline"
+        : run.status === "running" && run.kind === "calibration" ? "Stop and cancel run" : "Cancel run";
+      actions.append(openButton, decline);
+      card.append(state, actions);
+      this.runList.append(card);
+      if (run.status === "requested") this.notice("Your agent asked you for a run in Agent access.");
+    }
+  }
+
+  renderWindows() {
+    const recording = this.session.windows.recording;
+    this.windowList.hidden = recording.length === 0;
+    const shown = (this.windowList.dataset.shown ?? "").split(",");
+    if (recording.map(({ id }) => id).join() === this.windowList.dataset.shown) return;
+    this.windowList.dataset.shown = recording.map(({ id }) => id).join();
+    for (const { id, label } of recording) {
+      if (!shown.includes(id)) this.notice(`Your agent started recording telemetry “${label}”. Stop it in Agent access.`);
+    }
+    this.windowList.replaceChildren(...recording.map(({ id, label, maxSeconds }) => {
+      const row = document.createElement("div");
+      const text = document.createElement("span");
+      text.textContent = `Recording telemetry “${label}” for your agent, up to ${maxSeconds} s`;
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.dataset.windowStop = id;
+      stop.textContent = "Stop";
+      stop.setAttribute("aria-label", `Stop recording “${label}”`);
+      row.append(text, stop);
+      return row;
+    }));
   }
 
   /* Adds and removes cards one by one, so typing in another card isn't

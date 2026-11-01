@@ -158,6 +158,22 @@ export class CalibrationPanel {
     this.result.innerHTML = '<p class="muted">Recording… make the same gesture 5 to 10 times.</p>';
     this.timer = setInterval(() => this.renderProgress(), 250);
     this.refresh();
+    this.host.onRunStart?.();
+  }
+
+  /* What an agent's calibration run reports. */
+  runResult() {
+    const target = this.selectedTarget();
+    const analysis = this.analysis && (({ gestures, ...rest }) => ({
+      ...rest, gestureDistancesMm: gestures.map((gesture) => (this.mode === "cursor" ? gesture.acceleratedMm : gesture.axisMm)),
+    }))(this.analysis);
+    return {
+      mode: this.mode,
+      measuredStage: this.measureLabel,
+      target: target ? target.stableId ?? target.label : null,
+      frames: this.frames.length,
+      analysis: analysis ?? null,
+    };
   }
 
   stop() {
@@ -167,6 +183,7 @@ export class CalibrationPanel {
     this.host.setStateLevel(this.measureId, this.previousLevel);
     this.status.textContent = "Stopped";
     this.refresh();
+    this.host.onRunEnd?.({ completed: true, result: this.runResult() });
   }
 
   /* Disconnects and simulator restarts end a recording without a host. */
@@ -176,6 +193,7 @@ export class CalibrationPanel {
     clearInterval(this.timer);
     this.status.textContent = "Cancelled";
     this.refresh();
+    this.host.onRunEnd?.({ completed: false, result: this.runResult() });
   }
 
   handleSample(sample) {
