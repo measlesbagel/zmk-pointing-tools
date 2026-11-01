@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 
 import { captureToFixtures, decodeCaptureStream } from "./capture.js";
 import { deriveTruthStrokes } from "./capture-convert.js";
-import { encodeRunnerInput } from "./fixture.js";
+import { encodeRunnerInput, eventTimesUs } from "./fixture.js";
 import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, parseCaptureBatch }
   from "../../web/protocol.js";
 
@@ -135,27 +135,43 @@ test("warns when the recording's first records were dropped", () => {
 
 /* Derived truth against the benchmark's real truth: strip it from every
  * benchmark fixture, derive it from the motion, and compare stroke by
- * stroke. A derived stroke matches the real one it overlaps most. */
+ * stroke. A derived stroke matches the real one it overlaps most. Both
+ * ways count: every intended stroke, including the reaches right after
+ * typing, must stay intended, and every unintended one must be found. */
 test("derived truth finds the benchmark's strokes and speeds", () => {
   const directory = new URL("../bench/fixtures/", import.meta.url);
-  const counts = { flick: [0, 0], tremor: [0, 0], typing: [0, 0], steady: [0, 0] };
+  const counts = { intended: [0, 0], flick: [0, 0], tremor: [0, 0], typing: [0, 0],
+    steady: [0, 0] };
+  const tally = (kind, ok) => {
+    counts[kind][0] += ok ? 1 : 0;
+    counts[kind][1] += 1;
+  };
   for (const set of ["tune", "holdout"]) {
     for (const name of readdirSync(new URL(set, directory))) {
       const fixture = JSON.parse(readFileSync(new URL(`${set}/${name}`, directory), "utf8"));
       const derived = deriveTruthStrokes({ ...fixture, truth: undefined });
+      const times = eventTimesUs(fixture);
+      const motions = fixture.events.flatMap((event, index) =>
+        (event[0] === "motion" ? [{ tUs: times[index], size: Math.hypot(event[2], event[3]) }]
+          : []));
+      const within = (stroke, tUs) => tUs >= stroke.startUs && tUs < stroke.endUs;
       for (const real of fixture.truth.strokes) {
         const overlap = (stroke) => Math.max(0, Math.min(real.endUs, stroke.endUs) -
           Math.max(real.startUs, stroke.startUs));
         const match = derived.reduce((best, stroke) =>
           (overlap(stroke) > (best ? overlap(best) : 0) ? stroke : best), null);
-        const tally = (kind, ok) => {
-          counts[kind][0] += ok ? 1 : 0;
-          counts[kind][1] += 1;
-        };
+        if (real.intended) tally("intended", match?.intended === true);
         if (real.activity === "flick") tally("flick", match?.activity === "flick");
         if (real.activity === "tremor") tally("tremor", match?.intended === false);
         if (real.activity === "post-typing" && !real.intended) {
-          tally("typing", match?.intended === false);
+          /* A burst is many short strokes, and its last shake can run into
+           * the reach after it, so count its motion: at most 15 % of it
+           * may land in intended strokes. */
+          const burst = motions.filter(({ tUs }) => within(real, tUs));
+          const meant = burst.filter(({ tUs }) =>
+            derived.some((stroke) => stroke.intended && within(stroke, tUs)));
+          const share = (list) => list.reduce((total, { size }) => total + size, 0);
+          tally("typing", share(meant) <= 0.15 * share(burst));
         }
         if (real.activity === "slow-aim") {
           tally("steady", match?.speedMmPerS !== undefined &&
@@ -164,10 +180,10 @@ test("derived truth finds the benchmark's strokes and speeds", () => {
       }
     }
   }
-  /* Every flick, rest tremor, and typing burst, and every slow stroke's
-   * speed within 6 %. */
-  assert.deepEqual(counts, { flick: [12, 12], tremor: [4, 4], typing: [8, 8],
-    steady: [22, 22] });
+  /* Every intended stroke, flick, rest tremor, and typing burst, and every
+   * slow stroke's speed within 6 %. */
+  assert.deepEqual(counts, { intended: [60, 60], flick: [12, 12], tremor: [4, 4],
+    typing: [8, 8], steady: [22, 22] });
 });
 
 test("only stages the chain runner knows convert", () => {

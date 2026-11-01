@@ -47,9 +47,10 @@ const TRUTH_MODES = ["labels-only", "derive"];
  * truth"). A rest this long ends a stroke: the acceleration stage's
  * restart gap, which is also when firmware resyncs a recording. */
 const STROKE_GAP_US = 40000;
-/* A stroke that starts this soon after a key press, or holds one, is
- * typing. */
+/* Motion that starts this soon after a key press is typing shake unless
+ * it is a reach: a straight stroke of at least REACH_MIN_TRAVEL_MM. */
 const TYPING_GAP_US = 150000;
+const REACH_MIN_TRAVEL_MM = 1;
 const MIN_FRAMES = 5;
 const MIN_TRAVEL_MM = 0.3;
 /* Net travel under this share of the path travelled: motion that goes
@@ -307,17 +308,21 @@ function deriveStroke(frames, mode, keyTimes, mmPerCount, floorUs) {
   const startUs = Math.max(floorUs, frames[0].tUs - Math.min(frames[0].spanUs || leadUs, leadUs));
   const endUs = frames.at(-1).tUs + 1;
   const base = { startUs, endUs, source: "derived" };
-  /* Typing: the hand is on the keys, whatever the ball does. */
-  if (keyTimes.some((key) => key <= endUs && startUs - key < TYPING_GAP_US)) {
-    return { ...base, source: "typing", activity: "post-typing", intended: false };
-  }
   const points = strokePath(frames, startUs, endUs);
   const travel = sum(stepLengths(points));
+  const straight = Math.hypot(...points.at(-1)) >= MIN_STRAIGHTNESS * travel;
+  /* Typing: strokes split at key presses, so this one follows its key.
+   * Short or crooked motion soon after it is shake; a straight stroke that
+   * goes somewhere is the hand reaching for the ball. */
+  const reach = straight && frames.length >= MIN_FRAMES &&
+    travel * mmPerCount >= REACH_MIN_TRAVEL_MM;
+  if (!reach && keyTimes.some((key) => key <= frames[0].tUs &&
+    startUs - key < TYPING_GAP_US)) {
+    return { ...base, source: "typing", activity: "post-typing", intended: false };
+  }
   if (frames.length < MIN_FRAMES || travel * mmPerCount < MIN_TRAVEL_MM) return null;
   /* Motion that goes nowhere, such as tremor, isn't meant. */
-  if (Math.hypot(...points.at(-1)) < MIN_STRAIGHTNESS * travel) {
-    return { ...base, activity: "tremor", intended: false };
-  }
+  if (!straight) return { ...base, activity: "tremor", intended: false };
   if (mode !== "cursor") return { ...base, activity: mode, intended: true, path: {
     intervalUs: PATH_INTERVAL_US, points } };
   const speeds = windowedSpeeds(points, mmPerCount);
@@ -341,6 +346,23 @@ function deriveStroke(frames, mode, keyTimes, mmPerCount, floorUs) {
     path: { intervalUs: PATH_INTERVAL_US, points } };
 }
 
+/* Shake right after a key press runs into the reach that follows when the
+ * hand leaves the keys within STROKE_GAP_US. The reach starts where the
+ * stroke last stands furthest back along its net direction; frames before
+ * that are the shake. */
+function splitShake(frames) {
+  const positions = [[0, 0]];
+  for (const frame of frames) {
+    const [x, y] = positions.at(-1);
+    positions.push([x + frame.x, y + frame.y]);
+  }
+  const [nx, ny] = positions.at(-1);
+  const along = positions.map(([x, y]) => x * nx + y * ny);
+  const onset = along.lastIndexOf(Math.min(...along));
+  return onset > 0 && onset < frames.length ? [frames.slice(0, onset), frames.slice(onset)]
+    : [frames];
+}
+
 const traceMode = (fixture) => ({ "scroll-pipeline": "scroll", "composed-scroll": "scroll",
   "text-pipeline": "text", "composed-text": "text" }[fixture.processor.kind] ?? "cursor");
 
@@ -353,7 +375,7 @@ export function deriveTruthStrokes(fixture, cuts = []) {
     (event[0] === "keypress" ? [times[index]] : []));
   const cpi = fixture.version === 1 ? fixture.processor.settings.cpi : fixture.source.cpi;
   const inCut = (tUs) => cuts.some(([start, end]) => tUs >= start && tUs < end);
-  /* A label boundary also ends a stroke. */
+  /* A label boundary or a key press also ends a stroke. */
   const groups = [];
   for (const frame of motionFrames(fixture)) {
     if (inCut(frame.tUs)) {
@@ -361,12 +383,23 @@ export function deriveTruthStrokes(fixture, cuts = []) {
       continue;
     }
     const current = groups.at(-1);
-    if (current && frame.tUs - current.at(-1).tUs < STROKE_GAP_US) current.push(frame);
+    const last = current?.at(-1).tUs;
+    if (current && frame.tUs - last < STROKE_GAP_US &&
+      !keyTimes.some((key) => key > last && key <= frame.tUs)) current.push(frame);
     else groups.push([frame]);
   }
+  const afterKey = (frames) => keyTimes.some((key) => key <= frames[0].tUs &&
+    frames[0].tUs - key < TYPING_GAP_US);
+  /* A stroke ends where the next one starts, and never inside a label. */
+  let floorUs = 0;
   return groups.filter(Boolean)
-    .map((frames) => deriveStroke(frames, mode, keyTimes, 25.4 / cpi,
-      Math.max(0, ...cuts.map(([, end]) => end).filter((end) => end <= frames[0].tUs))))
+    .flatMap((frames) => (afterKey(frames) ? splitShake(frames) : [frames]))
+    .map((frames) => {
+      const floor = Math.max(floorUs, 0,
+        ...cuts.map(([, end]) => end).filter((end) => end <= frames[0].tUs));
+      floorUs = frames.at(-1).tUs + 1;
+      return deriveStroke(frames, mode, keyTimes, 25.4 / cpi, floor);
+    })
     .filter(Boolean);
 }
 

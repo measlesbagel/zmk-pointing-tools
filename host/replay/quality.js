@@ -126,6 +126,16 @@ function cursorModel(fixture, profile) {
   return model;
 }
 
+/* Ball motion turned the way the fixture's orientation stages turn it. */
+function orient(orientations, x, y) {
+  for (const { swap, invertX, invertY } of orientations) {
+    if (swap) [x, y] = [y, x];
+    if (invertX) x = -x;
+    if (invertY) y = -y;
+  }
+  return [x, y];
+}
+
 /* The output of an ideal cursor pipeline that knows the stroke's true
  * motion: each path step oriented, scaled by the transfer gain and by the
  * curve at the step's true speed, in pointer units. */
@@ -139,11 +149,7 @@ export function idealCursorOutput(fixture, stroke, profile = null) {
     let dy = points[i][1] - points[i - 1][1];
     const speed = (Math.hypot(dx, dy) * millimetresPerCount * 1e6) / intervalUs;
     const gain = model.gain * (model.curve ? curvePercent(model.curve, speed) / 100 : 1);
-    for (const { swap, invertX, invertY } of model.orientations) {
-      if (swap) [dx, dy] = [dy, dx];
-      if (invertX) dx = -dx;
-      if (invertY) dy = -dy;
-    }
+    [dx, dy] = orient(model.orientations, dx, dy);
     ox += dx * gain;
     oy += dy * gain;
   }
@@ -174,13 +180,19 @@ function axisGains(fixture, profile) {
 }
 
 /* The output of an ideal scroll or text pipeline for a stroke's ball path:
- * its net travel, along the intended axis when there is one, at the
- * pipeline's own steps per count. */
+ * its net travel, oriented like the cursor's, along the intended axis, at
+ * the pipeline's own steps per count. Text navigation steps along one axis,
+ * so a text stroke without a labelled axis keeps only its dominant one. */
 function idealAxisOutput(fixture, stroke, profile) {
   const [gx, gy] = axisGains(fixture, profile);
-  const [x, y] = stroke.path.points.at(-1).map((value, axis) =>
-    value - stroke.path.points[0][axis]);
-  return [stroke.axis === "vertical" ? 0 : x * gx, stroke.axis === "horizontal" ? 0 : y * gy];
+  const { kind } = fixture.processor;
+  const chain = kind === "scroll-pipeline" || kind === "text-pipeline";
+  const [x, y] = orient(chain ? cursorModel(fixture, profile).orientations : [],
+    ...stroke.path.points.at(-1).map((value, axis) => value - stroke.path.points[0][axis]));
+  const text = kind === "text-pipeline" || kind === "composed-text";
+  const axis = stroke.axis ?? (text ? (Math.abs(x) >= Math.abs(y) ? "horizontal" : "vertical")
+    : undefined);
+  return [axis === "vertical" ? 0 : x * gx, axis === "horizontal" ? 0 : y * gy];
 }
 
 /* Ball travel along a stroke's path, in counts. */

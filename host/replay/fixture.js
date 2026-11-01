@@ -339,10 +339,9 @@ function legacyConfiguration(fixture) {
 }
 
 /* Which runner replays a fixture: noisePipeline, scrollPipeline,
- * textPipeline, or cursorPipeline. The cursor runner is the stage-chain
- * runner: it replays cursor, scroll, and text pipeline fixtures. */
-/* The chain runner (zpt_cursor_pipeline_replay, named for the cursor chain
- * it first served) replays every stage chain: cursor, scroll, and text. */
+ * textPipeline, or cursorPipeline. cursorPipeline is the stage-chain runner
+ * (zpt_cursor_pipeline_replay, named for the cursor chain it first served):
+ * it replays cursor, scroll, and text pipeline fixtures. */
 export const runnerFor = (fixture) => ({
   "composed-scroll": "scrollPipeline",
   "composed-text": "textPipeline",

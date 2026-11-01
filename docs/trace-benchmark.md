@@ -249,9 +249,11 @@ or `post-typing`), `intended` (whether the user meant the motion), and a
   orientation is the sensor's mounting, so a profile that changes it scores
   as wrong direction.
   For a scroll or text stroke the ideal output is the path's net travel,
-  along the stroke's `axis` when it has one, at the replay's own steps per
-  count: the scroll batcher's `steps-per-meter`, or one text step per
-  threshold.
+  oriented by the fixture's orientation stages as for the cursor, along the
+  stroke's `axis`, at the replay's own steps per count: the scroll batcher's
+  `steps-per-meter`, or one text step per threshold. Text navigation steps
+  along one axis, so a text stroke without an `axis` keeps only its dominant
+  one.
 - `intendedOutput`: `[x, y]` the output the user wanted, signed, in pointer
   units (cursor) or steps (scroll, text: right and down are positive). It is
   fixed truth that no setting changes, for example a playground target's
@@ -437,17 +439,23 @@ boundaries. The converter warns about a label on the wrong kind of pipeline,
 one clamped to the trace it overlaps, one that covers no motion, and one that
 covers no trace at all.
 
-**Derived strokes.** Frames less than 40 ms apart form one stroke; a stroke
-starts one median frame interval before its first frame, but never inside a
-label. Then, in order:
+**Derived strokes.** Frames less than 40 ms apart form one stroke, and a
+key press or a label boundary ends it. A stroke that starts within 150 ms
+after a key press is split where it last stands furthest back along its net
+direction: the frames before that are the shake the key left, the rest the
+hand's reach for the ball. A stroke starts one median frame interval before
+its first frame, but never inside a label or the stroke before it. Then, in
+order:
 
-1. **Typing.** A stroke that starts within 150 ms of a recorded key press, or
-   has one inside it, is `post-typing` with `intended: false`, scored on
-   unintended output. This is one rule for every pipeline. It is longer than
-   the usual 100 ms keypress guard, so the metric sees shake the guard lets
-   through rather than only the guard's own window; the cost is that a real
-   stroke starting within 150 ms of typing counts as shake. Key presses are
-   recorded only for a pipeline whose stages have a keypress guard.
+1. **Typing.** A stroke that starts within 150 ms after a recorded key
+   press is `post-typing` with `intended: false`, scored on unintended
+   output, unless it is a reach: at least 5 frames and 1 mm of travel, with
+   net travel at least half of it. A reach goes on to the rules below, so a
+   guard that eats the start of a stroke after typing costs output error.
+   This is one rule for every pipeline. The window is longer than the usual
+   100 ms keypress guard, so the metric sees shake the guard lets through.
+   Key presses are recorded only for a pipeline whose stages have a keypress
+   guard.
 2. **Too small.** Fewer than 5 frames or less than 0.3 mm of travel along
    the smoothed path: no stroke.
 3. **Tremor.** Net travel less than half the smoothed path length: `tremor`
@@ -466,11 +474,13 @@ label. Then, in order:
    every 2 ms and averaged over 5 samples) over its duration. A plain sum of
    frame-to-frame distances reads high, because sensor noise adds length.
 
-The benchmark fixtures check these rules: with their truth stripped and
-derived, all 12 flicks, 4 tremor rests, and 8 typing bursts come back as
-such, and all 22 steady strokes are found steady with speeds within 6 %
-(`host/replay/capture.test.js`). The post-typing fixtures' reaches 20 to 150 ms
-after the last key are derived as typing, by rule 1.
+The benchmark fixtures check these rules in both directions
+(`host/replay/capture.test.js`): with their truth stripped and derived, all
+60 intended strokes stay intended, including the reaches 20 to 150 ms after
+typing; all 12 flicks and 4 tremor rests come back as such; each of the 8
+typing bursts has at most 15 % of its motion in intended strokes (the last
+shake before a 20 or 40 ms reach can run into it); and all 22 steady strokes
+are found steady with speeds within 6 %.
 
 Limits: a recording replays only from an entered record, so a trace ends at
 a drop, a settings change, or a change of source, resolution, or link (see
