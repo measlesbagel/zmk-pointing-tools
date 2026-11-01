@@ -4,14 +4,18 @@ export class ResponseRequestQueue {
   #queue = [];
   #send;
   #timeoutMs;
+  #onTimeout;
   #timer;
 
-  /* With timeoutMs, a request whose response never arrives fails with an
-   * error instead of holding every later request forever. */
-  constructor(send, onError = () => {}, timeoutMs = 0) {
+  /* With timeoutMs, a request whose response never arrives ends the
+   * session: the queue drops everything and calls onTimeout. It never moves
+   * on to the next request, because a late response could then confirm a
+   * request it doesn't belong to. */
+  constructor(send, onError = () => {}, { timeoutMs = 0, onTimeout = () => {} } = {}) {
     this.#send = send;
     this.#onError = onError;
     this.#timeoutMs = timeoutMs;
+    this.#onTimeout = onTimeout;
   }
 
   enqueue(responseType, frame) {
@@ -42,10 +46,11 @@ export class ResponseRequestQueue {
     const request = this.#queue.shift();
     this.#active = request;
     if (this.#timeoutMs > 0) {
-      this.#timer = setTimeout(
-        () => this.#fail(request, new Error(`No response from the keyboard within ${this.#timeoutMs / 1000} s`)),
-        this.#timeoutMs,
-      );
+      this.#timer = setTimeout(() => {
+        if (this.#active !== request) return;
+        this.clear();
+        this.#onTimeout();
+      }, this.#timeoutMs);
     }
     try {
       Promise.resolve(this.#send(request.frame)).catch((error) => this.#fail(request, error));

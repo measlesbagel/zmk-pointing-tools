@@ -74,9 +74,18 @@ const tuningRequests = new ResponseRequestQueue(
     return transport.write(frame);
   },
   (error) => notice(`Tuning request failed: ${error.message}`, true),
-  /* Longer than the slowest real response: a peripheral relay waits 500 ms
-   * and a large description over Bluetooth takes several connection events. */
-  5_000,
+  {
+    /* Longer than the slowest real response: a peripheral relay waits
+     * 500 ms and a large description over Bluetooth takes several
+     * connection events. After a timeout the tuner can't tell which
+     * response answers which request, so the session ends. */
+    timeoutMs: 5_000,
+    onTimeout: () => {
+      if (!transport) return;
+      notice("The keyboard stopped responding. Reconnect to continue.", true);
+      disconnect();
+    },
+  },
 );
 
 const curveEditors = new CurveEditors({
