@@ -97,10 +97,14 @@ config ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
 config ZMK_POINTING_TOOLS_TELEMETRY
     bool "Pointing telemetry and tuning host service"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TELEMETRY))
-    depends on (SERIAL && UART_INTERRUPT_DRIVEN) || ZMK_BLE
+    # Only where a transport can be enabled: USB serial with its chosen
+    # port, or Bluetooth on a keyboard or split central. A split peripheral
+    # without USB serial builds without the service.
+    depends on ($(dt_chosen_enabled,$(DT_CHOSEN_ZPT_TELEMETRY_UART)) && SERIAL && UART_INTERRUPT_DRIVEN) || \
+               (ZMK_BLE && (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL))
     help
       Expose state samples, discovery, and tuning to a host over USB serial,
-      Bluetooth GATT, or both. At least one transport must be enabled.
+      Bluetooth GATT, or both. Available only where one of them can run.
 
 if ZMK_POINTING_TOOLS_TELEMETRY
 

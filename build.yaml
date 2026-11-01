@@ -16,3 +16,8 @@ include:
     shield: corne_left
     cmake-args: -DCONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART=n -DCONFIG_USB_CDC_ACM=n
     artifact-name: zmk_pointing_tools_smoke_bluetooth_only
+  # A peripheral without USB serial leaves the telemetry service out.
+  - board: nice_nano//zmk
+    shield: corne_right
+    cmake-args: -DCONFIG_SERIAL=n -DCONFIG_USB_CDC_ACM=n
+    artifact-name: zmk_pointing_tools_smoke_peripheral_no_usb_serial

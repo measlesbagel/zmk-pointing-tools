@@ -46,7 +46,9 @@ A GATT service on the central's host connection, beside ZMK's HID service.
 telemetry service is (a `measlesbagel,zpt-telemetry` node in the keymap) on a
 Bluetooth keyboard or split central; a keyboard config needs nothing extra.
 It doesn't apply to split peripherals, which build without it and without a
-warning, so a config shared by both halves stays as it is. Turn it off with:
+warning, so a config shared by both halves stays as it is. A peripheral
+without USB serial builds without the telemetry service at all. Turn the
+Bluetooth transport off with:
 
 ```ini
 CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE=n
@@ -58,8 +60,10 @@ stays off until a host enables it.
 
 Bluetooth also works without USB serial: a keymap with the
 `measlesbagel,zpt-telemetry` node but no `measlesbagel,zpt-telemetry-uart`
-chosen node (and no CDC-ACM settings) serves the protocol over Bluetooth only.
-The build fails if neither transport is available.
+chosen node (and no CDC-ACM settings) serves the protocol over Bluetooth only,
+on the central. Where neither transport can run, such as a split peripheral
+without USB serial, the service is left out; the build fails only if the
+service is forced on with both transports turned off.
 
 | | UUID | Properties |
 | --- | --- | --- |
