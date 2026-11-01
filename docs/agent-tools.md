@@ -151,7 +151,8 @@ It works without agent access too.
   keeps the keyboard's heartbeat going while recording, and stops the
   recording when it disconnects.
 - **Your data.** Recordings stay in this browser (IndexedDB) until you delete
-  them, and are never uploaded. A recording holds the time of every key press
+  them, and are never uploaded. The tuner keeps the latest 30 and says which
+  one it deletes to make room. A recording holds the time of every key press
   the pipeline's keypress guard sees, so it shows your typing rhythm, though
   not which keys. **Export** writes one to a file, with the stream as
   received, which `host/replay/capture.js` reads too; **Import recording**
@@ -159,21 +160,17 @@ It works without agent access too.
 - **Scoring.** Tick recordings and candidates (the current values always
   count; agent snapshots and imported profiles are candidates), then
   **Score**. Each metric shows its mean over the strokes it applies to, the
-  stroke count, and the change from the current values. Recordings don't
-  carry labels yet, so the tuner derives ground truth from the motion itself,
-  as [the benchmark](trace-benchmark.md#adding-real-recordings) describes for
-  recordings:
-  - every stroke between rests of 40 ms is intended, and its smoothed path is
-    its truth, for `outputErrorPercent`;
-  - a steady stroke's true speed is its length over its duration, for
-    `speedErrorPercent`, and below 50 mm/s for `slowJitterPercent` and
-    `sensitivityStepPercent`;
-  - a short stroke faster than 250 mm/s is a flick, for `flickLagMs`.
-
-  Traces that carry their own truth from the converter, such as labelled
-  strokes or the post-typing and axis strokes of scroll and text pipelines,
-  are scored on it instead. Metrics with no truth in the selected recordings
-  show no value. The table says where each metric's truth comes from.
+  stroke count, and the change from the current values. A metric that a
+  candidate leaves unscored, or scores over different strokes, counts as
+  worse, as in the benchmark: settings mustn't win by making strokes
+  unscorable. Ground truth comes from the converter
+  (`host/replay/capture-convert.js` with `truth: "derive"`), whose rules are
+  in [the benchmark](trace-benchmark.md#recorded-traces-ground-truth): strokes
+  labelled in the recording win, the converter derives strokes for the rest
+  of the motion, and motion within 100 ms of a key press counts as
+  unintended (the typing heuristic). For each metric, the table shows how
+  many of its strokes came from each of the three. Metrics with no truth in
+  the selected recordings show no value.
 - **The benchmark doesn't judge curve shape or gain.** The ideal output
   follows the curve and gain being scored, so a flatter curve or a lower gain
   can win every metric while feeling worse. Scores narrow the candidates;

@@ -10,12 +10,14 @@
  * Capture requests don't use the tuning request queue: firmware built
  * without capture ignores them, and the queue ends the session when a
  * request goes unanswered. They run one at a time here, each with its own
- * timeout, and a status query nobody answers marks capture unsupported. */
+ * timeout, and a status query nobody answers marks capture unsupported
+ * until Record is pressed or an agent asks for a recording, which ask
+ * again. */
 
 import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, parseCaptureBatch,
   parseCaptureDescription, parseCaptureStatus } from "./protocol.js";
-import { NO_TRUTH, RECORDED_TRUTH, SCORE_CAVEAT, addRecords, compareScoreSets, createRecordingStats,
-  deriveTruth, exportRecording, importRecording, resyncs } from "./recording-model.js";
+import { SCORE_CAVEAT, TRUTH_SOURCES, addRecords, compareScoreSets, createRecordingStats, describeTruth,
+  exportRecording, importRecording, metricTruth, newRecordingId, resyncs } from "./recording-model.js";
 
 const STATUS_TIMEOUT_MS = 2_500;
 /* Stopping sends everything buffered first; a large buffer on a slow link
@@ -74,6 +76,7 @@ export class Recorder {
   #waiting;
   #replay;
   #scorer;
+  #checking;
 
   /* host: send(type, pipelineId) sends a capture request, profile() reads
    * the current values as a tuning profile, ready() says whether that can
@@ -95,15 +98,14 @@ export class Recorder {
     this.stopButton = root.querySelector("[data-recording-stop]");
     this.statusText = root.querySelector("[data-recording-status]");
     this.live = root.querySelector("[data-recording-live]");
+    this.announcer = root.querySelector("[data-recording-announce]");
     this.list = root.querySelector("[data-recording-list]");
     this.candidateList = root.querySelector("[data-score-candidates]");
     this.scoreButton = root.querySelector("[data-score]");
     this.results = root.querySelector("[data-score-results]");
     this.recordingFile = root.querySelector("[data-recording-file]");
     this.profileFile = root.querySelector("[data-score-profile-file]");
-    this.startButton.addEventListener("click", () => this.start({
-      pipelineId: Number(this.selectPipeline.value), label: this.label.value,
-    }).catch((error) => this.host.notice(`Could not record: ${error.message}`, true)));
+    this.startButton.addEventListener("click", () => this.#startFromPanel());
     this.stopButton.addEventListener("click", () => this.stop("stopped by you"));
     root.querySelector("[data-recording-import]").addEventListener("click", () => this.recordingFile.click());
     root.querySelector("[data-score-profile-import]").addEventListener("click", () => this.profileFile.click());
@@ -118,7 +120,11 @@ export class Recorder {
     this.list.addEventListener("click", (event) => {
       const id = event.target.closest("[data-recording-id]")?.dataset.recordingId;
       if (!id) return;
-      if (event.target.closest("[data-recording-delete]")) this.remove(id);
+      const recording = this.recordings.find((candidate) => candidate.id === id);
+      if (event.target.closest("[data-recording-delete]") && recording
+        && confirm(`Delete the recording "${recording.label}"? It can't be recovered unless you exported it.`)) {
+        this.remove(id);
+      }
       if (event.target.closest("[data-recording-export]")) this.#download(id);
     });
     this.scoreButton.addEventListener("click", () => this.#scoreFromPanel());
@@ -129,7 +135,7 @@ export class Recorder {
   async load() {
     try {
       const saved = await store("readonly", (objects) => objects.getAll());
-      this.recordings = saved.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      this.recordings = saved.sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
     } catch {
       this.persistent = false;
     }
@@ -164,7 +170,11 @@ export class Recorder {
 
   async add(recording) {
     this.recordings.push(recording);
-    while (this.recordings.length > RECORDING_LIMIT) await this.remove(this.recordings[0].id);
+    while (this.recordings.length > RECORDING_LIMIT) {
+      const [oldest] = this.recordings;
+      this.host.notice(`The tuner keeps ${RECORDING_LIMIT} recordings, so it deleted the oldest, "${oldest.label}". Export recordings to keep more.`, true);
+      await this.remove(oldest.id);
+    }
     try {
       await store("readwrite", (objects) => objects.put(recording));
     } catch {
@@ -219,6 +229,17 @@ export class Recorder {
     this.render();
   }
 
+  /* Asks again whether the keyboard records, after a status query went
+   * unanswered: a single miss, such as on a busy Bluetooth link, mustn't
+   * hide recording until the next connection. */
+  async checkSupport() {
+    if (this.supported === false && this.host.connected() && !this.#checking) {
+      this.#checking = this.connected().finally(() => { this.#checking = undefined; });
+    }
+    await this.#checking;
+    return this.supported;
+  }
+
   disconnected() {
     this.#waiting?.reject(new Error("the connection ended"));
     this.supported = null;
@@ -260,7 +281,8 @@ export class Recorder {
 
   /* Sets the panel up for an agent's accepted recording request, for the
    * user to start. */
-  prepare({ activity, label }) {
+  async prepare({ activity, label }) {
+    await this.checkSupport();
     const pipeline = this.pipelines().find((candidate) => candidate.label === activity);
     if (pipeline) this.selectPipeline.value = String(pipeline.id);
     this.label.value = label;
@@ -270,6 +292,11 @@ export class Recorder {
       this.root.tabIndex = -1;
       this.root.focus({ preventScroll: true });
     }
+  }
+
+  /* Screen readers hear only starts and stops, not every batch. */
+  announce(text) {
+    this.announcer.textContent = text;
   }
 
   get recording() {
@@ -283,8 +310,31 @@ export class Recorder {
   /* Starts recording a pipeline: reads the profile right before, checks
    * that its settings hash matches what the keyboard runs, and records
    * every profile the pipeline runs while recording. */
-  async start({ pipelineId, label }) {
+  async #startFromPanel() {
+    try {
+      if (this.supported === false && !(await this.checkSupport())) {
+        throw new Error("the keyboard still doesn't answer capture requests");
+      }
+      await this.start({ pipelineId: Number(this.selectPipeline.value), label: this.label.value });
+    } catch (error) {
+      this.host.notice(`Could not record: ${error.message}`, true);
+    }
+  }
+
+  async start(options) {
     if (this.active) throw new Error(`"${this.active.label}" is already recording`);
+    if (this.starting) throw new Error("a recording is already starting");
+    this.starting = true;
+    this.render();
+    try {
+      return await this.#start(options);
+    } finally {
+      this.starting = false;
+      this.render();
+    }
+  }
+
+  async #start({ pipelineId, label }) {
     if (!this.supported) throw new Error("this keyboard can't record motion");
     const pipeline = this.pipelines().find(({ id }) => id === pipelineId);
     if (!pipeline) throw new Error(`no pipeline ${pipelineId}`);
@@ -299,7 +349,7 @@ export class Recorder {
       warnings.push("The tuner's values didn't match what the keyboard runs when recording started; traces with unknown settings will be skipped.");
     }
     this.active = {
-      id: `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      id: newRecordingId(),
       label: name, pipeline: description.stableId, pipelineId, description, stageIds,
       createdAt: new Date().toISOString(), startedMs: Date.now(), transport: this.host.transport(),
       chunks: [encodeFrame(describeFrame.type, describeFrame.payload)], decoder: captureDecoder(),
@@ -318,6 +368,7 @@ export class Recorder {
     this.poll = setInterval(() => this.#poll(), POLL_MS);
     this.host.onStart?.(description.stableId);
     this.host.notice(`Recording ${description.stableId}. Recordings stay in this browser.`);
+    this.announce(`Recording “${name}” started.`);
     this.render();
     return this.active;
   }
@@ -349,8 +400,14 @@ export class Recorder {
     if (!this.active || this.stopping) return null;
     this.stopping = true;
     this.render();
+    /* A status answering an earlier query can arrive first and still say
+     * recording, so ask until one says stopped. */
+    const deadline = Date.now() + STOP_TIMEOUT_MS;
     try {
-      await this.#queryStatus(CAPTURE.NONE, STOP_TIMEOUT_MS);
+      do {
+        await this.#queryStatus(CAPTURE.NONE, Math.max(deadline - Date.now(), 1));
+      } while (this.status.recording !== null && this.active && Date.now() < deadline);
+      if (this.status.recording !== null) throw new Error("the keyboard still reported recording");
     } catch (error) {
       this.active?.warnings.push(`The stop wasn't confirmed (${error.message}); records still buffered are missing.`);
     }
@@ -374,6 +431,7 @@ export class Recorder {
     this.add(recording);
     this.host.onEnd?.(recording.pipeline, { completed: reason !== "the connection ended", result: this.describe(recording) });
     this.host.notice(`Saved recording "${recording.label}": ${recording.stats.frames} frames, ${recording.stats.dropped} records dropped, ${resyncs(recording.stats)} resyncs.`);
+    this.announce(`Recording “${recording.label}” stopped: ${reason}.`);
     this.render();
     return recording;
   }
@@ -405,7 +463,8 @@ export class Recorder {
     return this.#replay;
   }
 
-  /* Converts recordings to traces with derived truth where they have none. */
+  /* Converts recordings to traces. The converter derives ground truth
+   * where no label gives it, and tags what it derived. */
   async traces(ids) {
     const replay = await this.#loadReplay();
     const warnings = [];
@@ -414,16 +473,17 @@ export class Recorder {
       const recording = this.find(id);
       const { fixtures, warnings: found } = replay.captureToFixtures(replay.decodeCaptureStream(recording.stream),
         recording.profiles, { id: recording.id, description: `Tuner recording "${recording.label}"`,
-          provenance: `zmk-pointing-tools tuner recording, ${recording.createdAt}` });
+          provenance: `zmk-pointing-tools tuner recording, ${recording.createdAt}`, truth: "derive" });
       warnings.push(...found.map((warning) => `${recording.label}: ${warning}`));
-      traces.push(...fixtures.map(deriveTruth));
+      traces.push(...fixtures);
     }
     return { replay, traces, warnings };
   }
 
   /* Scores the current values and each candidate profile on recordings.
    * Candidates are { name, profile }. */
-  async score(ids, candidates) {
+  async score(chosen, candidates) {
+    const ids = [...new Set(chosen)];
     if (!ids.length) throw new Error("choose at least one recording");
     const { replay, traces, warnings } = await this.traces(ids);
     if (!traces.length) throw new Error(`no replayable traces in these recordings${warnings.length ? `: ${warnings.join("; ")}` : ""}`);
@@ -436,7 +496,7 @@ export class Recorder {
       this.#scorer = undefined;
       throw error;
     }
-    const rows = compareScoreSets(scored, replay.METRICS);
+    const rows = compareScoreSets(scored, replay.METRICS, metricTruth(traces, scored));
     return {
       recordings: ids.map((id) => this.find(id).label),
       traces: traces.length,
@@ -456,6 +516,7 @@ export class Recorder {
     const ids = [...this.list.querySelectorAll("[data-recording-pick]:checked")].map((box) => box.closest("[data-recording-id]").dataset.recordingId);
     const chosen = new Set([...this.candidateList.querySelectorAll("[data-candidate]:checked")].map((box) => box.dataset.candidate));
     const candidates = this.#candidates().filter(({ name }) => chosen.has(name));
+    this.scoring = true;
     this.scoreButton.disabled = true;
     this.results.innerHTML = '<p class="muted">Scoring…</p>';
     try {
@@ -464,7 +525,8 @@ export class Recorder {
     } catch (error) {
       this.results.innerHTML = `<p class="device-error">${escapeHtml(error.message)}</p>`;
     } finally {
-      this.scoreButton.disabled = false;
+      this.scoring = false;
+      this.renderCandidates();
     }
   }
 
@@ -477,12 +539,14 @@ export class Recorder {
       ? pipelines.map(({ id, label, replayable }) => `<option value="${id}" ${String(id) === chosen ? "selected" : ""}>${escapeHtml(label)}${replayable ? "" : " (doesn't replay)"}</option>`).join("")
       : '<option value="">No pipelines</option>';
     const recording = Boolean(this.active);
-    this.selectPipeline.disabled = recording || !pipelines.length;
-    this.label.disabled = recording;
-    this.startButton.disabled = recording || !this.supported || !pipelines.length;
+    this.selectPipeline.disabled = recording || this.starting || !pipelines.length;
+    this.label.disabled = recording || this.starting;
+    /* Unsupported but connected: Record asks the keyboard again. */
+    this.startButton.disabled = recording || this.starting
+      || !(this.supported === false ? this.host.connected() : this.supported && pipelines.length);
     this.stopButton.disabled = !recording || this.stopping;
     this.statusText.textContent = this.stopping ? "Stopping…"
-      : recording ? "Recording"
+      : recording ? "Recording" : this.starting ? "Starting…"
         : this.supported === null ? (this.host.connected() ? "Checking…" : "Not connected")
           : this.supported ? "Ready" : "Not supported";
     this.statusText.classList.toggle("live", recording);
@@ -523,8 +587,8 @@ export class Recorder {
       this.recordings.slice().reverse().map((recording) => `<tr data-recording-id="${escapeHtml(recording.id)}">
         <td><input type="checkbox" data-recording-pick ${picked.has(recording.id) || !shown.has(recording.id) ? "checked" : ""} aria-label="Score with ${escapeHtml(recording.label)}"></td>
         <td>${escapeHtml(recording.label)}</td><td><code>${escapeHtml(recording.pipeline)}</code></td>
-        <td>${escapeHtml(new Date(recording.createdAt).toLocaleString())}</td><td>${seconds(recording.durationMs)}</td>
-        <td>${recording.stats.frames.toLocaleString()}</td><td>${recording.stats.dropped.toLocaleString()}</td><td>${resyncs(recording.stats)}</td>
+        <td>${escapeHtml(new Date(recording.createdAt).toLocaleString())}</td><td>${escapeHtml(seconds(Number(recording.durationMs)))}</td>
+        <td>${escapeHtml(Number(recording.stats.frames).toLocaleString())}</td><td>${escapeHtml(Number(recording.stats.dropped).toLocaleString())}</td><td>${escapeHtml(resyncs(recording.stats))}</td>
         <td><button type="button" data-recording-export aria-label="Export ${escapeHtml(recording.label)}">Export</button>
           <button type="button" data-recording-delete aria-label="Delete ${escapeHtml(recording.label)}">Delete</button></td>
       </tr>`).join("")}</tbody></table>`;
@@ -533,6 +597,7 @@ export class Recorder {
   renderCandidates() {
     const candidates = this.#candidates();
     const checked = new Set([...this.candidateList.querySelectorAll("[data-candidate]:checked")].map((box) => box.dataset.candidate));
+    this.scoreButton.disabled = !this.recordings.length || this.scoring;
     const names = candidates.map(({ name }) => name).join("\n");
     if (names === this.candidateList.dataset.names) return;
     /* New candidates start ticked; ones shown before keep their box. */
@@ -541,24 +606,27 @@ export class Recorder {
     this.candidateList.innerHTML = `<label><input type="checkbox" checked disabled> Current values</label>${
       candidates.map(({ name }) => `<label><input type="checkbox" data-candidate="${escapeHtml(name)}" ${checked.has(name) || !shown.has(name) ? "checked" : ""}> ${escapeHtml(name)}</label>`).join("")
     }${candidates.length ? "" : '<span class="muted">Save snapshots in Agent access or import a profile to compare against.</span>'}`;
-    this.scoreButton.disabled = !this.recordings.length;
   }
 
   renderResult() {
     const { columns, rows, warnings, traces, strokes, caveat } = this.result;
+    const notes = rows.flatMap((row) => row.note.map((note, index) => note && `${row.metric} for ${columns[index]}: ${note === "missing" ? "not scored" : note}`)).filter(Boolean);
     const format = (entry, unit) => (entry ? `${entry.value}${unit === "%" ? " %" : unit ? ` ${unit}` : ""} <small>(${entry.strokes})</small>` : "–");
     const change = (row, index) => {
-      if (index === 0 || row.change[index] === null) return "";
+      if (index === 0 || (row.change[index] === null && !row.note[index])) return "";
       const better = row.better[index];
-      return ` <small class="${better === true ? "better" : better === false ? "worse" : ""}">${row.change[index] > 0 ? "+" : ""}${row.change[index]}</small>`;
+      const text = row.change[index] === null ? "missing" : `${row.change[index] > 0 ? "+" : ""}${row.change[index]}`;
+      return ` <small class="${better === true ? "better" : better === false ? "worse" : ""}">${escapeHtml(text)}${row.note[index] ? "*" : ""}</small>`;
     };
     this.results.innerHTML = `
       <p class="muted">${traces} traces, ${strokes} strokes. Values are means over strokes (stroke count in brackets); changes are from the current values, with better in green and worse in amber.</p>
-      <table class="score-table"><thead><tr><th>Metric</th>${columns.map((name) => `<th>${escapeHtml(name)}</th>`).join("")}<th>Truth in these recordings</th></tr></thead><tbody>${
+      <table class="score-table"><thead><tr><th>Metric</th>${columns.map((name) => `<th>${escapeHtml(name)}</th>`).join("")}<th>Truth strokes by source</th></tr></thead><tbody>${
         rows.map((row) => `<tr><th scope="row">${escapeHtml(row.metric)} <small>${row.higherIsBetter ? "higher is better" : "lower is better"}</small></th>${
           row.values.map((entry, index) => `<td>${format(entry, row.unit)}${change(row, index)}</td>`).join("")
-        }<td class="muted">${escapeHtml(row.values.some(Boolean) ? row.truth ?? RECORDED_TRUTH : row.truth ? `${row.truth}; none found` : NO_TRUTH)}</td></tr>`).join("")
+        }<td class="muted">${escapeHtml(describeTruth(row.truth))}</td></tr>`).join("")
       }</tbody></table>
+      ${notes.length ? `<p class="muted">* Worse whatever the value: ${escapeHtml(notes.join("; "))}. A metric scored over different strokes can't be compared, and settings mustn't win by making strokes unscorable.</p>` : ""}
+      <p class="muted">Truth sources: ${Object.entries(TRUTH_SOURCES).map(([source, text]) => `${source === "typing" ? "typing heuristic" : source}, ${escapeHtml(text)}`).join("; ")}.</p>
       <p class="temporary-warning">${escapeHtml(caveat)}</p>
       ${warnings.length ? `<details><summary>${warnings.length} conversion warnings</summary><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>` : ""}`;
   }

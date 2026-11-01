@@ -7,7 +7,7 @@
 
 import { ACTIVITIES } from "./playground-model.js";
 import { SIGNAL_KIND, parseStageFrame } from "./calibration-model.js";
-import { RECORDED_TRUTH } from "./recording-model.js";
+import { TRUTH_SOURCES } from "./recording-model.js";
 
 const json = (value) => JSON.stringify(value, null, 2);
 const WAIT_DEFAULT = 20;
@@ -21,6 +21,7 @@ const WINDOW_SECONDS_DEFAULT = 120;
 const WINDOW_SECONDS_LIMIT = 900;
 const PAGE_DEFAULT = 200;
 const PAGE_LIMIT = 1_000;
+const WARNING_LIMIT = 10;
 const PRECISION = "cursor-precision";
 const LEVELS = ["off", "decisions", "every-frame"];
 const SIGNAL_KINDS = Object.fromEntries(Object.entries(SIGNAL_KIND).map(([name, value]) => [value, name.toLowerCase().replaceAll("_", "-")]));
@@ -664,7 +665,7 @@ export function createExperimentTools(context, session) {
       annotations: { readOnlyHint: false, consequentialHint: false },
       execute: async ({ label, pipeline, note } = {}) => {
         const recorder = context.recorder();
-        if (recorder.supported === false) throw new Error("This keyboard can't record motion: its firmware has no input capture.");
+        if ((await recorder.checkSupport()) === false) throw new Error("This keyboard can't record motion: its firmware has no input capture.");
         if (pipeline !== undefined && !recorder.pipelines().some((candidate) => candidate.label === pipeline)) {
           throw new Error(`No pipeline "${pipeline}". list_recordings lists them.`);
         }
@@ -712,7 +713,7 @@ export function createExperimentTools(context, session) {
     },
     {
       name: "score_settings",
-      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each benchmark metric for both, the change, whether it's better, and where the metric's ground truth comes from. Nothing is sent to the keyboard. The tuner derives truth for recordings without labels, so some metrics have none. The benchmark doesn't judge curve shape or gain: confirm such changes on the keyboard with a preview and an A/B run.",
+      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each benchmark metric for both, the change, whether it's better, and where the metric's ground truth comes from. Nothing is sent to the keyboard. The converter derives ground truth where no label gives it; each metric reports how many of its strokes came from labels, derivation or the typing heuristic, and a metric missing or scored over different strokes with the candidate counts as worse. The benchmark doesn't judge curve shape or gain: confirm such changes on the keyboard with a preview and an A/B run.",
       inputSchema: {
         type: "object",
         properties: {
@@ -726,23 +727,29 @@ export function createExperimentTools(context, session) {
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: async ({ recordings, snapshot, values } = {}) => {
         if (!Array.isArray(recordings) || !recordings.length) throw new Error("recordings needs at least one recording id.");
+        const ids = [...new Set(recordings.map(String))];
         if ((snapshot === undefined) === (values === undefined)) throw new Error("Give either snapshot or values.");
         const recorder = context.recorder();
-        for (const id of recordings) recorder.find(String(id));
+        for (const id of ids) recorder.find(id);
         const profile = session.candidateProfile({ snapshot: snapshot === undefined ? undefined : String(snapshot), values });
         const name = snapshot !== undefined ? `snapshot ${snapshot}` : "candidate values";
-        const result = await recorder.score(recordings.map(String), [{ name, profile }]);
-        const metrics = result.rows.map(({ metric, unit, higherIsBetter, truth, values: scored, change, better }) => ({
+        const result = await recorder.score(ids, [{ name, profile }]);
+        const metrics = result.rows.map(({ metric, unit, higherIsBetter, truth, values: scored, change, better, note }) => ({
           metric, unit, higherIsBetter,
           current: scored[0], candidate: scored[1], change: change[1], better: better[1],
-          truth: scored.some(Boolean) ? truth ?? RECORDED_TRUTH : null,
+          ...(note[1] ? { note: note[1] === "missing" ? "not scored with the candidate: counts as worse"
+            : `${note[1]}: scored over different strokes, counts as worse` } : {}),
+          truthStrokes: truth,
         }));
         const wins = metrics.filter(({ better: b }) => b === true).length;
         const losses = metrics.filter(({ better: b }) => b === false).length;
         return json({
           summary: `Scored ${name} on ${result.traces} traces: ${wins} metrics better, ${losses} worse`,
           recordings: result.recordings, traces: result.traces, strokes: result.strokes,
-          metrics, warnings: result.warnings, caveat: result.caveat,
+          metrics, truthSources: TRUTH_SOURCES,
+          warnings: result.warnings.slice(0, WARNING_LIMIT),
+          ...(result.warnings.length > WARNING_LIMIT ? { moreWarnings: result.warnings.length - WARNING_LIMIT } : {}),
+          caveat: result.caveat,
         });
       },
     },

@@ -201,7 +201,7 @@
             <span>Record real motion from the keyboard, then score the current values against other settings on it, offline.</span>
           </div>
           <div class="panel-actions">
-            <strong class="status" data-recording-status role="status">Not connected</strong>
+            <strong class="status" data-recording-status>Not connected</strong>
           </div>
         </div>
         <div class="temporary-warning">
@@ -223,7 +223,8 @@
           <button type="button" data-recording-import>Import recording</button>
           <input type="file" data-recording-file accept="application/json,.json" hidden>
         </div>
-        <div class="recording-live" data-recording-live aria-live="polite" hidden></div>
+        <div class="recording-live" data-recording-live hidden></div>
+        <p class="visually-hidden" data-recording-announce role="status"></p>
         <div class="recording-list" data-recording-list></div>
         <h3 class="recording-subheading">Score settings</h3>
         <p class="muted">

@@ -6,10 +6,10 @@ import { buildSimulatorTuningTargets } from "./simulator-model.js";
 import { createTuningProfile } from "./profile.js";
 import { SimulatedCapture } from "./simulated-capture.js";
 import {
-  addRecords, compareScoreSets, createRecordingStats, deriveTruth, exportRecording, importRecording, resyncs,
+  addRecords, compareScoreSets, createRecordingStats, describeTruth, exportRecording, importRecording, metricTruth,
+  resyncs, streamStats,
 } from "./recording-model.js";
 import { captureToFixtures, decodeCaptureStream } from "../host/replay/capture-convert.js";
-import { validateFixture } from "../host/replay/fixture.js";
 
 /* Records seconds of simulated capture and returns the stream as received. */
 async function simulate(ticks, change) {
@@ -49,51 +49,49 @@ test("simulated capture drops during a link stall, resyncs, and converts with a 
   assert.match(warnings.join("\n"), /records dropped/);
 });
 
-test("derived truth labels strokes from the recording and validates", async () => {
-  const { stream, profiles } = await simulate(500);
-  const [fixture] = captureToFixtures(decodeCaptureStream(stream), profiles).fixtures;
-  const derived = deriveTruth(fixture);
-  validateFixture(derived);
-  const strokes = derived.truth.strokes;
-  const activities = new Set(strokes.map(({ activity }) => activity));
-  assert.deepEqual([...activities].sort(), ["aim", "flick", "slow-aim"]);
-  /* Only the steady slow aims carry a speed: about 13 mm over 0.7 s. */
-  for (const stroke of strokes.filter(({ speedMmPerS }) => speedMmPerS !== undefined)) {
-    assert.equal(stroke.activity, "slow-aim");
-    assert.ok(stroke.speedMmPerS > 14 && stroke.speedMmPerS < 26, String(stroke.speedMmPerS));
-  }
-  /* The path ends where the counts do. */
-  const motion = derived.events.filter(([type]) => type === "motion");
-  const first = strokes[0];
-  let time = 0;
-  const total = [0, 0];
-  for (const event of derived.events) {
-    time += event[1];
-    if (event[0] === "motion" && time >= first.startUs && time < first.endUs) {
-      total[0] += event[2];
-      total[1] += event[3];
-    }
-  }
-  assert.ok(motion.length > 0);
-  assert.deepEqual(first.path.points.at(-1), total);
-  /* Existing truth wins. */
-  const labelled = { ...fixture, truth: { strokes: [] } };
-  assert.equal(deriveTruth(labelled), labelled);
+test("truth sources are counted per metric over the strokes that scored it", () => {
+  const traces = [
+    { id: "a", truth: { strokes: [{ id: "s1", activity: "aim", derived: true }, { id: "s2", activity: "post-typing", derived: true }] } },
+    { id: "b", truth: { strokes: [{ id: "s1", activity: "scroll", axis: "vertical" }] } },
+  ];
+  const result = (strokes) => ({ fixtureResults: [{ id: "a", strokes: strokes.a }, { id: "b", strokes: strokes.b }] });
+  const truth = metricTruth(traces, [
+    result({ a: [{ id: "s1", metrics: { outputErrorPercent: 3 } }, { id: "s2", metrics: { unintendedOutput: 1 } }],
+      b: [{ id: "s1", metrics: { axisLockPercent: 90, unintendedOutput: 0 } }] }),
+    /* The same stroke scored by a second set counts once. */
+    result({ a: [{ id: "s1", metrics: { outputErrorPercent: 4 } }], b: [] }),
+  ]);
+  assert.deepEqual(truth, {
+    outputErrorPercent: { derived: 1 },
+    unintendedOutput: { typing: 1, labels: 1 },
+    axisLockPercent: { labels: 1 },
+  });
+  assert.equal(describeTruth(truth.unintendedOutput), "labels 1, typing heuristic 1");
+  assert.match(describeTruth(undefined), /no stroke/);
 });
 
-test("score comparisons report change and direction per metric", () => {
+test("score comparisons count a vanished metric or other strokes as worse, never better", () => {
   const metrics = { flickLagMs: { higherIsBetter: false, unit: "ms" }, axisLockPercent: { higherIsBetter: true, unit: "%" },
+    outputErrorPercent: { higherIsBetter: false, unit: "%" }, speedErrorPercent: { higherIsBetter: false, unit: "%" },
     unintendedOutput: { higherIsBetter: false, unit: "" } };
   const rows = compareScoreSets([
-    { scores: { flickLagMs: { value: 12, strokes: 3 }, axisLockPercent: { value: 80, strokes: 2 } } },
-    { scores: { flickLagMs: { value: 14.5, strokes: 3 }, axisLockPercent: { value: 90, strokes: 2 } } },
-  ], metrics);
-  assert.deepEqual(rows.map(({ metric, change, better }) => [metric, change, better]), [
-    ["flickLagMs", [0, 2.5], [null, false]],
-    ["axisLockPercent", [0, 10], [null, true]],
-    ["unintendedOutput", [null, null], [null, null]],
+    { scores: { flickLagMs: { value: 12, strokes: 3 }, axisLockPercent: { value: 80, strokes: 2 },
+      outputErrorPercent: { value: 9, strokes: 10 }, speedErrorPercent: { value: 5, strokes: 4 } } },
+    /* outputErrorPercent drops by losing strokes; speedErrorPercent vanishes. */
+    { scores: { flickLagMs: { value: 14.5, strokes: 3 }, axisLockPercent: { value: 90, strokes: 2 },
+      outputErrorPercent: { value: 2, strokes: 6 } } },
+    { scores: { flickLagMs: { value: 12, strokes: 3 }, speedErrorPercent: { value: 1, strokes: 4 },
+      unintendedOutput: { value: 3, strokes: 1 } } },
+  ], metrics, { flickLagMs: { derived: 3 } });
+  assert.deepEqual(rows.map(({ metric, change, better, note }) => [metric, change, better, note]), [
+    ["flickLagMs", [null, 2.5, 0], [null, false, null], [null, null, null]],
+    ["axisLockPercent", [null, 10, null], [null, true, false], [null, null, "missing"]],
+    ["outputErrorPercent", [null, -7, null], [null, false, false], [null, "strokes 10→6", "missing"]],
+    ["speedErrorPercent", [null, null, -4], [null, false, true], [null, "missing", null]],
+    /* Nothing to compare against: no verdict. */
+    ["unintendedOutput", [null, null, null], [null, null, null], [null, null, null]],
   ]);
-  assert.equal(rows[2].truth, null);
+  assert.deepEqual([rows[0].truth, rows[1].truth], [{ derived: 3 }, null]);
 });
 
 test("a recording survives export and import byte for byte", async () => {
@@ -103,5 +101,27 @@ test("a recording survives export and import byte for byte", async () => {
   const back = importRecording(JSON.parse(JSON.stringify(exportRecording(recording))));
   assert.deepEqual(back.stream, stream);
   assert.deepEqual(back.profiles, profiles);
+  assert.equal(back.createdAt, "2026-11-01T00:00:00.000Z");
+  /* Counts come from the stream, not the file. */
+  assert.deepEqual(back.stats, streamStats(stream));
+  assert.ok(back.stats.frames > 0);
   assert.throws(() => importRecording({ schema: "other" }), /expected a zmk-pointing-tools\/recording v1 file/);
+});
+
+test("an imported recording keeps only checked schema fields, so a hostile file renders as data", async () => {
+  const { stream, profiles } = await simulate(100);
+  const file = {
+    ...exportRecording({ id: "rec-1", label: "x", pipeline: "cursor", profiles, stream, stats: createRecordingStats() }),
+    id: "<img src=x onerror=alert(1)>", label: '<b>“quoted”</b>"', createdAt: "not a date", durationMs: "<script>",
+    stats: { frames: "<img src=x onerror=alert(2)>", dropped: {}, entered: [] }, firmwareDropped: "9",
+    transport: { evil: true }, warnings: ["ok", 7, { html: "<b>" }], extra: "<svg onload=alert(3)>",
+  };
+  const back = importRecording(JSON.parse(JSON.stringify(file)));
+  assert.match(back.id, /^rec-[a-z0-9]+-[a-z0-9]+$/);
+  assert.equal(back.label, "<b>quoted</b>");
+  assert.ok(!Number.isNaN(Date.parse(back.createdAt)));
+  assert.equal(typeof back.durationMs, "number");
+  assert.equal(typeof back.stats.frames, "number");
+  assert.deepEqual([back.firmwareDropped, back.transport, back.warnings, "extra" in back], [null, null, ["ok"], false]);
+  assert.throws(() => importRecording({ ...file, profiles: ["<b>"] }), /tuning profiles/);
 });

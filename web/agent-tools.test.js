@@ -43,12 +43,15 @@ function fakeRecorder() {
       return recording;
     },
     async stop(reason) { this.stops.push(reason); this.onStop?.(); },
+    async checkSupport() { return this.supported; },
     async score(ids, candidates) {
       this.scored.push({ ids, candidates });
-      return { recordings: ids, traces: 2, strokes: 9, columns: ["current values", candidates[0].name], warnings: [], caveat: "curve shape",
-        rows: [{ metric: "flickLagMs", unit: "ms", higherIsBetter: false, truth: "flicks",
-          values: [{ value: 12, strokes: 3 }, { value: 10, strokes: 3 }], change: [0, -2], better: [null, true] },
-        { metric: "unintendedOutput", unit: "", higherIsBetter: false, truth: null, values: [null, null], change: [null, null], better: [null, null] }] };
+      return { recordings: ids, traces: 2, strokes: 9, columns: ["current values", candidates[0].name],
+        warnings: Array.from({ length: 13 }, (_, index) => `warning ${index}`), caveat: "curve shape",
+        rows: [{ metric: "flickLagMs", unit: "ms", higherIsBetter: false, truth: { derived: 3 },
+          values: [{ value: 12, strokes: 3 }, { value: 10, strokes: 3 }], change: [null, -2], better: [null, true], note: [null, null] },
+        { metric: "unintendedOutput", unit: "", higherIsBetter: false, truth: { typing: 2 },
+          values: [{ value: 4, strokes: 2 }, null], change: [null, null], better: [null, false], note: [null, "missing"] }] };
     },
   };
 }
@@ -608,13 +611,16 @@ test("score_settings scores a snapshot or checked values against the current val
   await assert.rejects(call(session.tools, "score_settings", { recordings: ["rec-9"], values: {} }), /No recording "rec-9"/);
   await assert.rejects(call(session.tools, "score_settings", { recordings: ["rec-1"],
     values: { "right-cursor-acceleration": { "speed-rise-ms": 500 } } }), /from 1 to 200, not 500/);
-  const result = await call(session.tools, "score_settings", { recordings: ["rec-1"],
+  const result = await call(session.tools, "score_settings", { recordings: ["rec-1", "rec-1"],
     values: { "right-cursor-acceleration": { "speed-rise-ms": 50 } } });
-  const [{ candidates: [candidate] }] = fake.recorderFake.scored;
+  const [{ ids, candidates: [candidate] }] = fake.recorderFake.scored;
+  assert.deepEqual(ids, ["rec-1"]);
   assert.equal(candidate.profile.targets[0].parameters[0].value, 50);
-  assert.equal(result.summary, "Scored candidate values on 2 traces: 1 metrics better, 0 worse");
-  assert.deepEqual(result.metrics.map(({ metric, change, better, truth }) => [metric, change, better, truth]),
-    [["flickLagMs", -2, true, "flicks"], ["unintendedOutput", null, null, null]]);
+  assert.equal(result.summary, "Scored candidate values on 2 traces: 1 metrics better, 1 worse");
+  assert.deepEqual(result.metrics.map(({ metric, change, better, truthStrokes, note }) => [metric, change, better, truthStrokes, note]),
+    [["flickLagMs", -2, true, { derived: 3 }, undefined],
+      ["unintendedOutput", null, false, { typing: 2 }, "not scored with the candidate: counts as worse"]]);
+  assert.deepEqual([result.warnings.length, result.moreWarnings], [10, 3]);
   /* Nothing reached the keyboard. */
   assert.deepEqual(fake.batches, []);
   await call(session.tools, "set_tuning_values", { target: "right-cursor-acceleration", values: { "speed-rise-ms": 70 } });

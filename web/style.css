@@ -195,6 +195,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
   .playground-controls strong, .calibration-controls strong { width: 100%; margin-left: 0; }
 }
 .recording-live:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0; padding: 8px 10px; background: #11141a; color: var(--muted); font-size: 13px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .recording-live meter { width: 160px; }
 .recording-live .warning, .score-table small.worse { color: var(--warning); }
 .score-table small.better { color: var(--accent); }

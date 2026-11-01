@@ -45,7 +45,11 @@ When the firmware supports input capture (`list_recordings` says
    candidate as `values` (or a saved `snapshot`). It replays the recordings
    with the current values and the candidate and reports every metric's
    change. Nothing reaches the keyboard, so try as many as you like. Metrics
-   with `truth: null` weren't scored. The benchmark doesn't judge curve shape
+   without a value weren't scored. `truthStrokes` counts where each metric's
+   truth came from: `labels`, `derived` by the converter, or the `typing`
+   heuristic; derived truth is a guess, so weigh it below labels. A metric
+   with a `note` counts as worse: the candidate left it unscored or scored
+   other strokes. The benchmark doesn't judge curve shape
    or gain: a flatter curve or lower gain can win every metric and feel worse,
    so treat scores as a filter, not a verdict.
 3. **Preview the winner** or the best two, and confirm them on the keyboard
