@@ -88,6 +88,8 @@ also exposes).
   response is lost silently and corrupts the frame. When a different
   connection, or the same host after reconnecting, writes its first chunk,
   firmware discards any frame the previous connection left half-written.
+  Subscribing to the response characteristic does the same, so a new tuner
+  session on an unchanged connection also starts with a clean parser.
 - **Responses and telemetry.** The host subscribes to notifications on the
   response characteristic before its first request. Firmware sends only to the
   connection that wrote the latest request. Each frame starts a new

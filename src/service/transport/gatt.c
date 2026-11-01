@@ -134,17 +134,33 @@ static ssize_t zpt_gatt_write(struct bt_conn *conn, const struct bt_gatt_attr *a
     return len;
 }
 
+/* A host subscribing starts a new tuner session, possibly on the same
+ * connection as an earlier one that stopped mid-frame, so the parser drops
+ * any partial frame before the session's first request. Called for every
+ * CCC write, per connection. */
+static ssize_t zpt_gatt_ccc_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                  uint16_t value) {
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    if ((value & BT_GATT_CCC_NOTIFY) != 0) {
+        atomic_set(&zpt_gatt_rx_reset, 1);
+    }
+    return sizeof(value);
+}
+
 /* The NOLINT covers the service record: BT_GATT_SERVICE_DEFINE places it in
  * an iterable linker section and has no static variant. */
 // NOLINTNEXTLINE(misc-use-internal-linkage)
-BT_GATT_SERVICE_DEFINE(zpt_gatt_service, BT_GATT_PRIMARY_SERVICE(&zpt_service_uuid),
-                       BT_GATT_CHARACTERISTIC(&zpt_request_uuid.uuid,
-                                              BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
-                                              BT_GATT_PERM_WRITE_ENCRYPT, NULL, zpt_gatt_write,
-                                              NULL),
-                       BT_GATT_CHARACTERISTIC(&zpt_response_uuid.uuid, BT_GATT_CHRC_NOTIFY,
-                                              BT_GATT_PERM_NONE, NULL, NULL, NULL),
-                       BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT));
+BT_GATT_SERVICE_DEFINE(
+    zpt_gatt_service, BT_GATT_PRIMARY_SERVICE(&zpt_service_uuid),
+    BT_GATT_CHARACTERISTIC(&zpt_request_uuid.uuid,
+                           BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                           BT_GATT_PERM_WRITE_ENCRYPT, NULL, zpt_gatt_write, NULL),
+    BT_GATT_CHARACTERISTIC(&zpt_response_uuid.uuid, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL,
+                           NULL, NULL),
+    BT_GATT_CCC_MANAGED(((struct _bt_gatt_ccc[]){
+                            BT_GATT_CCC_INITIALIZER(NULL, zpt_gatt_ccc_write, NULL)}),
+                        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT));
 
 /* Attribute index of the response characteristic's value. */
 #define ZPT_GATT_RESPONSE_ATTR (&zpt_gatt_service.attrs[4])
