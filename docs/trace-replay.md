@@ -44,6 +44,48 @@ changes.
 To score whether a change is better rather than only whether it changed, use the trace benchmark
 in [`trace-benchmark.md`](trace-benchmark.md). It also defines fixture format version 2.
 
+## Replay in the browser
+
+The hosted tuner replays traces without a checkout (#124). The Pages build compiles the four
+replay runners and the firmware stage code they link to WebAssembly and publishes them under
+`replay/` next to the tuner, with the JavaScript that runs them:
+
+| File | Role |
+| --- | --- |
+| `zpt_*_pipeline_replay.wasm` | The runners in `host/runners`, built from `host/CMakeLists.txt` for `wasm32-wasip1` (`host/wasm/wasi.cmake`). Each is a WASI command that reads runner input on stdin and writes the replay on stdout, as the native runner does. |
+| `wasm.js` | Runs a runner module in-process with a stdio-only WASI shim; `runFixtureWasm` is the counterpart of `runner.js`'s `runFixture`. |
+| `score.js` | `scoreTraces(traces, profile, runners)`: validates fixture v1 or v2 traces, replays them, and scores them with `quality.js`. `bench.js` scores its sets through the same `scoreFixtures`. |
+| `score-worker.js`, `score-client.js` | Run scoring in a module Web Worker, so pointing in the tuner stays smooth. |
+| `fixture.js`, `metrics.js`, `quality.js` | Shared unchanged with the host tools. |
+
+A page scores traces like this:
+
+```js
+import { createScoreWorker } from "./replay/score-client.js";
+
+const scorer = createScoreWorker();
+const set = await scorer.scoreTraces(traces, profile); // profile: tuning profile, or null
+// set: { fixtures, scores, fixtureResults }, one set as bench.js --json reports it
+```
+
+`profile` replaces the traces' recorded cursor stage settings by stable id, as
+`bench.js --profile` does; `null` scores the recorded settings. The result has no baseline
+comparison: to compare candidates, score each and compare their `scores`. Everything comes from
+the traces and the profile, so nothing assumes a particular board, keymap or config repository.
+
+Build and check it locally in the devenv shell, which pins the WASI clang, wasi-libc and wasm-ld
+through `devenv.lock`:
+
+```sh
+devenv tasks run wasm:test   # builds both runner sets, then checks parity and the scoring API
+host/wasm/build.sh /tmp/replay   # or assemble the browser module by hand
+```
+
+`host/wasm/parity.js` replays every regression fixture and benchmark fixture through the native
+and the WebAssembly runners, with the recorded settings, with sensor spans, and with every
+benchmark profile, and fails if any output byte differs. `repository:check` runs it, and the
+Pages deploy fails without it. The runner modules are build output and are never committed.
+
 ## Fixture format
 
 Regression fixtures use `zmk-pointing-tools/trace-fixture` version 1, described here. Version 2

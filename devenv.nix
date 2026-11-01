@@ -60,6 +60,29 @@ let
   clangTidyPinned =
     if pkgs ? llvmPackages_22 then pkgs.llvmPackages_22.clang-tools
     else pkgs.clang-tools;
+
+  # WASI compiler for the WebAssembly replay runners (host/wasm,
+  # docs/trace-replay.md), pinned with nixpkgs by devenv.lock. It is the
+  # clang 22 that clang-tidy above already pulls in, driven for
+  # wasm32-wasip1 with wasi-libc, the wasm32 compiler-rt builtins and lld,
+  # so the default shell only gains those (about 45 MiB) instead of a
+  # second LLVM. It is a wrapper script exposed as ZPT_WASI_CC rather than a
+  # package, so it never shadows the native compiler on PATH.
+  wasi = pkgs.pkgsCross.wasi32;
+  wasiLlvm = pkgs.llvmPackages_22;
+  wasiSysroot = pkgs.symlinkJoin {
+    name = "zpt-wasi-sysroot";
+    paths = [ wasi.wasilibc wasi.wasilibc.dev ];
+  };
+  wasiResourceDir = pkgs.runCommand "zpt-wasi-resource-dir" { } ''
+    mkdir -p "$out/lib"
+    ln -s ${wasiLlvm.clang-unwrapped.lib}/lib/clang/${lib.versions.major wasiLlvm.clang-unwrapped.version}/include "$out/include"
+    ln -s ${wasi.llvmPackages_22.compiler-rt}/lib/wasip1 "$out/lib/wasip1"
+  '';
+  wasiCc = pkgs.writeShellScript "zpt-wasi-cc" ''
+    exec ${wasiLlvm.clang-unwrapped}/bin/clang --target=wasm32-wasip1 \
+      --sysroot=${wasiSysroot} -resource-dir=${wasiResourceDir} -B${wasiLlvm.lld}/bin "$@"
+  '';
 in
 {
   packages = [
@@ -79,6 +102,10 @@ in
     compliancePython
     clangFormatDiffPy
   ];
+
+  env = {
+    ZPT_WASI_CC = "${wasiCc}";
+  };
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
 
@@ -201,6 +228,18 @@ in
       after = [ "host:build" ];
     };
 
+    "wasm:build" = {
+      description = "Build the WebAssembly replay runners and browser replay module";
+      exec = "ZPT_WASM_BUILD_DIR=\"$DEVENV_STATE/wasm-build\" host/wasm/build.sh \"$DEVENV_STATE/wasm-site\"";
+    };
+
+    "wasm:test" = {
+      description = "Check WebAssembly replay matches native replay and test the browser scoring API";
+      exec = "node host/wasm/parity.js --native-dir \"$DEVENV_STATE/host-build\" --wasm-dir \"$DEVENV_STATE/wasm-site\" "
+        + "&& ZPT_NATIVE_DIR=\"$DEVENV_STATE/host-build\" ZPT_WASM_DIR=\"$DEVENV_STATE/wasm-site\" node --test host/wasm/*.test.js";
+      after = [ "host:build" "wasm:build" ];
+    };
+
     "repository:check" = {
       description = "Run repository checks";
       exec = "git diff --check";
@@ -212,6 +251,7 @@ in
         "javascript:check"
         "javascript:test"
         "host:test"
+        "wasm:test"
       ];
       before = [ "devenv:enterTest" ];
     };
