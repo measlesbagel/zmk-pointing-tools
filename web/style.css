@@ -194,3 +194,13 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
   .playground-dialog-heading, .playground-controls { align-items: flex-start; }
   .playground-controls strong, .calibration-controls strong { width: 100%; margin-left: 0; }
 }
+.recording-live:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0; padding: 8px 10px; background: #11141a; color: var(--muted); font-size: 13px; }
+.recording-live meter { width: 160px; }
+.recording-live .warning, .score-table small.worse { color: var(--warning); }
+.score-table small.better { color: var(--accent); }
+.recording-list table, .score-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+.recording-list th, .recording-list td, .score-table th, .score-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.score-table th small { display: block; color: var(--muted); font-weight: 400; }
+.recording-subheading { margin: 18px 0 4px; }
+.score-candidates { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0; font-size: 13px; }
+.score-results details { margin-top: 8px; font-size: 13px; }

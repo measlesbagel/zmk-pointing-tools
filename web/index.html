@@ -194,6 +194,51 @@
         </div>
       </section>
 
+      <section id="recording" class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Record and score</h2>
+            <span>Record real motion from the keyboard, then score the current values against other settings on it, offline.</span>
+          </div>
+          <div class="panel-actions">
+            <strong class="status" data-recording-status role="status">Not connected</strong>
+          </div>
+        </div>
+        <div class="temporary-warning">
+          Recordings stay in this browser until you delete them. A recording holds the timing of every key
+          press the pipeline's keypress guard sees, so it shows your typing rhythm, though not which keys.
+          Exporting one writes the same to a file.
+        </div>
+        <div class="calibration-controls">
+          <label>
+            Pipeline
+            <select data-recording-pipeline></select>
+          </label>
+          <label>
+            Label
+            <input type="text" data-recording-label maxlength="40" placeholder="Everyday use, slow aims…">
+          </label>
+          <button type="button" class="primary" data-recording-start disabled>Record</button>
+          <button type="button" data-recording-stop disabled>Stop</button>
+          <button type="button" data-recording-import>Import recording</button>
+          <input type="file" data-recording-file accept="application/json,.json" hidden>
+        </div>
+        <div class="recording-live" data-recording-live aria-live="polite" hidden></div>
+        <div class="recording-list" data-recording-list></div>
+        <h3 class="recording-subheading">Score settings</h3>
+        <p class="muted">
+          Replays the selected recordings through the firmware's own stage code with each set of values and
+          scores them the way the trace benchmark does. Nothing is sent to the keyboard.
+        </p>
+        <div class="score-candidates" data-score-candidates></div>
+        <div class="calibration-controls">
+          <button type="button" class="primary" data-score disabled>Score</button>
+          <button type="button" data-score-profile-import>Add profile to compare</button>
+          <input type="file" data-score-profile-file accept="application/json,.json" hidden>
+        </div>
+        <div class="score-results" data-score-results aria-live="polite"></div>
+      </section>
+
       <section class="panel">
         <div class="panel-heading">
           <div>

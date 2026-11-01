@@ -5,6 +5,9 @@ import {
   PROTOCOL_VERSION,
   STATE,
   TUNING,
+  CAPTURE,
+  encodeCaptureControl,
+  encodeCaptureDescribe,
   encodeDevicePreview,
   encodeFrame,
   encodeStateControl,
@@ -43,6 +46,8 @@ import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
 import { BluetoothTransport, SerialTransport } from "./transport.js";
 import { AgentBridge } from "./agent-bridge.js";
+import { Recorder } from "./recorder.js";
+import { SimulatedCapture } from "./simulated-capture.js";
 
 const MAX_STATE_EVENTS = 2_000;
 const INTENT_LABELS = ["undecided", "free", "horizontal", "vertical"];
@@ -68,6 +73,8 @@ let stateDirty = true;
 let decoder = new FrameDecoder();
 let calibration;
 let agentBridge;
+let recorder;
+let simulatedCapture;
 const tuningRequests = new ResponseRequestQueue(
   (frame) => {
     if (!transport) throw new Error("The keyboard connection is unavailable");
@@ -111,7 +118,9 @@ function notice(text, error = false) {
 
 function updateHeartbeat() {
   const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
-  const needed = Boolean(transport) && stateEnabled;
+  /* Capture stops after the heartbeat timeout, so a recording needs them
+   * as much as state telemetry does. */
+  const needed = Boolean(transport) && (stateEnabled || Boolean(recorder?.recording));
   if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING).catch(() => {}), 2000);
   if (!needed && heartbeat) {
     clearInterval(heartbeat);
@@ -135,6 +144,15 @@ function setDescription(description) {
 
 
 
+/* Whether every target has the metadata a profile export needs. */
+function isProfileReady() {
+  const targets = [...tuningTargets.values()];
+  return targets.length > 0 && targets.every(
+    (target) => target.stableId && target.devicetreePath && target.parameters.length > 0 &&
+      target.parameters.every((parameter) => parameter.key && parameter.devicetreeProperty),
+  );
+}
+
 function renderTuning() {
   /* Rebuilding the list mid-drag would drop the dragged point. */
   if (curveEditors.dragging) {
@@ -146,10 +164,7 @@ function renderTuning() {
     (count, target) => count + target.parameters.filter((parameter) => parameter.current !== parameter.compiled).length,
     0,
   );
-  const profileReady = targets.length > 0 && targets.every(
-    (target) => target.stableId && target.devicetreePath && target.parameters.length > 0 &&
-      target.parameters.every((parameter) => parameter.key && parameter.devicetreeProperty),
-  );
+  const profileReady = isProfileReady();
   elements["reset-all"].disabled = tuningTargets.size === 0;
   elements["profile-export"].disabled = !profileReady;
   elements["profile-copy"].disabled = !profileReady;
@@ -157,6 +172,7 @@ function renderTuning() {
   elements["modified-count"].textContent = `${modified} modified`;
   calibration?.refresh();
   agentBridge?.renderState();
+  recorder?.tuningChanged();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
     return;
@@ -498,6 +514,10 @@ function handleFrame(frame) {
     setDescription(description);
     queueTuningRequest(MESSAGE.TUNING_TARGETS_REQUEST);
     queueTuningRequest(MESSAGE.DEVICE_LIST_REQUEST);
+    recorder.connected();
+  } else if ([MESSAGE.CAPTURE_STATUS_RESPONSE, MESSAGE.CAPTURE_DESCRIPTION_RESPONSE,
+    MESSAGE.CAPTURE_BATCH].includes(frame.type)) {
+    recorder.handleFrame(frame);
   }
   else if (frame.type === MESSAGE.ACK) {
     const ack = parseAck(frame.payload);
@@ -533,6 +553,10 @@ function handleFrame(frame) {
     setDeviceDescription(parseDeviceDescription(frame.payload));
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
+    if (result.requestType === MESSAGE.CAPTURE_DESCRIBE_REQUEST) {
+      recorder.handleRejection();
+      return;
+    }
     tuningRequests.complete(result.requestType);
     if (result.requestType === MESSAGE.DEVICE_PREVIEW_REQUEST) {
       /* Device ids ride the result's parameter-id byte; target-id is the
@@ -597,7 +621,10 @@ async function disconnect() {
   try {
     if (link && protocolReady) {
       await Promise.race([
-        link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)),
+        (async () => {
+          if (recorder.recording) await link.write(encodeCaptureControl(CAPTURE.NONE));
+          await link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF));
+        })(),
         new Promise((resolve) => setTimeout(resolve, 500)),
       ]);
     }
@@ -606,6 +633,7 @@ async function disconnect() {
   elements.connect.disabled = false;
   protocolReady = false;
   calibration.cancel();
+  recorder.disconnected();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
   elements.connect.textContent = "Connect via USB";
@@ -672,7 +700,9 @@ function startSimulator() {
   if (simulator) {
     clearInterval(simulator);
     simulator = undefined;
+    simulatedCapture = undefined;
     calibration.cancel();
+    recorder.disconnected();
     elements.simulate.textContent = "Simulate";
     setStatus(transport ? "Connected" : "Disconnected", Boolean(transport));
     tuningTargets = new Map();
@@ -688,6 +718,10 @@ function startSimulator() {
   tuningTargets = new Map(buildSimulatorTuningTargets().map((target) => [target.id, target]));
   renderTuning();
   setStateStatus(buildSimulatorState());
+  simulatedCapture = new SimulatedCapture({
+    profile: () => createTuningProfile(tuningTargets),
+    send: (frame) => { if (simulatedCapture) handleFrame(frame); },
+  });
   let sequence = 0;
   let tick = 0;
   simulator = setInterval(() => {
@@ -719,11 +753,13 @@ function startSimulator() {
       const values = buildSimulatorFrame(label, tick);
       if (values) emit(id, STATE.EVENT_FRAME, 0, values);
     }
+    simulatedCapture?.tick(8);
     tick += 1;
   }, 8);
   elements.simulate.textContent = "Stop simulation";
   setStatus("Simulating", true);
   calibration.refresh();
+  recorder.connected();
 }
 
 elements.connect.addEventListener("click", () => (transport ? disconnect() : connect(SerialTransport)));
@@ -950,8 +986,39 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
   },
 });
 
+recorder = new Recorder(document.getElementById("recording"), {
+  /* Simulated captures answer through handleFrame, like a keyboard. */
+  send: (type, pipelineId) => {
+    if (simulatedCapture) {
+      if (type === MESSAGE.CAPTURE_CONTROL_REQUEST) simulatedCapture.control(pipelineId);
+      else simulatedCapture.describe(pipelineId);
+      return undefined;
+    }
+    if (!transport || !protocolReady) throw new Error("the keyboard isn't connected");
+    return transport.write(type === MESSAGE.CAPTURE_CONTROL_REQUEST
+      ? encodeCaptureControl(pipelineId) : encodeCaptureDescribe(pipelineId));
+  },
+  profile: () => createTuningProfile(tuningTargets),
+  /* Values the keyboard has confirmed, with the metadata an export needs. */
+  ready: () => isProfileReady() && tuningRequests.pending === 0,
+  connected: () => Boolean(transport) || Boolean(simulator),
+  transport: () => (simulator ? "simulator" : transport?.label ?? null),
+  notice,
+  candidates: () => agentBridge?.session.snapshotProfiles() ?? [],
+  onStart: (pipeline) => {
+    updateHeartbeat();
+    agentBridge?.runStarted("recording", pipeline);
+  },
+  onEnd: (pipeline, outcome) => {
+    updateHeartbeat();
+    agentBridge?.runEnded("recording", pipeline, outcome);
+  },
+});
+
 agentBridge = new AgentBridge(document.getElementById("agent"), {
   notice,
+  /* Snapshots are candidates to score. */
+  onRender: () => recorder.renderCandidates(),
   /* Opens the panel an accepted run request belongs to. Start is disabled
    * while nothing can record, so focus goes to the panel then. */
   openRun: (run) => {
@@ -964,15 +1031,19 @@ agentBridge = new AgentBridge(document.getElementById("agent"), {
         panel.tabIndex = -1;
         panel.focus({ preventScroll: true });
       }
+    } else if (run.kind === "recording") {
+      recorder.prepare(run);
     } else {
       playground.prepare(run);
     }
   },
   /* The user cancelled a run that's running: a calibration stops
-   * recording. A playground run can't be cancelled from the panel, since
+   * recording, and a motion recording stops. A playground run can't be cancelled from the panel, since
    * the playground dialog covers it. */
   endRun: (run) => {
     if (run.kind === "calibration") calibration.stop();
+    /* A recording stops and is kept, and the agent gets it. */
+    if (run.kind === "recording") recorder.stop("stopped by you");
   },
   context: {
     session: () => {
@@ -999,6 +1070,7 @@ agentBridge = new AgentBridge(document.getElementById("agent"), {
     describeEvent: describeStateEvent,
     eventKind: stateEventKind,
     refreshTelemetryStatus,
+    recorder: () => recorder,
     precisionHistory: loadPrecisionHistory,
     profile: () => createTuningProfile(tuningTargets),
     devicetree: () => renderDevicetreeSnippet(tuningTargets),

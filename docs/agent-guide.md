@@ -29,7 +29,31 @@ comes from the connected keyboard.
 ## 2. Tune
 
 Agree on a goal with the user first, such as "small targets are hard to hit"
-or "scrolling feels jumpy". Then repeat:
+or "scrolling feels jumpy".
+
+### Narrow the candidates offline
+
+When the firmware supports input capture (`list_recordings` says
+`captureSupported`), start with recordings of the user's real motion:
+
+1. **Record.** `start_recording` with a label and a note on what to do, such as
+   a minute of normal use or a few slow aims. Poll `get_run_result` until the
+   user has recorded and stopped, or `stop_recording` when you have enough.
+   Check `droppedRecords` and `resyncs`: drops shorten traces but don't spoil
+   them.
+2. **Score candidates offline.** `score_settings` with the recordings and each
+   candidate as `values` (or a saved `snapshot`). It replays the recordings
+   with the current values and the candidate and reports every metric's
+   change. Nothing reaches the keyboard, so try as many as you like. Metrics
+   with `truth: null` weren't scored. The benchmark doesn't judge curve shape
+   or gain: a flatter curve or lower gain can win every metric and feel worse,
+   so treat scores as a filter, not a verdict.
+3. **Preview the winner** or the best two, and confirm them on the keyboard
+   with the A/B loop below.
+
+### Confirm on the keyboard
+
+Repeat:
 
 1. **Preview** candidate values with `set_tuning_values` or
    `preview_device_cpi`, and save each candidate with `save_snapshot`

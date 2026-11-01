@@ -49,7 +49,8 @@ export function relayConfig(origin) {
 }
 
 export class AgentBridge {
-  constructor(root, { context, notice, openRun, endRun }) {
+  constructor(root, { context, notice, openRun, endRun, onRender = () => {} }) {
+    this.onRender = onRender;
     this.context = context;
     this.notice = notice;
     this.openRun = openRun;
@@ -77,6 +78,12 @@ export class AgentBridge {
         this.openRun(run);
       } else if (event.target.closest("[data-run-decline]")) {
         const running = run.status === "running";
+        if (running && run.kind === "recording") {
+          /* Stopping a recording finishes it: the agent gets the recording. */
+          this.endRun(run);
+          this.status.focus();
+          return;
+        }
         this.session.runs.decline(id);
         /* Ends a calibration still recording; the run no longer counts. */
         if (running) this.endRun(run);
@@ -304,6 +311,7 @@ export class AgentBridge {
     this.status.classList.toggle("changed", changed);
     this.revertButton.hidden = !changed;
     this.renderSnapshots();
+    this.onRender();
     /* Here, so a disconnect removes cards and windows it ended. */
     this.renderRuns();
     this.renderWindows();
@@ -347,7 +355,7 @@ export class AgentBridge {
       card.dataset.run = run.id;
       card.dataset.status = run.status;
       const heading = document.createElement("strong");
-      heading.textContent = "Your agent asks for a run";
+      heading.textContent = run.kind === "recording" ? "Your agent asks you to record motion" : "Your agent asks for a run";
       const what = document.createElement("p");
       what.textContent = describeRun(run);
       card.append(heading, what);
@@ -360,12 +368,12 @@ export class AgentBridge {
         note.append(from, run.note);
         card.append(note);
       }
-      const where = run.kind === "calibration" ? "calibration panel" : "playground";
+      const where = { calibration: "calibration panel", recording: "Record and score panel" }[run.kind] ?? "playground";
       const state = document.createElement("p");
       state.className = "muted";
       state.textContent = {
         requested: `Open the ${where} to do it, or decline. The agent only asked; nothing has changed.`,
-        accepted: `Start it in the ${where}${run.kind === "calibration" ? ", then Stop when you're done" : ""}. The agent gets the result when it ends.`,
+        accepted: `Start it in the ${where}${run.kind === "calibration" || run.kind === "recording" ? ", then Stop when you're done" : ""}. The agent gets the result when it ends.`,
         running: `Running in the ${where}. The agent gets the result when it ends.`,
       }[run.status];
       const actions = document.createElement("div");
@@ -374,12 +382,13 @@ export class AgentBridge {
       openButton.type = "button";
       openButton.dataset.runOpen = "";
       openButton.className = run.status === "requested" ? "primary" : "";
-      openButton.textContent = run.kind === "calibration" ? "Go to calibration" : "Open playground";
+      openButton.textContent = { calibration: "Go to calibration", recording: "Go to recording" }[run.kind] ?? "Open playground";
       const decline = document.createElement("button");
       decline.type = "button";
       decline.dataset.runDecline = "";
       decline.textContent = run.status === "requested" ? "Decline"
-        : run.status === "running" && run.kind === "calibration" ? "Stop and cancel run" : "Cancel run";
+        : run.status === "running" && run.kind === "calibration" ? "Stop and cancel run"
+          : run.status === "running" && run.kind === "recording" ? "Stop recording" : "Cancel run";
       actions.append(openButton, decline);
       card.append(state, actions);
       this.runList.append(card);

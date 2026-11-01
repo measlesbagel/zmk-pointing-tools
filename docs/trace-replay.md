@@ -75,6 +75,12 @@ text pipelines) by stable id, as
 comparison: to compare candidates, score each and compare their `scores`. Everything comes from
 the traces and the profile, so nothing assumes a particular board, keymap or config repository.
 
+The tuner's **Record and score** panel uses this module to score recordings it makes with
+firmware input capture: `capture-convert.js` turns a recording into traces, the tuner derives
+ground truth for traces without labels (`web/recording-model.js`), and `score-client.js` scores
+them ([agent-tools.md](agent-tools.md#recordings-and-offline-scoring)). A local copy of the tuner
+needs the module built into `web/replay/` (ignored by Git): `host/wasm/build.sh web/replay`.
+
 Build and check it locally in the devenv shell, which pins the WASI clang, wasi-libc and wasm-ld
 through `devenv.lock`:
 
