@@ -98,8 +98,11 @@ beside its normal connection as a keyboard. It needs:
   tuner says Web Bluetooth is unavailable, turn on Experimental Web Platform
   features in `chrome://flags`.
 
-The browser's picker lists every nearby device, because the tuning service
-isn't advertised; pick the keyboard even though it's already connected.
+The browser's picker lists nearby devices rather than filtering for the
+keyboard, because the tuning service isn't advertised. A keyboard that is
+connected to a computer usually stops advertising, so it may be missing from
+the picker. If it is, switch the keyboard to a free Bluetooth profile, or turn
+the computer's Bluetooth off and on, then try again.
 Everything works as over USB, including agent tools, previews, revert and
 calibration. Every-frame telemetry is limited by the Bluetooth connection: the
 firmware drops the samples the link can't carry and the tuner shows them as

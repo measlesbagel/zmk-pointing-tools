@@ -76,12 +76,21 @@ export const BLUETOOTH_REQUEST = "f336b451-531c-49cf-9d5d-846a5db2398b";
 export const BLUETOOTH_RESPONSE = "f336b452-531c-49cf-9d5d-846a5db2398b";
 /* Fits the minimum ATT MTU; firmware doesn't take long writes. */
 export const BLUETOOTH_CHUNK = 20;
+/* Waits before retrying a rejected chunk. Firmware rejects a chunk whole
+ * (for example while its receive buffer is full), so resending it is safe. */
+export const BLUETOOTH_RETRY_DELAYS_MS = [20, 50, 100];
 
 /* Rewords the browser's GATT errors as what the user can do about them. */
 export function bluetoothErrorMessage(error) {
   const text = `${error?.name ?? ""} ${error?.message ?? ""}`;
-  if (error?.name === "NotFoundError" && /cancel/i.test(text)) return "No keyboard was chosen.";
-  if (/authenticat|encrypt|insufficient/i.test(text)) {
+  if (error?.name === "NotFoundError" && /cancel/i.test(text)) {
+    return "No keyboard was chosen. If the picker said Bluetooth is off, turn it on and try again.";
+  }
+  /* Chromium reports an unbonded or unencrypted link as NetworkError "GATT
+   * Error: Not paired." or SecurityError "GATT operation not authorized.".
+   * Other SecurityErrors (no user gesture, insecure page) aren't about
+   * bonding. */
+  if (/not paired|not authori[sz]ed|authenticat|encrypt/i.test(text)) {
     return "The keyboard refused the connection because this computer isn't bonded with it. Pair the keyboard with this computer in the system Bluetooth settings, then connect again.";
   }
   if (/service|characteristic/i.test(text) && error?.name === "NotFoundError") {
@@ -144,27 +153,49 @@ export class BluetoothTransport {
     this.active = true;
   }
 
-  /* Writes one frame. Frames queue behind each other, so two callers never
-   * interleave their chunks, and the browser only runs one GATT operation at
-   * a time anyway. */
+  /* Writes one frame. Chrome rejects a GATT operation while another is in
+   * progress, so frames queue behind each other here; that also keeps two
+   * callers from interleaving their chunks. */
   write(bytes) {
     const chunks = [];
     for (let offset = 0; offset < bytes.length; offset += BLUETOOTH_CHUNK) {
       chunks.push(bytes.slice(offset, offset + BLUETOOTH_CHUNK));
     }
     const done = this.writes.then(async () => {
-      for (const chunk of chunks) {
+      for (const [index, chunk] of chunks.entries()) {
+        if (this.broken) throw this.broken;
         if (!this.request) throw new Error("The Bluetooth connection is closed");
         try {
-          await this.request.writeValueWithResponse(chunk);
+          await this.writeChunk(chunk);
         } catch (error) {
-          throw new Error(bluetoothErrorMessage(error), { cause: error });
+          const failure = new Error(bluetoothErrorMessage(error), { cause: error });
+          /* Part of the frame is in the firmware's parser, which can't
+           * resynchronise inside a payload: the next frame would become the
+           * rest of this one. Nothing more may be sent on this link. */
+          throw index > 0 ? this.poison(failure) : failure;
         }
       }
     });
-    /* A failed frame doesn't block the frames after it. */
+    /* A frame that failed before its first byte doesn't block the next. */
     this.writes = done.catch(() => {});
     return done;
+  }
+
+  async writeChunk(chunk) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.request.writeValueWithResponse(chunk);
+      } catch (error) {
+        if (attempt >= BLUETOOTH_RETRY_DELAYS_MS.length || !this.request) throw error;
+        await new Promise((resolve) => setTimeout(resolve, BLUETOOTH_RETRY_DELAYS_MS[attempt]));
+      }
+    }
+  }
+
+  poison(error) {
+    this.broken = new Error(`The Bluetooth link stopped mid-frame; reconnect. (${error.message})`, { cause: error });
+    if (this.active) this.onClose();
+    return this.broken;
   }
 
   async close() {

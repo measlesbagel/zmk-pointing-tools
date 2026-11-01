@@ -74,6 +74,9 @@ const tuningRequests = new ResponseRequestQueue(
     return transport.write(frame);
   },
   (error) => notice(`Tuning request failed: ${error.message}`, true),
+  /* Longer than the slowest real response: a peripheral relay waits 500 ms
+   * and a large description over Bluetooth takes several connection events. */
+  5_000,
 );
 
 const curveEditors = new CurveEditors({
@@ -100,7 +103,7 @@ function notice(text, error = false) {
 function updateHeartbeat() {
   const stateEnabled = [...stateStatus.levels.values()].some((level) => level !== STATE.OFF);
   const needed = Boolean(transport) && stateEnabled;
-  if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING), 2000);
+  if (needed && !heartbeat) heartbeat = setInterval(() => send(MESSAGE.PING).catch(() => {}), 2000);
   if (!needed && heartbeat) {
     clearInterval(heartbeat);
     heartbeat = undefined;
@@ -563,7 +566,15 @@ async function disconnect() {
   transport = undefined;
   tuningRequests.clear();
   elements.connect.disabled = true;
-  try { if (link && protocolReady) await link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)); } catch {}
+  /* Best effort, and bounded: a stalled link mustn't hold the disconnect. */
+  try {
+    if (link && protocolReady) {
+      await Promise.race([
+        link.write(encodeStateControl(STATE.ALL_TARGETS, STATE.OFF)),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+    }
+  } catch {}
   await link?.close();
   elements.connect.disabled = false;
   protocolReady = false;
@@ -621,6 +632,8 @@ async function connect(Transport) {
     await disconnect();
   } finally {
     elements.connect.disabled = elements["connect-bluetooth"].disabled = false;
+    /* The Bluetooth button hides while connected, which would drop focus. */
+    elements.connect.focus();
   }
 }
 

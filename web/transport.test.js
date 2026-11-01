@@ -76,12 +76,40 @@ test("requests the tuning service and writes frames in 20-byte chunks without in
   assert.deepEqual(fake.written.flat(), [...first, ...second]);
 });
 
-test("a failed frame rejects and the next frame still goes out", async () => {
-  const fake = fakeBluetooth({ writeDelays: [new Error("GATT operation failed")] });
-  const link = await open(fake);
-  await assert.rejects(link.write(Uint8Array.of(1, 2)), /GATT operation failed/);
+const busy = () => new Error("GATT operation failed for unknown reason.");
+
+test("a rejected chunk is retried in place, so the frame arrives whole", async () => {
+  /* Chunk 2 of 3 is rejected once, as firmware does while its buffer is
+   * full. */
+  const fake = fakeBluetooth({ writeDelays: [0, busy(), 0, 0] });
+  let closes = 0;
+  const link = await open(fake, { onClose: () => { closes += 1; } });
+  const frame = Uint8Array.from({ length: 45 }, (_, i) => i);
+  await link.write(frame);
+  await link.write(Uint8Array.of(99));
+  assert.deepEqual(fake.written.map((chunk) => chunk.length), [20, 20, 5, 1]);
+  assert.deepEqual(fake.written.flat(), [...frame, 99]);
+  assert.equal(closes, 0);
+});
+
+test("a frame that keeps failing mid-way closes the link and sends nothing more", async () => {
+  const fake = fakeBluetooth({ writeDelays: [0, busy(), busy(), busy(), busy()] });
+  let closes = 0;
+  const link = await open(fake, { onClose: () => { closes += 1; } });
+  await assert.rejects(link.write(Uint8Array.from({ length: 45 })), /mid-frame/);
+  await assert.rejects(link.write(Uint8Array.of(99)), /mid-frame/);
+  assert.deepEqual(fake.written.map((chunk) => chunk.length), [20]);
+  assert.equal(closes, 1);
+});
+
+test("a frame that fails before its first byte doesn't block the next", async () => {
+  const fake = fakeBluetooth({ writeDelays: [busy(), busy(), busy(), busy()] });
+  let closes = 0;
+  const link = await open(fake, { onClose: () => { closes += 1; } });
+  await assert.rejects(link.write(Uint8Array.of(1, 2)), /unknown reason/);
   await link.write(Uint8Array.of(3));
   assert.deepEqual(fake.written, [[3]]);
+  assert.equal(closes, 0);
 });
 
 test("passes notification bytes on, honouring the view's offset", async () => {
@@ -109,12 +137,21 @@ test("reports a dropped link once, and not after the tuner closed it", async () 
   await assert.rejects(link.write(Uint8Array.of(1)), /closed/);
 });
 
-test("an unbonded computer gets a pairing hint and nothing stays open", async () => {
-  const fake = fakeBluetooth({
-    notifyError: Object.assign(new Error("GATT operation failed due to insufficient authentication."), { name: "NetworkError" }),
+/* Chromium's BluetoothError.cpp wording for an unbonded or unencrypted link. */
+for (const [name, message] of [["NetworkError", "GATT Error: Not paired."], ["SecurityError", "GATT operation not authorized."]]) {
+  test(`an unbonded computer gets a pairing hint (${message})`, async () => {
+    const fake = fakeBluetooth({ notifyError: Object.assign(new Error(message), { name }) });
+    await assert.rejects(open(fake), /isn't bonded/);
+    assert.equal(fake.device.gatt.connected, false);
   });
-  await assert.rejects(open(fake), /isn't bonded/);
-  assert.equal(fake.device.gatt.connected, false);
+}
+
+test("a cancelled picker mentions Bluetooth being off", async () => {
+  const fake = fakeBluetooth();
+  fake.bluetooth.requestDevice = async () => {
+    throw Object.assign(new Error("User cancelled the requestDevice() chooser."), { name: "NotFoundError" });
+  };
+  await assert.rejects(open(fake), /No keyboard was chosen.*Bluetooth is off/);
 });
 
 test("firmware without the service names the Kconfig option", async () => {

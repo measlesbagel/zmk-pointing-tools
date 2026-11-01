@@ -51,3 +51,19 @@ test("send failures report the error and advance the queue", async () => {
   assert.deepEqual(sent, ["good"]);
   assert.equal(queue.pending, 1);
 });
+
+test("a request without a response times out and the queue moves on", async () => {
+  const sent = [];
+  const errors = [];
+  const queue = new ResponseRequestQueue((frame) => sent.push(frame), (error) => errors.push(error.message), 20);
+  queue.enqueue(1, "lost");
+  queue.enqueue(2, "next");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.match(errors[0], /No response/);
+  assert.deepEqual(sent, ["lost", "next"]);
+  /* A response in time cancels the timeout. */
+  assert.equal(queue.complete(2), true);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(errors.length, 1);
+  assert.equal(queue.pending, 0);
+});
