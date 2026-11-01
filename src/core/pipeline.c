@@ -331,6 +331,12 @@ static struct zpt_pipeline_operation begin_operation(struct zpt_pipeline *pipeli
     };
 }
 
+static void observed_flush_done(const struct zpt_pipeline *pipeline) {
+    if (pipeline->observer.flush_done != NULL) {
+        pipeline->observer.flush_done(pipeline, pipeline->observer.user_data);
+    }
+}
+
 int zpt_pipeline_push(struct zpt_pipeline *pipeline, const struct zpt_signal *signal,
                       struct zpt_pipeline_result *result) {
     clear_result(result);
@@ -385,8 +391,12 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
         };
         int ret = drain(&operation, stage->api->flush(stage, now_ms, &context));
         if (ret < 0) {
+            observed_flush_done(pipeline);
             return ret;
         }
+    }
+    if (observed) {
+        observed_flush_done(pipeline);
     }
     return 0;
 }

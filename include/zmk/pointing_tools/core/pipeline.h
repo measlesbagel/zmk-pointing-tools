@@ -67,13 +67,14 @@ struct zpt_pipeline_result {
 /* Sees what goes into a pipeline, for input capture: every signal pushed
  * into it, before its first stage, and input_done once the pipeline has
  * finished with it; every flush that runs a due deadline, before the first
- * one runs; and each activation and deactivation. Any callback may be
- * NULL. */
+ * one runs, and flush_done once the flush has finished; and each
+ * activation and deactivation. Any callback may be NULL. */
 struct zpt_pipeline_observer {
     void (*input)(const struct zpt_pipeline *pipeline, const struct zpt_signal *signal,
                   void *user_data);
     void (*input_done)(const struct zpt_pipeline *pipeline, void *user_data);
     void (*flush)(const struct zpt_pipeline *pipeline, uint32_t now_ms, void *user_data);
+    void (*flush_done)(const struct zpt_pipeline *pipeline, void *user_data);
     void (*lifecycle)(const struct zpt_pipeline *pipeline, bool active, void *user_data);
     void *user_data;
 };
