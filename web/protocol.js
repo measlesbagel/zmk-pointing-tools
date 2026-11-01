@@ -397,7 +397,7 @@ export function encodeDevicePreview(deviceId, cpi) {
 /* --- Input capture (protocol v8) ------------------------------------- */
 
 export const CAPTURE = Object.freeze({
-  SCHEMA_VERSION: 1,
+  SCHEMA_VERSION: 2,
   NONE: 0xff,
   RECORD_FRAME: 1,
   RECORD_SOURCE: 2,
@@ -410,6 +410,13 @@ export const CAPTURE = Object.freeze({
   LINK_BLE: 1,
   LINK_NONE: 0xff,
   FLAG_REPLAYABLE: 0x01,
+  /* Wire kinds 0x80 to 0x87: a frame as a delta from the previous one. */
+  DELTA_FRAME: 0x80,
+  DELTA_FLAGS: 0x04,
+  SPAN_PREVIOUS: 0,
+  SPAN_ELAPSED: 1,
+  SPAN_ELAPSED_PLUS: 2,
+  SPAN_ABSOLUTE: 3,
 });
 
 /* Start recording a pipeline, or stop with CAPTURE.NONE; no argument only
@@ -424,13 +431,18 @@ export function encodeCaptureDescribe(pipelineId) {
 }
 
 export function parseCaptureStatus(payload) {
-  requireBytes(payload, 0, 7, "capture status");
-  if (payload[0] !== CAPTURE.SCHEMA_VERSION) throw new Error("Unsupported capture schema");
+  requireBytes(payload, 0, 1, "capture status");
+  /* Schema 1 streams (no burst buffer) aren't read: record again with
+   * current firmware. */
+  if (payload[0] !== CAPTURE.SCHEMA_VERSION) {
+    throw new Error(`Unsupported capture schema ${payload[0]}; expected ${CAPTURE.SCHEMA_VERSION}`);
+  }
+  requireBytes(payload, 0, 15, "capture status");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const decoder = new TextDecoder();
   const pipelines = [];
-  let offset = 7;
-  for (let index = 0; index < payload[6]; index += 1) {
+  let offset = 15;
+  for (let index = 0; index < payload[14]; index += 1) {
     requireBytes(payload, offset, 9, "capture pipeline entry");
     const [id, active, stageCount, flags] = payload.slice(offset, offset + 4);
     const settingsHash = view.getUint32(offset + 4, true);
@@ -446,6 +458,9 @@ export function parseCaptureStatus(payload) {
     schemaVersion: payload[0],
     recording: payload[1] === CAPTURE.NONE ? null : payload[1],
     dropped: view.getUint32(2, true),
+    /* Bytes of encoded records waiting in the burst buffer, and its size. */
+    bufferUsed: view.getUint32(6, true),
+    bufferSize: view.getUint32(10, true),
     pipelines,
   };
 }
@@ -486,11 +501,41 @@ export function parseCaptureDescription(payload) {
   return { pipelineId, stableId, settingsHash, stages };
 }
 
-/* Records of one capture batch, each with its sequence number. */
-export function parseCaptureBatch(payload) {
+/* Decoding state carried from batch to batch of one recording: delta
+ * frames build on the previous frame. skipped counts delta frames that had
+ * no frame to follow and were left out. */
+export function captureDecoder() {
+  return { nextSequence: 0, previous: null, skipped: 0 };
+}
+
+/* A u32 varint: at most 5 bytes, the 5th holding the top 4 bits, so every
+ * zigzag field decodes to an int32. */
+function readVarint(payload, offset, context) {
+  let value = 0;
+  for (let shift = 0; shift < 35; shift += 7) {
+    requireBytes(payload, offset, 1, context);
+    const byte = payload[offset];
+    offset += 1;
+    if (shift === 28 && byte > 0x0f) break;
+    value += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) return [value, offset];
+  }
+  throw new Error(`Malformed varint in ${context}`);
+}
+
+const unzigzag = (value) => (value % 2 === 0 ? value / 2 : -(value + 1) / 2);
+
+/* Records of one capture batch, each with its sequence number. state, from
+ * captureDecoder(), carries the previous frame across the batches of a
+ * recording; a sequence gap or an entered record clears it, since firmware
+ * sends the next frame whole after either. A delta frame with no frame to
+ * follow is left out and counted in state.skipped, so the converter sees a
+ * sequence gap and decoding picks up again at the next whole frame. */
+export function parseCaptureBatch(payload, state) {
   requireBytes(payload, 0, 5, "capture batch");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const first = view.getUint32(0, true);
+  if (first !== state.nextSequence) state.previous = null;
   const records = [];
   let offset = 5;
   for (let index = 0; index < payload[4]; index += 1) {
@@ -504,6 +549,38 @@ export function parseCaptureBatch(payload) {
         x: view.getInt32(offset + 8, true), y: view.getInt32(offset + 12, true),
         spanUs: view.getUint32(offset + 16, true) });
       offset += 20;
+    } else if ((kind & 0xf8) === CAPTURE.DELTA_FRAME) {
+      const previous = state.previous;
+      let elapsed;
+      let x;
+      let y;
+      [elapsed, offset] = readVarint(payload, offset + 1, "capture delta frame");
+      [x, offset] = readVarint(payload, offset, "capture delta frame");
+      [y, offset] = readVarint(payload, offset, "capture delta frame");
+      elapsed = unzigzag(elapsed);
+      let flags = previous?.flags;
+      if (kind & CAPTURE.DELTA_FLAGS) {
+        requireBytes(payload, offset, 1, "capture delta frame");
+        flags = payload[offset];
+        offset += 1;
+      }
+      let spanUs;
+      const mode = kind & 0x03;
+      if (mode === CAPTURE.SPAN_PREVIOUS) spanUs = previous?.spanUs;
+      else if (mode === CAPTURE.SPAN_ELAPSED) spanUs = elapsed;
+      else {
+        let value;
+        [value, offset] = readVarint(payload, offset, "capture delta frame");
+        spanUs = mode === CAPTURE.SPAN_ABSOLUTE ? value : elapsed + unzigzag(value);
+      }
+      if (previous === null) {
+        state.skipped += 1;
+        continue;
+      }
+      const us = previous.timeMs * 1000 + previous.timeUs + elapsed;
+      records.push({ sequence, kind: CAPTURE.RECORD_FRAME, flags,
+        timeMs: Math.floor(us / 1000), timeUs: us % 1000, x: unzigzag(x), y: unzigzag(y),
+        spanUs });
     } else if (kind === CAPTURE.RECORD_SOURCE) {
       requireBytes(payload, offset, 6, "capture source");
       records.push({ sequence, kind, link: payload[offset + 1],
@@ -517,14 +594,18 @@ export function parseCaptureBatch(payload) {
       requireBytes(payload, offset, 5, "capture entered record");
       records.push({ sequence, kind, settingsHash: view.getUint32(offset + 1, true) });
       offset += 5;
+      state.previous = null;
     } else if (kind === CAPTURE.RECORD_LEFT || kind === CAPTURE.RECORD_SETTINGS_CHANGED) {
       records.push({ sequence, kind });
       offset += 1;
     } else {
       throw new Error(`Unknown capture record kind ${kind}`);
     }
+    const record = records[records.length - 1];
+    if (record.kind === CAPTURE.RECORD_FRAME) state.previous = record;
   }
   if (offset !== payload.length) throw new Error("Capture batch has trailing bytes");
+  state.nextSequence = (first + payload[4]) >>> 0;
   return records;
 }
 

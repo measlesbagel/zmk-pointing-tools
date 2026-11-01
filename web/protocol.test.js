@@ -61,10 +61,10 @@ test("parses acknowledgements", () => {
 });
 
 test("parses capture status and descriptions with settings hashes", () => {
-  const status = Uint8Array.of(1, 0, 3, 0, 0, 0, 1,
+  const status = Uint8Array.of(2, 0, 3, 0, 0, 0, 0x10, 0x27, 0, 0, 0, 0x40, 0, 0, 1,
     0, 1, 7, CAPTURE.FLAG_REPLAYABLE, 0x78, 0x56, 0x34, 0x12, 2, 0x72, 0x63);
-  assert.deepEqual(parseCaptureStatus(status), { schemaVersion: 1, recording: 0, dropped: 3,
-    pipelines: [{ id: 0, active: true, stageCount: 7, replayable: true,
+  assert.deepEqual(parseCaptureStatus(status), { schemaVersion: 2, recording: 0, dropped: 3,
+    bufferUsed: 10000, bufferSize: 16384, pipelines: [{ id: 0, active: true, stageCount: 7, replayable: true,
       settingsHash: 0x12345678, label: "rc" }] });
   const description = Uint8Array.of(0, 2, 0x72, 0x63, 0xef, 0xbe, 0xad, 0xde, 1,
     2, 0x67, 0x74, 1, 0x67, 1, 1, 0x6b, 0xff, 0xff, 0xff, 0xff);

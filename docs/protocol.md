@@ -531,9 +531,11 @@ aren't replayable are never reset; their recordings start at the next
 entered record. Every request receives:
 
 ```text
-capture-schema-version:u8      /* 1 */
+capture-schema-version:u8      /* 2 */
 recording:u8                   /* pipeline id, or 0xff when none */
 capture-dropped:u32
+buffer-used:u32                /* bytes of records waiting to be sent */
+buffer-size:u32                /* the burst buffer's capacity */
 pipeline-count:u8
 repeat pipeline-count times:
   pipeline-id:u8
@@ -589,14 +591,18 @@ repeat record-count times:
 Records are numbered from zero at the start of each recording, and the
 records of a batch are consecutive, so a gap between batches is a drop. A
 batch is at most 119 bytes of payload, two notifications at the 65-byte ATT
-MTU. Firmware sends a batch when the queue is empty or the batch is full. A
-batch the link has no room for stays in firmware and keeps filling; firmware
-retries when the link frees room or the next record arrives, and drops it
-only when it is full and the link still has no room.
+MTU. Batches come from the [burst buffer](#burst-buffer) whenever the link
+has room.
+
+Capture schema 2 (this one) added delta frames and the buffer fill in the
+status; schema 1 firmware sent every frame whole and had no buffer. The
+tools read only schema 2: record schema 1 streams again with current
+firmware.
 
 | Kind | Record | Fields |
 | --- | --- | --- |
 | `1` | Frame | `flags:u8, time-ms:u32, time-us:u16, x:i32, y:i32, span-us:u32` |
+| `0x80`–`0x87` | Delta frame | `elapsed:svarint, x:svarint, y:svarint`, then `flags:u8` if bit 2 is set, then the span per bits 0–1 |
 | `2` | Source | `link:u8, source-id:u16, cpi:u16` |
 | `3` | Key press | `time-ms:u32` |
 | `4` | Entered | `settings-hash:u32` |
@@ -613,6 +619,22 @@ only when it is full and the link still has no room.
   when the source has none. `flags` are the signal metadata flags bits 0 to 7
   (local, transported, coalesced, timing estimated, clipped, sequence gap,
   discontinuity, span clipped).
+- **Delta frame.** The same frame, relative to the frame before it, in about
+  6 bytes. `elapsed` is the time in microseconds since the previous frame's
+  `time-ms`·1000 + `time-us` (it can be negative when a frame waited past
+  its millisecond), and `x` and `y` are the raw counts. Signed values are
+  zigzag-encoded (0, −1, 1, −2, … as 0, 1, 2, 3, …) LEB128 varints of at
+  most 5 bytes. Without bit 2 the flags are the previous frame's. Bits 0–1
+  give the span: `0` the previous frame's span, `1` equal to `elapsed`, `2`
+  an `svarint` difference from `elapsed` follows, `3` the span as an
+  unsigned varint follows. The 5th byte of a varint holds only the top 4
+  bits (at most `0x0f`), so every signed field fits 32 bits. Firmware sends
+  a frame whole at the start of a recording, as the first frame after a
+  drop and after every entered record, and when the delta wouldn't be
+  shorter. A host that meets a delta frame with no frame to follow (after a
+  sequence gap or an entered record) skips it and every delta after it
+  until the next whole frame, and treats the skipped records as a gap.
+  Delta frames carry everything a whole frame does, exactly.
 - **Source.** Sent before the first frame and whenever the source id,
   resolution, or report link changes; a change makes firmware resync at the
   next rest. `link` is `0` USB, `1` Bluetooth, or
@@ -634,16 +656,44 @@ only when it is full and the link still has no room.
 - **Flush.** Stage deadlines that were due ran at `time-ms`, before any frame
   recorded after it.
 
+### Burst buffer
+
+A sensor read every millisecond while the ball moves makes about a thousand
+frames a second, whatever the cursor report rate; over Bluetooth, with the
+default two notifications per connection event, the link carries about 120
+bytes per event (see [Bandwidth](#bandwidth)). So firmware stores and
+forwards: each record is encoded as it is recorded, into a RAM ring of
+`CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE` bytes (default 4096,
+about 680 frames; at least 512), and the protocol worker sends batches from
+it whenever the link has room, mostly in the rests between strokes. Raise
+the option for long bursts on slow links; each byte is static RAM whether
+or not a recording runs. Only the average record rate has to fit the
+link, not a flick's peak. The buffer changes when records leave, never what
+the pipeline does. `buffer-used` in the capture status shows how full it is.
+Stopping a recording sends everything stored, waiting for the link, before
+the status that confirms the stop; if the link fails meanwhile, what is left
+is dropped and counted. A full default buffer takes about 0.25 s to drain on
+a 7.5 ms connection interval and about 1 s at 30 ms (two notifications per
+event); a buffer raised to 16 KB takes about 4 s at 30 ms, close to the
+tuner's 5 s request timeout. Capture records don't use the state-sample
+queue. Records are stored with interrupts masked for a few hundred cycles
+per record; the worker copies a batch out with interrupts enabled, and
+skips building one while the Bluetooth link has no notification credit.
+
+In the host test's simulated link (`capture_replay`), frames average about
+5.7 bytes; two credits per 7.5 ms connection event keep up with fast flicks
+read every half millisecond, and at 15 ms the buffer holds the bursts with
+under 1 KB in use (also run with a 1 KB buffer, so the ring wraps without
+drops). The simulation is generous: every connection event refills both
+credits, and HID reports never share the connection. These are
+simulations, not hardware measurements.
+
 ### Drops and resyncs
 
-Records travel through the same bounded queue as state samples. A record that
-doesn't fit the queue, and a full batch the link still has no room for (see
-[Bandwidth](#bandwidth)), is dropped and counted in `capture-dropped`
-(capture status and heartbeat acknowledgements), the way `dropped-state-records`
-counts state samples. A frame record is 20 bytes, and a sensor read every
-millisecond while the ball moves makes about a thousand a second, whatever
-the cursor report rate; USB serial carries that, and over Bluetooth expect
-drops at speed unless the credit budget is raised.
+A record that doesn't fit the burst buffer is dropped and counted in
+`capture-dropped` (capture status and heartbeat acknowledgements), the way
+`dropped-state-records` counts state samples. Records are numbered whether or
+not they fit, so the host sees every drop as a sequence gap.
 
 After a drop, replay can't know what the stages held, so the trace ends; the
 same goes for a settings change, a CPI preview, and a switch of report link.
@@ -696,8 +746,12 @@ does in firmware. Only cursor pipelines convert so far.
 The CTest `capture_replay` checks that this is faithful: it records a
 synthetic session through the firmware's cursor stages and capture tap
 (`host/tests/capture_session.c`), with flushes running up to 3 ms late, key
-presses landing while a frame runs, a drop, and a tuning change mid-stroke,
-each followed by a resync. It converts the capture with both profiles and
+presses landing while a frame runs, a tuning change mid-stroke, and fast
+flicks, through the burst buffer and a simulated Bluetooth link. It runs at
+a 7.5 ms and a 15 ms connection interval, where the flicks outrun the link,
+and with a 512-byte buffer that fills and drops records; every record must
+arrive in order or show as a counted gap, and the tap resyncs after each
+change and drop. It converts the capture with both profiles and
 requires each trace's replay to send exactly the reports the stages sent
 during it. The ztest `capture_records_pipeline_input` checks that the
 telemetry service starts a recording with the same records, keeps and

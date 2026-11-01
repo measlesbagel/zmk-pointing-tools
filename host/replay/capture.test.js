@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { captureToFixtures, decodeCaptureStream } from "./capture.js";
 import { encodeRunnerInput } from "./fixture.js";
-import { CAPTURE, MESSAGE, captureSettingsHash, encodeFrame, parseCaptureBatch }
+import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, parseCaptureBatch }
   from "../../web/protocol.js";
 
 const stages = [
@@ -142,16 +142,66 @@ test("parses capture batches with consecutive sequences", () => {
     CAPTURE.RECORD_FRAME, 0x80, 10, 0, 0, 0, 0xe7, 0x03, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0,
     0x30, 0x75, 0, 0,
     CAPTURE.RECORD_LEFT);
-  assert.deepEqual(parseCaptureBatch(payload), [
+  assert.deepEqual(parseCaptureBatch(payload, captureDecoder()), [
     { sequence: 7, kind: CAPTURE.RECORD_SOURCE, link: 1, sourceId: 2, cpi: 800 },
     { sequence: 8, kind: CAPTURE.RECORD_FRAME, flags: 0x80, timeMs: 10, timeUs: 999, x: -1,
       y: 2, spanUs: 30000 },
     { sequence: 9, kind: CAPTURE.RECORD_LEFT },
   ]);
-  assert.throws(() => parseCaptureBatch(Uint8Array.of(0, 0, 0, 0, 1, 99)), /Unknown capture record/);
+  assert.throws(() => parseCaptureBatch(Uint8Array.of(0, 0, 0, 0, 1, 99), captureDecoder()),
+    /Unknown capture record/);
 });
 
 test("streams from firmware before protocol v8 are refused", () => {
   assert.throws(() => decodeCaptureStream(encodeFrame(MESSAGE.DESCRIBE_RESPONSE, Uint8Array.of(7))),
     /Firmware protocol 7 does not match tuner protocol 8/);
+});
+
+test("decodes delta frames against the previous frame, across batches", () => {
+  const state = captureDecoder();
+  state.nextSequence = 7;
+  const first = Uint8Array.of(7, 0, 0, 0, 2,
+    /* Whole: flags 0, 10 ms + 900 us, x 5, y -3, span 1000 us. */
+    CAPTURE.RECORD_FRAME, 0, 10, 0, 0, 0, 0x84, 0x03, 5, 0, 0, 0, 0xfd, 0xff, 0xff, 0xff,
+    0xe8, 0x03, 0, 0,
+    /* +1250 us, x -2, y 1, span = elapsed. */
+    0x81, 0xc4, 0x13, 0x03, 0x02);
+  const second = Uint8Array.of(9, 0, 0, 0, 2,
+    /* -1 us, x 200, y 0, flags 0x80, span 30000 given whole. */
+    0x87, 0x01, 0x90, 0x03, 0x00, 0x80, 0xb0, 0xea, 0x01,
+    /* +1000 us, no motion, span 3 us short of elapsed, flags kept. */
+    0x82, 0xd0, 0x0f, 0x00, 0x00, 0x05);
+  const frame = (sequence, timeMs, timeUs, x, y, flags, spanUs) =>
+    ({ sequence, kind: CAPTURE.RECORD_FRAME, flags, timeMs, timeUs, x, y, spanUs });
+  assert.deepEqual([...parseCaptureBatch(first, state), ...parseCaptureBatch(second, state)], [
+    frame(7, 10, 900, 5, -3, 0, 1000), frame(8, 12, 150, -2, 1, 0, 1250),
+    frame(9, 12, 149, 200, 0, 0x80, 30000), frame(10, 13, 149, 0, 0, 0x80, 997)]);
+  /* After a gap, firmware sends the next frame whole. A delta with nothing
+   * to follow is skipped, which the converter reads as a gap, and decoding
+   * picks up again at the next whole frame. */
+  const whole = [CAPTURE.RECORD_FRAME, 0, 50, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+    0xe8, 0x03, 0, 0];
+  assert.deepEqual(parseCaptureBatch(Uint8Array.of(20, 0, 0, 0, 3,
+    0x80, 0, 0, 0, ...whole, 0x80, 0xd0, 0x0f, 0x02, 0x02), state), [
+    frame(21, 50, 0, 1, 1, 0, 1000), frame(22, 51, 0, 1, 1, 0, 1000)]);
+  assert.equal(state.skipped, 1);
+  /* An entered record starts a trace, which starts with a whole frame. */
+  assert.deepEqual(parseCaptureBatch(Uint8Array.of(23, 0, 0, 0, 2,
+    CAPTURE.RECORD_ENTERED, 0, 0, 0, 0, 0x80, 0, 0, 0), state), [
+    { sequence: 23, kind: CAPTURE.RECORD_ENTERED, settingsHash: 0 }]);
+  assert.equal(state.skipped, 2);
+});
+
+test("delta frame fields are int32: a fifth varint byte holds only the top 4 bits", () => {
+  const batch = (...bytes) => {
+    const state = captureDecoder();
+    return parseCaptureBatch(Uint8Array.of(0, 0, 0, 0, 2, CAPTURE.RECORD_FRAME, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...bytes), state)[1];
+  };
+  /* zigzag 0xffffffff is INT32_MIN, 0xfffffffe INT32_MAX. */
+  const max = [0xff, 0xff, 0xff, 0xff, 0x0f];
+  assert.deepEqual([batch(0x80, 0, ...max, 0xfe, 0xff, 0xff, 0xff, 0x0f)].map(({ x, y }) => [x, y]),
+    [[-(2 ** 31), 2 ** 31 - 1]]);
+  assert.throws(() => batch(0x80, 0, 0xff, 0xff, 0xff, 0xff, 0x10, 0), /Malformed varint/);
+  assert.throws(() => batch(0x80, 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0), /Malformed varint/);
 });

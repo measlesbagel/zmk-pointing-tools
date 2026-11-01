@@ -68,13 +68,12 @@
 
 /* Record queue owned by the service; the drop test fills it directly.
  * Same layout as the private struct zpt_telemetry_record in
- * src/service/telemetry.c (kind and generation bytes, then a union whose
- * largest member is the state sample). */
+ * src/service/telemetry.c (a kind byte, then a union whose largest member
+ * is the state sample). */
 extern struct k_msgq zpt_record_queue;
 
 struct zpt_test_record {
     uint8_t kind;
-    uint8_t generation;
     union {
         struct zpt_state_sample state;
     } sample;
@@ -323,7 +322,7 @@ ZTEST(zpt_unit, ping) {
     zassert_equal(length, 8);
     zassert_equal(sys_get_le32(&payload[0]), 0u);
     /* payload[4..7] counts capture drops; capture_records_pipeline_input,
-     * which runs earlier, drops one on purpose. */
+     * which runs earlier, fills the capture buffer on purpose. */
 }
 
 ZTEST(zpt_unit, parser_resync) {
@@ -1098,16 +1097,19 @@ static uint32_t capture_control(const uint8_t *payload, uint16_t length, uint8_t
     tx_frame(ZPT_TEST_REQ_CAPTURE_CONTROL, payload, length);
     zassert_ok(rx_frame(&frame_type, response, &response_length, ZPT_RX_TIMEOUT_MS));
     zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_STATUS);
-    zassert_equal(response[0], 1, "capture schema");
+    zassert_equal(response[0], 2, "capture schema");
     zassert_equal(response[1], recording);
-    zassert_equal(response[6], 1, "one recordable pipeline");
+    zassert_true(sys_get_le32(&response[6]) <= CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE,
+                 "buffer fill");
+    zassert_equal(sys_get_le32(&response[10]), CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE);
+    zassert_equal(response[14], 1, "one recordable pipeline");
     /* id, active, three stages, replayable; then the hash and the label. */
     static const uint8_t entry[] = {0, 1, 3, 1};
     static const uint8_t label[] = {12, 't', 'e', 's', 't', '-', 'c', 'a', 'p', 't', 'u', 'r', 'e'};
-    zassert_equal(response_length, 7 + sizeof(entry) + 4 + sizeof(label));
-    zassert_mem_equal(&response[7], entry, sizeof(entry));
-    zassert_mem_equal(&response[15], label, sizeof(label));
-    return sys_get_le32(&response[11]);
+    zassert_equal(response_length, 15 + sizeof(entry) + 4 + sizeof(label));
+    zassert_mem_equal(&response[15], entry, sizeof(entry));
+    zassert_mem_equal(&response[23], label, sizeof(label));
+    return sys_get_le32(&response[19]);
 }
 
 /* Collects capture batches until count records arrived; returns the
@@ -1133,6 +1135,20 @@ static size_t capture_records(uint8_t *records, size_t count, uint32_t *sequence
 
 /* Lets the gate's idle deadline run and the pipeline rest, then pushes a
  * frame: a pending resync resets the pipeline and enters it again. */
+/* A delta frame: kind, then three varints (time, x, y), as this test's
+ * frames send them: same span and flags as the frame before. */
+static size_t delta_frame_size(const uint8_t *record) {
+    zassert_equal(record[0], 0x80, "delta frame with the previous span and flags");
+    size_t size = 1;
+    for (int field = 0; field < 3; field++) {
+        while ((record[size] & 0x80U) != 0U) {
+            size++;
+        }
+        size++;
+    }
+    return size;
+}
+
 static void capture_resync(uint32_t settings_hash, uint32_t *sequence) {
     uint8_t records[64];
     struct zpt_pipeline_result result;
@@ -1142,19 +1158,22 @@ static void capture_resync(uint32_t settings_hash, uint32_t *sequence) {
     zassert_equal(records[0], 7, "flush");
     k_sleep(K_MSEC(ZPT_CAPTURE_RESYNC_REST_MS + 20));
     capture_push(1, 0);
-    zassert_equal(capture_records(records, 4, sequence), 5 + 6 + 5 + 20);
+    const size_t bytes = capture_records(records, 4, sequence);
     zassert_equal(records[0], 4, "entered");
     zassert_equal(sys_get_le32(&records[1]), settings_hash);
     zassert_equal(records[5], 2, "source");
     zassert_equal(records[11], 3, "the guard's key press, again");
-    zassert_equal(records[16], 1, "frame");
+    /* Every trace starts with a whole frame, whether a drop or a settings
+     * change ended the one before. */
+    zassert_equal(bytes, 5 + 6 + 5 + 20);
+    zassert_equal(records[16], 1);
 }
 
 ZTEST(zpt_unit, capture_records_pipeline_input) {
     uint8_t frame_type;
     uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
     uint16_t length;
-    uint8_t records[256];
+    uint8_t records[CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE];
     uint32_t sequence = 0;
 
     zassert_ok(zpt_pipeline_validate(&capture_pipeline));
@@ -1199,15 +1218,15 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
     capture_guard_ms = before_ms + 1;
     capture_push(1, 0);
     capture_push(1, 0);
+    /* Frames after the first are deltas from the frame before. */
     bytes = capture_records(records, 3, &sequence);
-    zassert_equal(bytes, 5 + 20 + 20);
     zassert_equal(records[0], 3);
     zassert_equal(sys_get_le32(&records[1]), before_ms + 1);
-    zassert_equal(records[5], 1);
-    zassert_equal(records[25], 1);
+    const size_t first_delta = delta_frame_size(&records[5]);
+    zassert_equal(bytes, 5 + first_delta + delta_frame_size(&records[5 + first_delta]));
 
-    /* A link without room keeps the batch and appends to it: two refused
-     * sends, then the three frames go out intact in one batch. */
+    /* A link without room keeps the records: after two refused sends, the
+     * three frames go out in order in one batch. */
     atomic_set(&zpt_test_refuse_droppable, 2);
     for (int i = 0; i < 3; i++) {
         capture_push(1, 0);
@@ -1219,25 +1238,42 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
     zassert_equal(frame_type, ZPT_TEST_EVENT_CAPTURE);
     zassert_equal(sys_get_le32(&payload[0]), sequence);
     zassert_equal(payload[4], 3);
-    zassert_equal(length, 5 + 3 * 20);
+    size_t offset = 5;
+    for (int i = 0; i < 3; i++) {
+        offset += delta_frame_size(&payload[offset]);
+    }
+    zassert_equal(offset, length);
     sequence += 3;
     zassert_equal(atomic_get(&zpt_test_refuse_droppable), 0);
 
-    /* A full batch the link still refuses is dropped and counted; the
-     * record that didn't fit starts the next batch, after the gap. */
+    /* While the link takes nothing, records wait in the buffer until it is
+     * full; only then are records dropped and counted. Once the link has
+     * room, every stored record arrives in order, then the gap. */
     const uint32_t dropped_at_start = capture_dropped();
-    const int full = (ZPT_CAPTURE_BATCH_MAX_PAYLOAD - ZPT_CAPTURE_BATCH_HEADER_SIZE) / 20;
-    atomic_set(&zpt_test_refuse_droppable, 1000);
-    for (int i = 0; i <= full; i++) {
+    atomic_set(&zpt_test_refuse_droppable, 100000);
+    const uint32_t pushed = CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE / 3U;
+    for (uint32_t i = 0; i < pushed; i++) {
         capture_push(1, 0);
-        k_sleep(K_MSEC(2));
+        /* Let the worker try the link; sleeping here would outlast the
+         * host timeout, which stops the recording. */
+        k_yield();
     }
+    const uint32_t dropped = capture_dropped() - dropped_at_start;
+    zassert_true(dropped > 0U && dropped < pushed, "the buffer filled, then dropped (%u of %u)",
+                 dropped, pushed);
+    /* The link has room again; a request wakes the worker, as a returned
+     * Bluetooth credit does. */
     atomic_set(&zpt_test_refuse_droppable, 0);
-    zassert_equal(capture_dropped(), dropped_at_start + (uint32_t)full);
-    sequence += (uint32_t)full;
-    bytes = capture_records(records, 1, &sequence);
-    zassert_equal(records[0], 1, "the frame after the dropped batch");
-    /* The pipeline kept running; at the next rest the tap resyncs. */
+    zassert_equal(capture_dropped() - dropped_at_start, dropped);
+    bytes = capture_records(records, pushed - dropped, &sequence);
+    zassert_true(bytes > CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE - 20U, "it was full");
+    for (offset = 0; offset < bytes;) {
+        offset += delta_frame_size(&records[offset]);
+    }
+    zassert_equal(offset, bytes);
+    sequence += dropped;
+    /* The pipeline kept running; at the next rest the tap resyncs, and the
+     * first frame after the drop goes whole. */
     capture_resync(hash, &sequence);
 
     /* A tuning change while recording: the next entered record, at the
@@ -1254,25 +1290,19 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
                    &sequence);
     zassert_ok(zpt_tuning_set(0, 0, gain));
 
-    /* A full queue drops records and counts them like state samples. */
-    tx_frame(ZPT_REQ_PING, NULL, 0);
-    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
-    zassert_equal(frame_type, ZPT_RESP_ACK);
-    const uint32_t dropped_before = sys_get_le32(&payload[4]);
-    struct zpt_test_record dummy = {.kind = 0xff};
-    for (int i = 0; i < CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE; i++) {
-        zassert_ok(k_msgq_put(&zpt_record_queue, &dummy, K_NO_WAIT));
-    }
+    /* Stopping sends what is still stored before the status, whatever the
+     * link's room, and ends the stream. */
+    atomic_set(&zpt_test_refuse_droppable, 100000);
     capture_push(1, 0);
-    tx_frame(ZPT_REQ_PING, NULL, 0);
-    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
-    zassert_equal(frame_type, ZPT_RESP_ACK);
-    zassert_equal(sys_get_le32(&payload[4]), dropped_before + 1);
-    expect_no_frame(200);
-
-    /* Stopping ends the stream. */
+    expect_no_frame(50);
     const uint8_t stop = 0xff;
-    capture_control(&stop, 1, 0xff);
+    tx_frame(ZPT_TEST_REQ_CAPTURE_CONTROL, &stop, 1);
+    zassert_equal(capture_records(records, 1, &sequence), delta_frame_size(records));
+    atomic_set(&zpt_test_refuse_droppable, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_STATUS);
+    zassert_equal(payload[1], 0xff);
+    zassert_equal(sys_get_le32(&payload[6]), 0, "the buffer is empty");
     capture_push(1, 0);
     expect_no_frame(200);
 
@@ -1292,7 +1322,7 @@ ZTEST(zpt_unit, capture_records_pipeline_input) {
         'y', 0,   0,   0,   0,   8,   'i', 'n', 'v', 'e', 'r', 't', '-', 'x', 0,   0,   0,
         0,   8,   'i', 'n', 'v', 'e', 'r', 't', '-', 'y', 1,   0,   0,   0,
     };
-    size_t offset = sizeof(named) + 4;
+    offset = sizeof(named) + 4;
     zassert_mem_equal(&payload[offset], orientation, sizeof(orientation));
     offset += sizeof(orientation);
     /* Normalize takes nothing; the gate takes the guard's window. */

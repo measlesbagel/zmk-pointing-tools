@@ -18,12 +18,14 @@
  * and pipeline descriptions are the payloads of the protocol messages.
  */
 
-#define ZPT_CAPTURE_SCHEMA_VERSION 1
+/* 2: compact delta frames and the burst buffer fill in capture status. */
+#define ZPT_CAPTURE_SCHEMA_VERSION 2
 /* A batch starts with the first record's sequence (u32) and a count (u8). */
 #define ZPT_CAPTURE_BATCH_HEADER_SIZE 5
 /* Two notifications at the 65-byte ATT MTU ZMK negotiates, less the frame
  * header, so a batch fits the default Bluetooth credit budget. */
 #define ZPT_CAPTURE_BATCH_MAX_PAYLOAD 119
+/* A full frame record; a delta frame is shorter or isn't used. */
 #define ZPT_CAPTURE_RECORD_MAX_SIZE 20
 /* After a drop, a settings change, or a change of source, resolution, or
  * link, the tap resyncs at the first frame that follows at least this long
@@ -49,6 +51,23 @@ enum zpt_capture_record_kind {
     ZPT_CAPTURE_RECORD_SETTINGS_CHANGED = 6,
     /* Stage deadlines that were due ran. */
     ZPT_CAPTURE_RECORD_FLUSH = 7,
+};
+
+/* Wire kinds 0x80 to 0x87 are frames encoded as a delta from the previous
+ * frame: bit 2 says a flags byte follows, bits 0 and 1 how the span is
+ * given (enum zpt_capture_span_mode). */
+#define ZPT_CAPTURE_DELTA_FRAME 0x80U
+#define ZPT_CAPTURE_DELTA_FLAGS 0x04U
+
+enum zpt_capture_span_mode {
+    /* The previous frame's span. */
+    ZPT_CAPTURE_SPAN_PREVIOUS = 0,
+    /* The time since the previous frame. */
+    ZPT_CAPTURE_SPAN_ELAPSED = 1,
+    /* A signed varint difference from the time since the previous frame. */
+    ZPT_CAPTURE_SPAN_ELAPSED_PLUS = 2,
+    /* An unsigned varint span. */
+    ZPT_CAPTURE_SPAN_ABSOLUTE = 3,
 };
 
 /* The link the pipeline's cursor reports go out on, from its coalescer. */
@@ -79,10 +98,6 @@ struct zpt_capture_record {
     /* Entered record: the pipeline's settings hash. */
     uint32_t settings_hash;
 };
-
-/* Encode one record without its sequence; out must hold
- * ZPT_CAPTURE_RECORD_MAX_SIZE bytes. Returns the encoded length. */
-size_t zpt_capture_record_encode(const struct zpt_capture_record *record, uint8_t *out);
 
 /* Where a tap's records go. recording is checked first on every frame, so
  * it must be cheap; submit numbers and stores a record; sub_ms_us returns
@@ -139,22 +154,69 @@ bool zpt_capture_pipeline_replayable(const struct zpt_pipeline *pipeline);
  * ZPT_CAPTURE_LINK_NONE without a coalescer. */
 uint8_t zpt_capture_pipeline_link(const struct zpt_pipeline *pipeline);
 
-/* Records packed into one capture batch message. */
-struct zpt_capture_batch {
-    uint8_t payload[ZPT_CAPTURE_BATCH_MAX_PAYLOAD];
-    uint16_t length;
-    uint8_t count;
+/* Store and forward: records are encoded compactly as they are recorded
+ * and wait here until the link has room, so only the average record rate
+ * has to fit the link (docs/protocol.md, "Burst buffer"). A frame encodes
+ * as a delta from the previous frame, falling back to a full frame record
+ * at the start, after a drop, and when a delta doesn't fit.
+ *
+ * Not thread-safe: the owner serialises every call. */
+struct zpt_capture_buffer {
+    uint8_t *data;
+    uint32_t capacity;
+    uint32_t head;
+    uint32_t used;
+    /* Records stored, not counting gap markers. */
+    uint32_t records;
+    /* The number the next recorded record gets. */
+    uint32_t next_sequence;
+    /* The number of the first record still stored, before any gap. */
+    uint32_t out_sequence;
+    /* Records dropped since the last one stored. */
+    uint32_t pending_gap;
+    /* The previous frame stored, the base of the next delta. */
+    uint64_t previous_us;
+    uint32_t previous_span_us;
+    uint8_t previous_flags;
+    bool have_previous;
+};
+
+/* What a batch peeked from the buffer covers, for zpt_capture_buffer_consume. */
+struct zpt_capture_take {
+    uint32_t bytes;
+    uint32_t records;
     uint32_t next_sequence;
 };
 
-void zpt_capture_batch_clear(struct zpt_capture_batch *batch);
+void zpt_capture_buffer_init(struct zpt_capture_buffer *buffer, uint8_t *storage,
+                             uint32_t capacity);
 
-/* Append a record. Returns false, leaving the batch unchanged, when the
- * record doesn't fit or doesn't continue the batch's sequence; send the
- * batch, clear it, and add the record again. An empty batch takes any
- * record. */
-bool zpt_capture_batch_add(struct zpt_capture_batch *batch,
-                           const struct zpt_capture_record *record);
+/* Empty the buffer and number records from zero: a new recording. */
+void zpt_capture_buffer_reset(struct zpt_capture_buffer *buffer);
+
+/* Number the record and store it. Returns false when the buffer has no
+ * room: the record is dropped, still numbered, so the host sees the gap,
+ * and the next frame is stored whole. */
+bool zpt_capture_buffer_put(struct zpt_capture_buffer *buffer,
+                            const struct zpt_capture_record *record);
+
+/* Encode the oldest stored records into one capture batch payload of at
+ * most capacity bytes, without removing them; records after a gap go in
+ * the next batch. Returns the payload length, 0 when nothing is stored.
+ * Reads only stored bytes and the bookkeeping, never writes: it may run on
+ * a copy of the struct taken under the owner's lock, while puts continue,
+ * as long as nothing consumes, discards, or resets until the batch is
+ * consumed. */
+size_t zpt_capture_buffer_peek(const struct zpt_capture_buffer *buffer, uint8_t *out,
+                               size_t capacity, struct zpt_capture_take *take);
+
+/* Remove what a peeked batch covers, once the link took it. */
+void zpt_capture_buffer_consume(struct zpt_capture_buffer *buffer,
+                                const struct zpt_capture_take *take);
+
+/* Drop everything stored, for a link that went away; the next batch starts
+ * after the gap. Returns the records dropped. */
+uint32_t zpt_capture_buffer_discard(struct zpt_capture_buffer *buffer);
 
 /* Add one tuning parameter's current value to a pipeline's settings hash:
  * the sum, modulo 2^32, of FNV-1a over stage stable id, NUL, key, NUL, and
