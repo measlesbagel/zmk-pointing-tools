@@ -26,6 +26,8 @@ replay client.
 `host/wasm` builds the same runners for WebAssembly, so the hosted tuner can
 replay and score traces in the browser, and checks they match native replay;
 see [`../docs/trace-replay.md`](../docs/trace-replay.md#replay-in-the-browser).
+The `host/wasm` checks need both builds' output, so they run from
+`devenv tasks run wasm:test` rather than `npm test`.
 
 The native and WebAssembly binaries are build artifacts and are never committed or included
 in keyboard firmware.

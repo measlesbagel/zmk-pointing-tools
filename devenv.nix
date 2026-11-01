@@ -61,11 +61,28 @@ let
     if pkgs ? llvmPackages_22 then pkgs.llvmPackages_22.clang-tools
     else pkgs.clang-tools;
 
-  # WASI clang, wasi-libc and wasm-ld for the WebAssembly replay runners
-  # (host/wasm, docs/trace-replay.md), pinned with nixpkgs by devenv.lock.
-  # Exposed through env vars rather than packages so the cross tools never
-  # shadow the native compiler on PATH.
+  # WASI compiler for the WebAssembly replay runners (host/wasm,
+  # docs/trace-replay.md), pinned with nixpkgs by devenv.lock. It is the
+  # clang 22 that clang-tidy above already pulls in, driven for
+  # wasm32-wasip1 with wasi-libc, the wasm32 compiler-rt builtins and lld,
+  # so the default shell only gains those (about 45 MiB) instead of a
+  # second LLVM. It is a wrapper script exposed as ZPT_WASI_CC rather than a
+  # package, so it never shadows the native compiler on PATH.
   wasi = pkgs.pkgsCross.wasi32;
+  wasiLlvm = pkgs.llvmPackages_22;
+  wasiSysroot = pkgs.symlinkJoin {
+    name = "zpt-wasi-sysroot";
+    paths = [ wasi.wasilibc wasi.wasilibc.dev ];
+  };
+  wasiResourceDir = pkgs.runCommand "zpt-wasi-resource-dir" { } ''
+    mkdir -p "$out/lib"
+    ln -s ${wasiLlvm.clang-unwrapped.lib}/lib/clang/${lib.versions.major wasiLlvm.clang-unwrapped.version}/include "$out/include"
+    ln -s ${wasi.llvmPackages_22.compiler-rt}/lib/wasip1 "$out/lib/wasip1"
+  '';
+  wasiCc = pkgs.writeShellScript "zpt-wasi-cc" ''
+    exec ${wasiLlvm.clang-unwrapped}/bin/clang --target=wasm32-wasip1 \
+      --sysroot=${wasiSysroot} -resource-dir=${wasiResourceDir} -B${wasiLlvm.lld}/bin "$@"
+  '';
 in
 {
   packages = [
@@ -87,8 +104,7 @@ in
   ];
 
   env = {
-    ZPT_WASI_CC = "${wasi.stdenv.cc}/bin/${wasi.stdenv.cc.targetPrefix}cc";
-    ZPT_WASI_LD_DIR = "${wasi.buildPackages.llvmPackages.lld}/bin";
+    ZPT_WASI_CC = "${wasiCc}";
   };
 
   processes.tuner.exec = "python -m http.server 8787 --directory web";
