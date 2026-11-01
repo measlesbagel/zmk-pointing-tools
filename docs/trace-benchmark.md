@@ -176,12 +176,19 @@ A recorded trace (from firmware input capture, see
 [`protocol.md`](protocol.md#input-capture)) may also hold `["flush", deltaUs]`
 events where firmware ran stage deadlines. A cursor trace with any flush event
 runs deadlines only there, as the device did, instead of at their own time,
-and nothing runs after the last event.
+and nothing runs after the last event. A recorded cursor trace's events may
+end with one more field, `late`: how many whole milliseconds before the
+event's own time its stages saw it, for a frame that firmware recorded after
+a later flush (`["motion", deltaUs, x, y, spanUs, late]`, `["flush", deltaUs,
+late]`, `["keypress", deltaUs, late]`). Replay hands the stages
+`floor(t / 1000) - late`.
 
 The span is replayed exactly as recorded. A peripheral's firmware path
 quantizes it on the way to the central (2 ms steps in
 `src/source/transport/compact_split_codec.c`), so exact-span replay of a
-peripheral is slightly optimistic about what the firmware sees today.
+synthetic peripheral trace is slightly optimistic about what the firmware sees
+today. A captured trace doesn't have this problem: capture records spans at
+the pipeline's input, after the split link has already quantized them.
 
 **Processor.** Scroll, text, and noise fixtures keep their version 1
 `settings`, except that the resolution comes from `source.cpi`. The cursor

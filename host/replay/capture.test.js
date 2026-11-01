@@ -1,27 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { captureToFixtures } from "./capture.js";
+import { captureToFixtures, decodeCaptureStream } from "./capture.js";
 import { encodeRunnerInput } from "./fixture.js";
-import { CAPTURE, parseCaptureBatch } from "../../web/protocol.js";
+import { CAPTURE, MESSAGE, captureSettingsHash, encodeFrame, parseCaptureBatch }
+  from "../../web/protocol.js";
 
-const description = {
-  pipelineId: 0,
-  stableId: "right-cursor",
-  stages: [
-    { strategy: "orthogonal-orientation", stableId: "o",
-      fixed: { "swap-xy": 0, "invert-x": 1, "invert-y": 0 } },
-    { strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
-    { strategy: "cursor-transfer", stableId: "t", fixed: {} },
-    { strategy: "cursor-quantizer", stableId: "q", fixed: {} },
-  ],
-};
+const stages = [
+  { strategy: "orthogonal-orientation", stableId: "o",
+    fixed: { "swap-xy": 0, "invert-x": 1, "invert-y": 0 } },
+  { strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
+  { strategy: "cursor-transfer", stableId: "t", fixed: {} },
+  { strategy: "cursor-quantizer", stableId: "q", fixed: {} },
+];
 const profile = {
   schema: "zmk-pointing-tools/tuning-profile",
   version: 1,
   targets: [{ stableId: "t", parameters: [{ key: "scale-multiplier", value: 3 },
     { key: "scale-divisor", value: 2 }] }],
 };
+const description = { pipelineId: 0, stableId: "right-cursor", stages,
+  settingsHash: captureSettingsHash(profile, stages.map((stage) => stage.stableId)) };
 
 let sequence = 0;
 const entered = () => ({ sequence: sequence++, kind: CAPTURE.RECORD_ENTERED });
@@ -45,11 +44,12 @@ test("a recording becomes a trace with recorded timing and settings", () => {
     "invert-y": 0 });
   assert.deepEqual(fixture.processor.stages[2].settings, { "scale-multiplier": 3,
     "scale-divisor": 2 });
-  /* Times count from the key press's millisecond; the flush keeps its
-   * millisecond; a clipped span restarts the speed estimate on replay. */
-  assert.deepEqual(fixture.events, [["keypress", 0], ["motion", 10250, 3, 0, 1000],
+  /* Without a keypress guard the key press can't matter, so it is left
+   * out; the flush keeps its millisecond; a clipped span restarts the
+   * speed estimate on replay. */
+  assert.deepEqual(fixture.events, [["motion", 250, 3, 0, 1000],
     ["flush", 0], ["motion", 2749, -1, 0, 40000]]);
-  assert.match(encodeRunnerInput(fixture), /^F\nE\nK 0\nM 10250 3 0 1000\nF 10250\nM 12999/m);
+  assert.match(encodeRunnerInput(fixture), /^F\nE\nM 250 3 0 1000\nF 250\nM 2999/m);
 });
 
 test("drops, settings changes, and pipeline switches end a trace", () => {
@@ -68,6 +68,59 @@ test("drops, settings changes, and pipeline switches end a trace", () => {
   assert.deepEqual(warnings, ["2 records dropped before 6",
     "trace 2 ends early: settings changed while recording",
     "trace 3 ends early: the source, resolution, or report link changed"]);
+});
+
+test("a drop ends a trace and the resync at the next rest starts a full one", () => {
+  sequence = 0;
+  const records = [entered(), source()];
+  for (let i = 0; i < 10; i += 1) records.push(frame(100 + i, 0, 1));
+  sequence += 3; /* three records dropped */
+  /* Frames the pipeline ran before it rested and resynced don't replay. */
+  records.push(frame(113, 0, 1), frame(114, 0, 1), entered(), source());
+  for (let i = 0; i < 1000; i += 1) records.push(frame(200 + i, 0, 1));
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile);
+  assert.deepEqual(fixtures.map((fixture) => fixture.events.length), [10, 1000]);
+  assert.equal(fixtures[1].metadata.capture.startMs, 200);
+  assert.deepEqual(warnings, ["3 records dropped before 15"]);
+});
+
+test("refuses a profile whose settings the device didn't record with", () => {
+  sequence = 0;
+  const records = [entered(), source(), frame(10, 0, 1)];
+  const edited = structuredClone(profile);
+  edited.targets[0].parameters[0].value = 4;
+  assert.throws(() => captureToFixtures({ description, records }, edited),
+    /doesn't hold the settings right-cursor recorded with/);
+  /* A status sent while recording reports the settings too. */
+  const statuses = [{ recording: 0, pipelines: [{ id: 0, settingsHash: 1 }] }];
+  assert.throws(() => captureToFixtures({ description, statuses, records }, profile),
+    /settings hash 1,/);
+  assert.throws(() => captureToFixtures({ description: { ...description,
+    settingsHash: undefined }, records }, profile), /doesn't hold the settings/);
+});
+
+test("events recorded after a later one carry the millisecond their stages saw", () => {
+  sequence = 0;
+  const gated = { ...description, stages: [...stages.slice(0, 2),
+    { strategy: "coherent-displacement", stableId: "g",
+      fixed: { "suppress-after-keypress-ms": 40 } }, ...stages.slice(2)] };
+  gated.settingsHash = captureSettingsHash(profile, gated.stages.map((stage) => stage.stableId));
+  /* The first key press is past the guard's window when motion starts. */
+  const records = [entered(), timed(CAPTURE.RECORD_KEYPRESS, 900), source(),
+    timed(CAPTURE.RECORD_KEYPRESS, 980), frame(1000, 500, 1),
+    timed(CAPTURE.RECORD_FLUSH, 1003), frame(1001, 700, 2), frame(1004, 100, 3)];
+  const { fixtures, warnings } = captureToFixtures({ description: gated, records }, profile);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(fixtures[0].events, [["keypress", 0], ["motion", 20500, 1, 0, 1000],
+    ["flush", 2500], ["motion", 0, 2, 0, 1000, 2], ["motion", 1100, 3, 0, 1000]]);
+  assert.match(encodeRunnerInput(fixtures[0]), /\nM 23000 2 0 1000 2\n/);
+});
+
+test("warns when the recording's first records were dropped", () => {
+  sequence = 5;
+  const { warnings } = captureToFixtures({ description, records: [entered(), source(),
+    frame(10, 0, 1)] }, profile);
+  assert.deepEqual(warnings, ["the recording starts at record 5; earlier records were dropped"]);
 });
 
 test("only cursor pipelines convert", () => {
@@ -89,4 +142,9 @@ test("parses capture batches with consecutive sequences", () => {
     { sequence: 9, kind: CAPTURE.RECORD_LEFT },
   ]);
   assert.throws(() => parseCaptureBatch(Uint8Array.of(0, 0, 0, 0, 1, 99)), /Unknown capture record/);
+});
+
+test("streams from firmware before protocol v8 are refused", () => {
+  assert.throws(() => decodeCaptureStream(encodeFrame(MESSAGE.DESCRIBE_RESPONSE, Uint8Array.of(7))),
+    /firmware protocol 7 has no input capture/);
 });

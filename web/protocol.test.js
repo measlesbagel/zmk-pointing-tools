@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CAPTURE,
   FrameDecoder,
   MESSAGE,
   encodeDevicePreview,
@@ -9,7 +10,10 @@ import {
   encodeTuningSet,
   encodeTuningSetMany,
   encodeFrame,
+  captureSettingsHash,
   parseAck,
+  parseCaptureDescription,
+  parseCaptureStatus,
   parseDescribe,
   parseDeviceDescription,
   parseDeviceList,
@@ -21,6 +25,7 @@ import {
   parseTuningResult,
   parseTuningTargetMetadata,
   parseTuningTargets,
+  supportsCapture,
 } from "./protocol.js";
 
 test("decodes fragmented and adjacent frames", () => {
@@ -42,21 +47,48 @@ test("decodes fragmented and adjacent frames", () => {
   );
 });
 
-test("parses the version-only description", () => {
+test("accepts firmware from the oldest supported protocol on", () => {
   assert.deepEqual(parseDescribe(Uint8Array.of(8)), { version: 8 });
-  assert.throws(
-    () => parseDescribe(Uint8Array.of(7)),
-    /does not match tuner protocol/,
-  );
+  /* v7 firmware keeps working; only capture needs v8. */
+  assert.deepEqual(parseDescribe(Uint8Array.of(7)), { version: 7 });
+  assert.equal(supportsCapture(7), false);
+  assert.equal(supportsCapture(8), true);
+  assert.throws(() => parseDescribe(Uint8Array.of(6)), /Firmware protocol 6 isn't supported/);
+  assert.throws(() => parseDescribe(Uint8Array.of(9)), /Firmware protocol 9 isn't supported/);
 });
 
-test("parses acknowledgements", () => {
+test("parses acknowledgements with and without drop counters", () => {
   const ack = new Uint8Array(8);
   new DataView(ack.buffer).setUint32(0, 42, true);
   new DataView(ack.buffer).setUint32(4, 7, true);
   assert.deepEqual(parseAck(ack), { stateDropped: 42, captureDropped: 7 });
-  assert.throws(() => parseAck(new Uint8Array(4)), /Invalid acknowledgement length/);
+  /* v7 firmware counts state drops only; without state telemetry, neither. */
+  assert.deepEqual(parseAck(ack.slice(0, 4)), { stateDropped: 42, captureDropped: null });
+  assert.deepEqual(parseAck(new Uint8Array()), { stateDropped: null, captureDropped: null });
+  assert.throws(() => parseAck(new Uint8Array(6)), /Invalid acknowledgement length/);
+});
 
+test("parses capture status and descriptions with settings hashes", () => {
+  const status = Uint8Array.of(1, 0, 3, 0, 0, 0, 1,
+    0, 1, 7, CAPTURE.FLAG_REPLAYABLE, 0x78, 0x56, 0x34, 0x12, 2, 0x72, 0x63);
+  assert.deepEqual(parseCaptureStatus(status), { schemaVersion: 1, recording: 0, dropped: 3,
+    pipelines: [{ id: 0, active: true, stageCount: 7, replayable: true,
+      settingsHash: 0x12345678, label: "rc" }] });
+  const description = Uint8Array.of(0, 2, 0x72, 0x63, 0xef, 0xbe, 0xad, 0xde, 1,
+    2, 0x67, 0x74, 1, 0x67, 1, 1, 0x6b, 0xff, 0xff, 0xff, 0xff);
+  assert.deepEqual(parseCaptureDescription(description), { pipelineId: 0, stableId: "rc",
+    settingsHash: 0xdeadbeef, stages: [{ strategy: "gt", stableId: "g", fixed: { k: -1 } }] });
+});
+
+test("hashes the settings of the described stages only, in any order", () => {
+  const target = (stableId, parameters) => ({ stableId, parameters: parameters
+    .map(([key, value]) => ({ key, value })) });
+  const profile = { targets: [target("a", [["x", 1], ["y", -2]]), target("b", [["x", 1]])] };
+  const swapped = { targets: [target("a", [["y", -2], ["x", 1]]), target("c", [["z", 5]])] };
+  assert.equal(captureSettingsHash(profile, ["a"]), captureSettingsHash(swapped, ["a"]));
+  assert.notEqual(captureSettingsHash(profile, ["a"]), captureSettingsHash(profile, ["a", "b"]));
+  const changed = { targets: [target("a", [["x", 2], ["y", -2]])] };
+  assert.notEqual(captureSettingsHash(profile, ["a"]), captureSettingsHash(changed, ["a"]));
 });
 
 test("parses and controls semantic processor state", () => {

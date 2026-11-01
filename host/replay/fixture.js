@@ -19,6 +19,12 @@ function requireInteger(value, name, minimum = Number.MIN_SAFE_INTEGER) {
   }
 }
 
+/* How many milliseconds before its fixture time an event's stages saw it:
+ * the last field of a recorded motion (sixth), keypress, or flush (third)
+ * event. */
+export const lateMs = (event) =>
+  (event[0] === "motion" ? event[5] : event[2]) ?? 0;
+
 /* Absolute event times in microseconds. Version 1 deltas are milliseconds,
  * version 2 deltas microseconds. */
 export function eventTimesUs(fixture) {
@@ -163,10 +169,12 @@ function validateEvents(fixture, path) {
   if (!Array.isArray(fixture.events) || fixture.events.length === 0) {
     throw new Error(`${path}: events are required`);
   }
-  const motionLengths = fixture.version === 1 ? [4] : [4, 5];
-  /* Recorded deadline flushes replay only through the cursor runner. */
-  const types = fixture.version === 2 && fixture.processor.kind === "cursor-pipeline"
-    ? ["motion", "keypress", "flush"] : ["motion", "keypress"];
+  /* Recorded deadline flushes and late stage times replay only through the
+   * cursor runner. */
+  const recorded = fixture.version === 2 && fixture.processor.kind === "cursor-pipeline";
+  const motionLengths = fixture.version === 1 ? [4] : recorded ? [4, 5, 6] : [4, 5];
+  const types = recorded ? ["motion", "keypress", "flush"] : ["motion", "keypress"];
+  const times = eventTimesUs(fixture);
   for (const [index, event] of fixture.events.entries()) {
     if (!Array.isArray(event) || !types.includes(event[0])) {
       throw new Error(`${path}: invalid event ${index}`);
@@ -175,17 +183,23 @@ function validateEvents(fixture, path) {
     if (event[0] === "motion") {
       if (!motionLengths.includes(event.length)) {
         throw new Error(`${path}: motion event ${index} needs delta, x, and y` +
-          (fixture.version === 1 ? "" : ", and optionally a span"));
+          (fixture.version === 1 ? "" : ", and optionally a span" +
+            (recorded ? " and a late time" : "")));
       }
       requireInteger(event[2], `${path}: event ${index} x`);
       requireInteger(event[3], `${path}: event ${index} y`);
-      if (event.length === 5) requireInteger(event[4], `${path}: event ${index} span`, 0);
-    } else if (event.length !== 2) {
-      throw new Error(`${path}: ${event[0]} event ${index} only accepts delta`);
+      if (event.length >= 5) requireInteger(event[4], `${path}: event ${index} span`, 0);
+    } else if (event.length !== 2 && !(recorded && event.length === 3)) {
+      throw new Error(`${path}: ${event[0]} event ${index} only accepts delta` +
+        (recorded ? " and a late time" : ""));
+    }
+    const late = lateMs(event);
+    requireInteger(late, `${path}: event ${index} late time`, 0);
+    if (late > toMilliseconds(times[index])) {
+      throw new Error(`${path}: event ${index} is late by more than its time since the trace start`);
     }
   }
   /* Runners read times as 32-bit microseconds: about 71.6 minutes. */
-  const times = eventTimesUs(fixture);
   if (times[times.length - 1] > MAX_TRACE_US) {
     throw new Error(`${path}: traces must be shorter than ${MAX_TRACE_US} µs; split the recording`);
   }
@@ -304,9 +318,10 @@ export function encodeRunnerInput(fixture, overrideProfile = null) {
     const lines = cursorHeader(fixture, overrideProfile);
     const useSpan = fixture.version === 2 && fixture.source.span === "sensor";
     fixture.events.forEach((event, index) => {
+      const late = lateMs(event) > 0 ? ` ${lateMs(event)}` : "";
       lines.push(event[0] === "motion"
-        ? `M ${times[index]} ${event[2]} ${event[3]} ${useSpan ? (event[4] ?? 0) : 0}`
-        : `${event[0] === "flush" ? "F" : "K"} ${times[index]}`);
+        ? `M ${times[index]} ${event[2]} ${event[3]} ${useSpan ? (event[4] ?? 0) : 0}${late}`
+        : `${event[0] === "flush" ? "F" : "K"} ${times[index]}${late}`);
     });
     return `${lines.join("\n")}\n`;
   }

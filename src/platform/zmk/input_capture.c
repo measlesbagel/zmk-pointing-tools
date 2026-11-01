@@ -1,17 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 
 /* Connects ZMK to the input capture service: every devicetree pipeline is
- * recordable, key presses reach recordings, and recordings start between
- * frames. */
+ * recordable, and recordings start between frames. */
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
-
-#include <zmk/event_manager.h>
-#include <zmk/events/position_state_changed.h>
 
 #include <zmk/pointing_tools/platform/zmk/pipeline_provider.h>
 #include <zmk/pointing_tools/platform/zmk/router.h>
@@ -56,20 +52,3 @@ static int zpt_input_capture_init(void) {
 /* After every pipeline provider and router (POST_KERNEL), before any input
  * reaches a pipeline. */
 SYS_INIT(zpt_input_capture_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
-
-static int zpt_input_capture_position_listener(const zmk_event_t *event) {
-    const struct zmk_position_state_changed *position = as_zmk_position_state_changed(event);
-    if (position != NULL && position->state) {
-        /* The same time the keypress guard records. */
-        zpt_capture_keypress((uint32_t)position->timestamp);
-    }
-    return ZMK_EV_EVENT_BUBBLE;
-}
-
-/* See router.c: external linkage is intrinsic to ZMK's listener/
- * subscription macros (linker-section collection + `extern`), so a
- * static variant is impossible. */
-// NOLINTNEXTLINE(misc-use-internal-linkage)
-ZMK_LISTENER(zpt_input_capture, zpt_input_capture_position_listener);
-// NOLINTNEXTLINE(misc-use-internal-linkage)
-ZMK_SUBSCRIPTION(zpt_input_capture, zmk_position_state_changed);

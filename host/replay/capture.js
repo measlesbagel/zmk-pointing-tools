@@ -24,8 +24,12 @@ import {
   CAPTURE,
   FrameDecoder,
   MESSAGE,
+  captureSettingsHash,
   parseCaptureBatch,
   parseCaptureDescription,
+  parseCaptureStatus,
+  parseDescribe,
+  supportsCapture,
 } from "../../web/protocol.js";
 
 /* Firmware stage strategies and the cursor runner's stage types. */
@@ -45,24 +49,51 @@ const SIGNAL_FLAG_SPAN_CLIPPED = 1 << 7;
  * one this long (ZPT_CURSOR_ACCELERATION_RESTART_MS); a fixture has no
  * flags, so a clipped span is written as this span. */
 const RESTART_SPAN_US = 40000;
-/* The keypress guard's window is a 16-bit millisecond count, so an older
- * key press can't affect the recording. */
-const KEYPRESS_HORIZON_MS = 0xffff;
 
-/* The description and records of the one recording in a protocol stream. */
+/* The description, capture statuses, and records of the one recording in
+ * a protocol stream. */
 export function decodeCaptureStream(bytes) {
   const decoder = new FrameDecoder();
   let description = null;
+  const statuses = [];
   const records = [];
   for (const frame of decoder.push(bytes)) {
-    if (frame.type === MESSAGE.CAPTURE_DESCRIPTION_RESPONSE) {
+    if (frame.type === MESSAGE.DESCRIBE_RESPONSE) {
+      /* Capture needs protocol v8; a stream that includes the handshake
+       * must show it. */
+      const { version } = parseDescribe(frame.payload);
+      if (!supportsCapture(version)) {
+        throw new Error(`firmware protocol ${version} has no input capture; it needs version 8`);
+      }
+    } else if (frame.type === MESSAGE.CAPTURE_DESCRIPTION_RESPONSE) {
       description = parseCaptureDescription(frame.payload);
+    } else if (frame.type === MESSAGE.CAPTURE_STATUS_RESPONSE) {
+      statuses.push(parseCaptureStatus(frame.payload));
     } else if (frame.type === MESSAGE.CAPTURE_BATCH) {
       records.push(...parseCaptureBatch(frame.payload));
     }
   }
   if (description === null) throw new Error("stream has no capture description");
-  return { description, records };
+  return { description, statuses, records };
+}
+
+/* The profile must hold the settings the device ran: its hash has to match
+ * the one the device reported in the description and in every status sent
+ * while recording this pipeline. */
+function checkSettings({ description, statuses = [] }, profile) {
+  const stageIds = description.stages.map((stage) => stage.stableId);
+  const expected = captureSettingsHash(profile, stageIds);
+  const reported = [description.settingsHash, ...statuses
+    .filter((status) => status.recording === description.pipelineId)
+    .map((status) => status.pipelines.find((entry) => entry.id === description.pipelineId)
+      ?.settingsHash)
+    .filter((hash) => hash !== undefined)];
+  const mismatch = reported.find((hash) => hash !== expected);
+  if (reported.some((hash) => hash !== expected)) {
+    throw new Error(`the profile doesn't hold the settings ${description.stableId} recorded ` +
+      `with (settings hash ${mismatch?.toString(16)}, profile ${expected.toString(16)}); ` +
+      "export the profile from the keyboard right before recording");
+  }
 }
 
 function cursorStages(description, profile) {
@@ -87,12 +118,16 @@ function cursorStages(description, profile) {
 /* Split records into stretches that replay from reset stages: each starts
  * at an entered record and ends at a left record, a settings change, a
  * dropped record, or a change of source, resolution, or link, after which
- * nothing replays until the pipeline is entered again. */
+ * nothing replays until the next entered record. After a drop, firmware
+ * resets the pipeline and sends one at the next rest (docs/protocol.md,
+ * "Drops"). Each stretch starts with its own key press record. */
 function segments(records, warnings) {
   const result = [];
   let current = null;
-  let keypressMs = null;
   let expected = records[0]?.sequence ?? 0;
+  if (expected !== 0) {
+    warnings.push(`the recording starts at record ${expected}; earlier records were dropped`);
+  }
   const end = (reason) => {
     if (current !== null) {
       if (reason !== null) warnings.push(`trace ${result.length + 1} ends early: ${reason}`);
@@ -109,17 +144,13 @@ function segments(records, warnings) {
     switch (record.kind) {
       case CAPTURE.RECORD_ENTERED:
         end(current === null ? null : "the pipeline was entered again");
-        current = { source: null, events: [], keypressMs };
+        current = { source: null, events: [] };
         break;
       case CAPTURE.RECORD_LEFT:
         end(null);
         break;
       case CAPTURE.RECORD_SETTINGS_CHANGED:
         end("settings changed while recording");
-        break;
-      case CAPTURE.RECORD_KEYPRESS:
-        keypressMs = record.timeMs;
-        current?.events.push(record);
         break;
       case CAPTURE.RECORD_SOURCE:
         if (current?.source !== null && current?.source !== undefined) {
@@ -141,62 +172,60 @@ function segments(records, warnings) {
   return result;
 }
 
-/* Fixture events from records. Times count from the millisecond of the
- * first event, or of the last key press before it while the guard could
- * still remember it, so each frame keeps the millisecond its stages saw. */
-function fixtureEvents(segment, warnings) {
+/* Fixture events from records. Times count from the earliest event, a key
+ * press the guard still remembers included, so each frame keeps its
+ * microsecond. An event recorded after a later one moves to that one's time
+ * and carries how many milliseconds earlier its stages saw it, so replay
+ * hands every stage the millisecond firmware did. */
+function fixtureEvents(segment, windowMs) {
   const isKeypress = (event) => event.kind === CAPTURE.RECORD_KEYPRESS;
   const startMs = (segment.events.find((event) => !isKeypress(event)) ?? segment.events[0]).timeMs;
-  const recent = (timeMs) => ((startMs - timeMs) | 0) <= KEYPRESS_HORIZON_MS;
-  const events = segment.events.filter((event) => !isKeypress(event) || recent(event.timeMs));
-  if (segment.keypressMs !== null && recent(segment.keypressMs) &&
-      !events.some((event) => isKeypress(event) && event.timeMs === segment.keypressMs)) {
-    events.unshift({ kind: CAPTURE.RECORD_KEYPRESS, timeMs: segment.keypressMs });
-  }
-  const firstMs = events[0].timeMs;
+  /* A key press older than the guard's window can't suppress anything. */
+  const events = segment.events.filter((event) =>
+    !isKeypress(event) || ((startMs - event.timeMs) | 0) < windowMs);
+  if (events.length === 0) return null;
   const baseMs = events.reduce((base, event) =>
-    ((event.timeMs - base) | 0) < 0 ? event.timeMs : base, firstMs);
+    ((event.timeMs - base) | 0) < 0 ? event.timeMs : base, events[0].timeMs);
   let previous = 0;
-  let reordered = 0;
   let spans = false;
   const out = events.map((event) => {
-    let time = ((event.timeMs - baseMs) >>> 0) * 1000 +
-      (event.kind === CAPTURE.RECORD_FRAME ? event.timeUs : 0);
-    if (time < previous) {
-      /* Flushes and key presses carry only their millisecond, so within a
-       * frame's millisecond they move to its time, which the stages can't
-       * tell apart. An event recorded after a later millisecond can't go
-       * back in time on replay. */
-      if (Math.floor(time / 1000) !== Math.floor(previous / 1000)) reordered += 1;
-      time = previous;
-    }
+    const ownMs = (event.timeMs - baseMs) >>> 0;
+    const own = ownMs * 1000 + (event.kind === CAPTURE.RECORD_FRAME ? event.timeUs : 0);
+    const time = Math.max(own, previous);
+    const late = Math.floor(time / 1000) - ownMs;
     const delta = time - previous;
     previous = time;
     if (event.kind === CAPTURE.RECORD_FRAME) {
       const span = event.flags & SIGNAL_FLAG_SPAN_CLIPPED
         ? Math.max(event.spanUs, RESTART_SPAN_US) : event.spanUs;
       spans ||= span !== 0;
-      return ["motion", delta, event.x, event.y, span];
+      return late > 0 ? ["motion", delta, event.x, event.y, span, late]
+        : ["motion", delta, event.x, event.y, span];
     }
-    return [event.kind === CAPTURE.RECORD_FLUSH ? "flush" : "keypress", delta];
+    const type = event.kind === CAPTURE.RECORD_FLUSH ? "flush" : "keypress";
+    return late > 0 ? [type, delta, late] : [type, delta];
   });
-  if (reordered > 0) {
-    warnings.push(`${reordered} events arrived after a later one and replay at its time`);
-  }
-  return { events: out, spans };
+  return { events: out, spans, startMs: baseMs };
 }
 
 /* Fixture v2 traces from a decoded capture and the settings it ran with.
  * Returns { fixtures, warnings }. */
-export function captureToFixtures({ description, records }, profile, options = {}) {
+export function captureToFixtures(capture, profile, options = {}) {
+  const { description, records } = capture;
   validateProfile(profile);
   const stages = cursorStages(description, profile);
+  checkSettings(capture, profile);
+  const windowMs = description.stages.find((stage) => stage.strategy === "coherent-displacement")
+    ?.fixed["suppress-after-keypress-ms"] ?? 0;
   const warnings = [];
-  const parts = segments(records, warnings);
+  /* A stretch without frames (only flushes or key presses) replays nothing. */
+  const parts = segments(records, warnings).filter((segment) => segment.source !== null)
+    .map((segment) => ({ segment,
+    converted: fixtureEvents(segment, windowMs) })).filter(({ converted }) => converted !== null);
   if (parts.length === 0) warnings.push("the recording has no replayable frames");
   const id = options.id ?? `capture-${description.stableId}`;
-  const fixtures = parts.map((segment, index) => {
-    const { events, spans } = fixtureEvents(segment, warnings);
+  const fixtures = parts.map(({ segment, converted }, index) => {
+    const { events, spans, startMs } = converted;
     const frames = segment.events.filter((event) => event.kind === CAPTURE.RECORD_FRAME);
     const transported = frames.some((frame) => frame.flags & SIGNAL_FLAG_TRANSPORTED);
     const fixture = {
@@ -213,6 +242,8 @@ export function captureToFixtures({ description, records }, profile, options = {
           pipeline: description.stableId,
           sourceId: segment.source.sourceId,
           firstSequence: segment.events[0].sequence ?? null,
+          /* Device uptime in milliseconds at fixture time zero. */
+          startMs,
         },
       },
       source: {

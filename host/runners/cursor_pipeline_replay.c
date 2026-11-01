@@ -14,9 +14,11 @@
  *                           tuning key (the tuner profile's key)
  *   F                       deadlines run only at F events (a recording)
  *   E                       end of header
- *   M <t_us> <x> <y> <span_us>  motion arriving at t_us; span 0 = none
- *   K <t_us>                physical keypress
- *   F <t_us>                run the deadlines due at t_us, as recorded
+ *   M <t_us> <x> <y> <span_us> [late_ms]  motion arriving at t_us; span 0
+ *                           = none; its stages see the millisecond late_ms
+ *                           before t_us (a recorded frame that waited)
+ *   K <t_us> [late_ms]      physical keypress
+ *   F <t_us> [late_ms]      run the deadlines due then, as recorded
  *
  * Tunable stages take every tuning parameter exactly once and run the
  * firmware's own tuning conversions, so profile values replay exactly as a
@@ -395,9 +397,8 @@ static int flush_until(struct replay *replay, uint32_t now_ms, bool all) {
     }
 }
 
-static int push_motion(struct replay *replay, uint32_t t_us, int32_t x, int32_t y,
+static int push_motion(struct replay *replay, uint32_t t_us, uint32_t t_ms, int32_t x, int32_t y,
                        uint32_t span_us) {
-    const uint32_t t_ms = t_us / 1000U;
     struct zpt_signal signal = {
         .kind = ZPT_SIGNAL_RAW_MOTION,
         .metadata = {.observed_at_ms = t_ms,
@@ -424,33 +425,65 @@ static int push_motion(struct replay *replay, uint32_t t_us, int32_t x, int32_t 
     return 0;
 }
 
-static int replay_event(struct replay *replay, const char *line) {
+struct replay_line {
     char type;
     uint32_t t_us;
+    uint32_t t_ms;
     int32_t x;
     int32_t y;
     uint32_t span_us;
-    int fields = sscanf(line, " %c %" SCNu32 " %" SCNd32 " %" SCNd32 " %" SCNu32, &type, &t_us, &x,
-                        &y, &span_us);
-    if (fields < 2 || (!replay->recorded_flushes && flush_until(replay, t_us / 1000U, false) < 0)) {
+};
+
+/* Parse one event line; returns -EINVAL for a malformed one. */
+static int parse_event(const char *line, struct replay_line *event) {
+    uint32_t values[3] = {0};
+    uint32_t late_ms = 0;
+    int fields = sscanf(line, " %c %" SCNu32, &event->type, &event->t_us);
+    if (fields != 2) {
+        return -EINVAL;
+    }
+    if (event->type == 'M') {
+        int32_t x;
+        int32_t y;
+        fields = sscanf(line, " %*c %*u %" SCNd32 " %" SCNd32 " %" SCNu32 " %" SCNu32, &x, &y,
+                        &values[0], &late_ms);
+        if (fields < 3) {
+            return -EINVAL;
+        }
+        event->x = x;
+        event->y = y;
+        event->span_us = values[0];
+    } else if (event->type == 'K' || event->type == 'F') {
+        (void)sscanf(line, " %*c %*u %" SCNu32, &late_ms);
+    } else {
+        return -EINVAL;
+    }
+    event->t_ms = event->t_us / 1000U - late_ms;
+    return 0;
+}
+
+static int replay_event(struct replay *replay, const char *line) {
+    struct replay_line event;
+    if (parse_event(line, &event) < 0 ||
+        (!replay->recorded_flushes && flush_until(replay, event.t_ms, false) < 0)) {
         return fail("invalid replay event");
     }
-    if (type == 'F' && fields == 2 && replay->recorded_flushes) {
+    if (event.type == 'F') {
+        if (!replay->recorded_flushes) {
+            return fail("flush events need the F header line");
+        }
         struct zpt_pipeline_result result;
-        replay->now_us = t_us;
-        return zpt_pipeline_flush(&replay->pipeline, t_us / 1000U, &result) < 0
+        replay->now_us = event.t_us;
+        return zpt_pipeline_flush(&replay->pipeline, event.t_ms, &result) < 0
                    ? fail("pipeline flush failed")
                    : 0;
     }
-    if (type == 'K' && fields == 2) {
+    if (event.type == 'K') {
         replay->keypress_seen = true;
-        replay->last_keypress_ms = t_us / 1000U;
+        replay->last_keypress_ms = event.t_ms;
         return 0;
     }
-    if (type != 'M' || fields != 5) {
-        return fail("unknown replay event");
-    }
-    return push_motion(replay, t_us, x, y, span_us);
+    return push_motion(replay, event.t_us, event.t_ms, event.x, event.y, event.span_us);
 }
 
 int main(void) {

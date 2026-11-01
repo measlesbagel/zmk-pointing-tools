@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include <zmk/pointing_tools/core/pipeline.h>
+#include <zmk/pointing_tools/policy/suppression.h>
 
 /*
  * Input capture: records of what goes into one pipeline, so a host can
@@ -24,13 +25,19 @@
  * header, so a batch fits the default Bluetooth credit budget. */
 #define ZPT_CAPTURE_BATCH_MAX_PAYLOAD 119
 #define ZPT_CAPTURE_RECORD_MAX_SIZE 20
+/* After a drop, the tap resyncs at the first frame that follows at least
+ * this long a pause, or the coalescer's report interval if longer, with no
+ * stage deadline pending: the acceleration stage's restart gap
+ * (ZPT_CURSOR_ACCELERATION_RESTART_MS). */
+#define ZPT_CAPTURE_RESYNC_REST_MS 40U
 
 enum zpt_capture_record_kind {
     /* An input frame pushed into the pipeline. */
     ZPT_CAPTURE_RECORD_FRAME = 1,
     /* Source, resolution, and report link of the frames that follow. */
     ZPT_CAPTURE_RECORD_SOURCE = 2,
-    /* A physical key press, at the time the keypress guard uses. */
+    /* The key press the pipeline's keypress guard decides the next frame
+     * with, at the time the guard holds. */
     ZPT_CAPTURE_RECORD_KEYPRESS = 3,
     /* The pipeline was activated or reset: its stages start from reset. */
     ZPT_CAPTURE_RECORD_ENTERED = 4,
@@ -76,29 +83,48 @@ size_t zpt_capture_record_encode(const struct zpt_capture_record *record, uint8_
 /* Where a tap's records go. recording is checked first on every frame, so
  * it must be cheap; submit numbers and stores a record; sub_ms_us returns
  * how many microseconds into time_ms it is now, or 999 once time_ms has
- * passed. Callbacks run on the thread that drives the pipeline. */
+ * passed; take_resync returns and clears whether records were dropped since
+ * it was last asked. Callbacks run on the thread that drives the pipeline. */
 struct zpt_capture_sink {
     bool (*recording)(void *context);
     void (*submit)(void *context, const struct zpt_capture_record *record);
     uint16_t (*sub_ms_us)(void *context, uint32_t time_ms);
+    bool (*take_resync)(void *context);
     void *context;
 };
 
 /* Observes one pipeline for capture. */
 struct zpt_capture_tap {
     const struct zpt_capture_sink *sink;
+    struct zpt_pipeline *pipeline;
+    /* The pipeline's keypress guard, or NULL. */
+    const struct zpt_suppression_policy *guard;
+    uint32_t keypress_ms;
+    /* The last frame or flush recorded. */
+    uint32_t last_frame_ms;
     uint16_t source_id;
     uint16_t resolution_cpi;
     uint8_t link;
     bool described;
+    bool keypress_recorded;
+    bool have_last_frame;
+    bool frozen;
+    bool replayable;
 };
 
-/* Install the tap as the pipeline's observer. */
+/* Install the tap as the pipeline's observer. Call while no frame runs. */
 void zpt_capture_tap_attach(struct zpt_capture_tap *tap, struct zpt_pipeline *pipeline,
                             const struct zpt_capture_sink *sink);
 
-/* Describe the source again before the next frame, as at a new recording. */
-void zpt_capture_tap_restart(struct zpt_capture_tap *tap);
+/* Start a recording: describe the source and key press again before the
+ * next frame and, for a replayable pipeline that is active, reset its
+ * stages and submit an entered record, so the recording starts where replay
+ * starts. Call while no frame runs, with the sink already recording. */
+void zpt_capture_tap_start(struct zpt_capture_tap *tap);
+
+/* Whether every stage of the pipeline is one the host cursor runner
+ * replays; only those pipelines are reset by a recording. */
+bool zpt_capture_pipeline_replayable(const struct zpt_pipeline *pipeline);
 
 /* The link the pipeline's cursor coalescer reads now, or
  * ZPT_CAPTURE_LINK_NONE without a coalescer. */
@@ -121,7 +147,14 @@ void zpt_capture_batch_clear(struct zpt_capture_batch *batch);
 bool zpt_capture_batch_add(struct zpt_capture_batch *batch,
                            const struct zpt_capture_record *record);
 
+/* Add one tuning parameter's current value to a pipeline's settings hash:
+ * the sum, modulo 2^32, of FNV-1a over stage stable id, NUL, key, NUL, and
+ * the value as 4 little-endian bytes, for every published parameter of
+ * every stage with a tuning target. Order doesn't matter. */
+uint32_t zpt_capture_settings_hash_add(uint32_t hash, const char *stable_id, const char *key,
+                                       int32_t value);
+
 /* Encode the capture pipeline description (docs/protocol.md). Returns the
  * length, or -ENOSPC when it doesn't fit in capacity. */
 int zpt_capture_describe_pipeline(const struct zpt_pipeline *pipeline, uint8_t pipeline_id,
-                                  uint8_t *out, size_t capacity);
+                                  uint32_t settings_hash, uint8_t *out, size_t capacity);

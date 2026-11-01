@@ -23,4 +23,11 @@ struct zpt_suppression_policy {
     /* How long a keypress suppresses motion, for input capture to describe
      * the policy; zero when it isn't a keypress window. */
     uint32_t keypress_window_ms;
+    /* Optional, for input capture. freeze_keypress reports the latest key
+     * press (false when there was none) and makes is_suppressed decide with
+     * exactly that one until thaw_keypress, so a key press landing while a
+     * frame runs counts from the next frame on. Other pipelines sharing the
+     * policy see it a frame later as well. */
+    bool (*freeze_keypress)(void *context, uint32_t *time_ms);
+    void (*thaw_keypress)(void *context);
 };

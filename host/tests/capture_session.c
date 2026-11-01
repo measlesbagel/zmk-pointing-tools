@@ -6,15 +6,19 @@
  *
  * A cursor pipeline built from the firmware's stages runs synthetic motion
  * with sub-millisecond arrivals, sensor spans, clipped spans, key presses
- * under the keypress guard, and stage deadlines flushed at their time, as
- * the router executor does. Partway through, a recording starts as the
- * telemetry service starts one: the pipeline resets, an entered record and
- * the latest key press follow, and the capture tap records from then on.
+ * under the keypress guard, and stage deadlines flushed up to 3 ms late, as
+ * a busy router executor does, so frames sometimes follow a later flush.
+ * Some key presses land while a frame runs, after the guard was read for
+ * it. Partway through, a recording starts through zpt_capture_tap_start,
+ * as the telemetry service starts one. Later a few records are dropped as
+ * a full queue drops them, and the tap resyncs at the next rest.
  *
  * Prints one JSON object: the protocol bytes a host would receive (the
  * capture description and batches, as hex), the settings as a tuner
  * profile export, and every cursor report the pipeline sent while
- * recording. Replaying the converted capture must reproduce those reports.
+ * recording, tagged with the trace it belongs to (the number of entered
+ * records before it); reports sent between a drop and the resync belong to
+ * none. Replaying each converted trace must reproduce its reports.
  */
 
 #include <errno.h>
@@ -79,11 +83,24 @@ struct session {
     bool recording;
     bool have_keypress;
     uint32_t last_keypress_ms;
+    /* The guard's frozen view while a frame runs. */
+    bool frozen;
+    bool frozen_have;
+    uint32_t frozen_ms;
     uint32_t sequence;
+    /* Records still to drop, whether a drop awaits a resync, and the trace
+     * reports belong to (-1 between a drop and the resync). */
+    uint32_t drop_remaining;
+    bool resync;
+    int32_t trace;
+    uint32_t entered;
+    uint32_t dropped;
+    uint32_t injected_keypresses;
+    uint32_t late_flushes;
     struct zpt_capture_batch batch;
     uint8_t stream[MAX_STREAM];
     size_t stream_length;
-    int32_t outputs[MAX_OUTPUTS][3];
+    int32_t outputs[MAX_OUTPUTS][4];
     size_t output_count;
     uint32_t rng;
 
@@ -120,19 +137,37 @@ static uint32_t random_between(uint32_t low, uint32_t high) {
     return low + next_random() % (high - low + 1U);
 }
 
+/* The keypress guard, frozen for capture as the ZMK one is. */
 static bool guard_suppressed(void *context, const struct zpt_signal *signal, uint32_t now_ms) {
     (void)context;
     (void)signal;
-    return session.have_keypress && now_ms - session.last_keypress_ms < KEYPRESS_WINDOW_MS;
+    const bool have = session.frozen ? session.frozen_have : session.have_keypress;
+    const uint32_t keypress_ms = session.frozen ? session.frozen_ms : session.last_keypress_ms;
+    return have && now_ms - keypress_ms < KEYPRESS_WINDOW_MS;
+}
+
+static bool guard_freeze(void *context, uint32_t *time_ms) {
+    (void)context;
+    session.frozen = true;
+    session.frozen_have = session.have_keypress;
+    session.frozen_ms = session.last_keypress_ms;
+    *time_ms = session.frozen_ms;
+    return session.frozen_have;
+}
+
+static void guard_thaw(void *context) {
+    (void)context;
+    session.frozen = false;
 }
 
 static int report_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
     (void)sink;
-    if (session.recording && session.output_count < MAX_OUTPUTS) {
+    if (session.recording && session.trace >= 0 && session.output_count < MAX_OUTPUTS) {
         int32_t *output = session.outputs[session.output_count++];
-        output[0] = (int32_t)signal->metadata.observed_at_ms;
-        output[1] = signal->data.delta.x;
-        output[2] = signal->data.delta.y;
+        output[0] = session.trace;
+        output[1] = (int32_t)signal->metadata.observed_at_ms;
+        output[2] = signal->data.delta.x;
+        output[3] = signal->data.delta.y;
     }
     return 0;
 }
@@ -165,15 +200,44 @@ static void send_batch(void) {
     zpt_capture_batch_clear(&session.batch);
 }
 
-/* The telemetry service's path: number the record and batch it. */
+static void keypress(void) {
+    session.have_keypress = true;
+    session.last_keypress_ms = session.now_us / 1000U;
+}
+
+/* The telemetry service's path: number the record and batch it, or drop
+ * it as a full queue does, still numbered, so the host sees the gap. */
 static void capture_submit(void *context, const struct zpt_capture_record *record) {
     (void)context;
     struct zpt_capture_record numbered = *record;
     numbered.sequence = session.sequence++;
+    if (record->kind == ZPT_CAPTURE_RECORD_ENTERED) {
+        session.trace = (int32_t)session.entered++;
+    }
+    if (session.drop_remaining > 0U) {
+        session.drop_remaining--;
+        session.dropped++;
+        session.resync = true;
+        session.trace = -1;
+        return;
+    }
     if (!zpt_capture_batch_add(&session.batch, &numbered)) {
         send_batch();
         (void)zpt_capture_batch_add(&session.batch, &numbered);
     }
+    /* A key press landing while the frame runs, after the tap read the
+     * guard for it: the stages must not see it until the next frame. */
+    if (record->kind == ZPT_CAPTURE_RECORD_FRAME && random_between(0, 30) == 0) {
+        keypress();
+        session.injected_keypresses++;
+    }
+}
+
+static bool capture_take_resync(void *context) {
+    (void)context;
+    const bool resync = session.resync;
+    session.resync = false;
+    return resync;
 }
 
 static bool capture_recording(void *context) {
@@ -219,6 +283,23 @@ static const struct tuned_stage *tuned_stages(size_t *count) {
     return stages;
 }
 
+/* The firmware's settings hash: every published parameter of every tuned
+ * stage, at its current value. */
+static uint32_t settings_hash(void) {
+    size_t count;
+    const struct tuned_stage *tuned = tuned_stages(&count);
+    uint32_t hash = 0;
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = 0; j < tuned[i].ops->parameter_count; j++) {
+            const struct zpt_tuning_parameter *parameter = &tuned[i].ops->parameters[j];
+            int32_t value = 0;
+            (void)tuned[i].ops->get(tuned[i].config, parameter->id, &value);
+            hash = zpt_capture_settings_hash_add(hash, tuned[i].stable_id, parameter->key, value);
+        }
+    }
+    return hash;
+}
+
 static void add_stage(size_t index, const char *stable_id, const struct zpt_stage_api *api,
                       const void *config, void *state) {
     session.stages[index] = (struct zpt_stage){
@@ -234,6 +315,8 @@ static int build_pipeline(void) {
     session.suppression = (struct zpt_suppression_policy){
         .is_suppressed = guard_suppressed,
         .keypress_window_ms = KEYPRESS_WINDOW_MS,
+        .freeze_keypress = guard_freeze,
+        .thaw_keypress = guard_thaw,
     };
     session.orientation = (struct zpt_orientation_config){.invert_x = true};
     session.gate.suppression = &session.suppression;
@@ -270,6 +353,7 @@ static int build_pipeline(void) {
         .recording = capture_recording,
         .submit = capture_submit,
         .sub_ms_us = capture_sub_ms_us,
+        .take_resync = capture_take_resync,
     };
     zpt_capture_tap_attach(&session.tap, &session.pipeline, &session.capture_sink);
     if (zpt_pipeline_validate(&session.pipeline) < 0 ||
@@ -279,15 +363,19 @@ static int build_pipeline(void) {
     return 0;
 }
 
-/* Run the deadlines due before now, each at its own millisecond, as the
- * router executor's delayed work does. */
+/* Run the deadlines due by until_ms as the router executor's delayed work
+ * does, each 0 to 3 ms late, so a flush can run after the millisecond of
+ * the frame that follows it. */
 static int run_deadlines(uint32_t until_ms) {
     uint32_t deadline;
     while (zpt_pipeline_next_deadline(&session.pipeline, until_ms, &deadline) &&
            (int32_t)(until_ms - deadline) >= 0) {
         struct zpt_pipeline_result result;
-        session.now_us = deadline * 1000U;
-        if (zpt_pipeline_flush(&session.pipeline, deadline, &result) < 0) {
+        const uint32_t late = random_between(0, 3);
+        const uint32_t flush_ms = deadline + late;
+        session.late_flushes += late > 0U ? 1U : 0U;
+        session.now_us = flush_ms * 1000U;
+        if (zpt_pipeline_flush(&session.pipeline, flush_ms, &result) < 0) {
             return -EIO;
         }
     }
@@ -299,16 +387,6 @@ static int advance(uint32_t delta_us) {
     int ret = run_deadlines(target / 1000U);
     session.now_us = target;
     return ret;
-}
-
-static void keypress(void) {
-    session.have_keypress = true;
-    session.last_keypress_ms = session.now_us / 1000U;
-    if (session.recording) {
-        const struct zpt_capture_record record = {.kind = ZPT_CAPTURE_RECORD_KEYPRESS,
-                                                  .time_ms = session.last_keypress_ms};
-        capture_submit(NULL, &record);
-    }
 }
 
 static int push_frame(int32_t x, int32_t y, uint32_t span_us, uint32_t flags) {
@@ -328,19 +406,14 @@ static int push_frame(int32_t x, int32_t y, uint32_t span_us, uint32_t flags) {
     return zpt_pipeline_push(&session.pipeline, &signal, &result);
 }
 
-/* What starting a recording does in the telemetry service. */
+/* What starting a recording does in the telemetry service
+ * (zpt_capture_start_between_frames). */
 static void start_recording(void) {
-    session.recording = true;
     session.sequence = 0;
-    zpt_capture_tap_restart(&session.tap);
-    zpt_pipeline_reset(&session.pipeline, ZPT_RESET_ADMINISTRATIVE);
-    const struct zpt_capture_record entered = {.kind = ZPT_CAPTURE_RECORD_ENTERED};
-    capture_submit(NULL, &entered);
-    if (session.have_keypress) {
-        const struct zpt_capture_record pressed = {.kind = ZPT_CAPTURE_RECORD_KEYPRESS,
-                                                   .time_ms = session.last_keypress_ms};
-        capture_submit(NULL, &pressed);
-    }
+    session.resync = false;
+    session.trace = -1;
+    session.recording = true;
+    zpt_capture_tap_start(&session.tap);
 }
 
 /* One stroke: frames at a cadence, a speed, and a direction; spans are the
@@ -368,6 +441,7 @@ static int stroke(uint32_t frames, int32_t step_x, int32_t step_y, uint32_t min_
 
 static int run_session(void) {
     session.rng = 0x1234567U;
+    session.trace = -1;
     session.now_us = 5000000U + 377U;
     zpt_capture_batch_clear(&session.batch);
     int ret = build_pipeline();
@@ -382,8 +456,15 @@ static int run_session(void) {
         {30, -1, 1, 3000, 45000}, {90, -6, 3, 700, 1100}, {50, 2, 2, 1000, 20000},
     };
     for (size_t i = 0; ret == 0 && i < sizeof(strokes) / sizeof(strokes[0]); i++) {
-        ret = stroke((uint32_t)strokes[i][0], strokes[i][1], strokes[i][2], (uint32_t)strokes[i][3],
-                     (uint32_t)strokes[i][4]);
+        /* Drop a few records in the middle of the third stroke. */
+        if (i == 2) {
+            ret = stroke(20, (int32_t)strokes[i][1], (int32_t)strokes[i][2],
+                         (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
+            session.drop_remaining = 3;
+        }
+        ret = ret < 0 ? ret
+                      : stroke((uint32_t)strokes[i][0], strokes[i][1], strokes[i][2],
+                               (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
         keypress();
         ret = ret < 0 ? ret : advance(random_between(10000, 300000));
     }
@@ -407,10 +488,12 @@ static void print_profile(void) {
     for (size_t i = 0; i < count; i++) {
         printf("%s{\"stableId\":\"%s\",\"kind\":4,\"parameters\":[", i == 0 ? "" : ",",
                tuned[i].stable_id);
-        for (size_t j = 0; j < tuned[i].setting_count; j++) {
+        for (size_t j = 0; j < tuned[i].ops->parameter_count; j++) {
+            const struct zpt_tuning_parameter *parameter = &tuned[i].ops->parameters[j];
+            int32_t value = 0;
+            (void)tuned[i].ops->get(tuned[i].config, parameter->id, &value);
             printf("%s{\"key\":\"%s\",\"value\":%" PRId32 ",\"compiled\":%" PRId32 "}",
-                   j == 0 ? "" : ",", tuned[i].settings[j].key, tuned[i].settings[j].value,
-                   tuned[i].settings[j].value);
+                   j == 0 ? "" : ",", parameter->key, value, value);
         }
         printf("]}");
     }
@@ -423,8 +506,8 @@ int main(void) {
         return 1;
     }
     uint8_t description[512];
-    const int length =
-        zpt_capture_describe_pipeline(&session.pipeline, 0, description, sizeof(description));
+    const int length = zpt_capture_describe_pipeline(&session.pipeline, 0, settings_hash(),
+                                                     description, sizeof(description));
     if (length < 0) {
         fputs("pipeline description failed\n", stderr);
         return 1;
@@ -438,10 +521,13 @@ int main(void) {
     print_hex(session.stream, session.stream_length);
     printf("\",");
     print_profile();
-    printf(",\"outputs\":[");
+    printf(",\"dropped\":%" PRIu32 ",\"injectedKeypresses\":%" PRIu32 ",\"lateFlushes\":%" PRIu32
+           ",\"outputs\":[",
+           session.dropped, session.injected_keypresses, session.late_flushes);
     for (size_t i = 0; i < session.output_count; i++) {
-        printf("%s[%" PRId32 ",%" PRId32 ",%" PRId32 "]", i == 0 ? "" : ",", session.outputs[i][0],
-               session.outputs[i][1], session.outputs[i][2]);
+        printf("%s[%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "]", i == 0 ? "" : ",",
+               session.outputs[i][0], session.outputs[i][1], session.outputs[i][2],
+               session.outputs[i][3]);
     }
     printf("]}\n");
     return 0;

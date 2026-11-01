@@ -33,8 +33,15 @@ export const MESSAGE = Object.freeze({
 });
 
 /* v7 added pointing-device discovery and preview messages; v8 input
- * capture and the capture drop counter in acknowledgements. */
+ * capture and the capture drop counter in acknowledgements. The tuner
+ * speaks the newest version and accepts older firmware back to the oldest
+ * supported one; features need the version that added them. */
 export const PROTOCOL_VERSION = 8;
+export const OLDEST_PROTOCOL_VERSION = 7;
+export const CAPTURE_PROTOCOL_VERSION = 8;
+
+/* Whether firmware speaking this protocol version can record input. */
+export const supportsCapture = (version) => version >= CAPTURE_PROTOCOL_VERSION;
 export const STATE_SCHEMA_VERSION = 2;
 
 /* Target kinds carried in tuning targets and state samples. Pipeline stages
@@ -123,18 +130,21 @@ export class FrameDecoder {
 
 export function parseDescribe(payload) {
   const version = payload[0];
-  if (version !== PROTOCOL_VERSION) {
-    throw new Error(`Firmware protocol ${version} does not match tuner protocol ${PROTOCOL_VERSION}`);
+  if (!(version >= OLDEST_PROTOCOL_VERSION && version <= PROTOCOL_VERSION)) {
+    throw new Error(`Firmware protocol ${version} isn't supported: the tuner speaks ` +
+      `${OLDEST_PROTOCOL_VERSION} to ${PROTOCOL_VERSION}`);
   }
   return { version };
 }
 
+/* Firmware without state telemetry acknowledges with no payload, v7
+ * firmware with the state drop counter only. Absent counters are null. */
 export function parseAck(payload) {
-  if (payload.length !== 8) throw new Error("Invalid acknowledgement length");
+  if (![0, 4, 8].includes(payload.length)) throw new Error("Invalid acknowledgement length");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   return {
-    stateDropped: view.getUint32(0, true),
-    captureDropped: view.getUint32(4, true),
+    stateDropped: payload.length >= 4 ? view.getUint32(0, true) : null,
+    captureDropped: payload.length >= 8 ? view.getUint32(4, true) : null,
   };
 }
 
@@ -394,7 +404,8 @@ export function encodeDevicePreview(deviceId, cpi) {
   return encodeFrame(MESSAGE.DEVICE_PREVIEW_REQUEST, Uint8Array.of(deviceId, cpi & 0xff, (cpi >> 8) & 0xff));
 }
 
-/* --- Input capture (protocol v8) ------------------------------------- */
+/* --- Input capture (protocol v8) -------------------------------------
+ * Only for firmware where supportsCapture(version) holds. */
 
 export const CAPTURE = Object.freeze({
   SCHEMA_VERSION: 1,
@@ -409,6 +420,7 @@ export const CAPTURE = Object.freeze({
   LINK_USB: 0,
   LINK_BLE: 1,
   LINK_NONE: 0xff,
+  FLAG_REPLAYABLE: 0x01,
 });
 
 /* Start recording a pipeline, or stop with CAPTURE.NONE; no argument only
@@ -430,11 +442,14 @@ export function parseCaptureStatus(payload) {
   const pipelines = [];
   let offset = 7;
   for (let index = 0; index < payload[6]; index += 1) {
-    requireBytes(payload, offset, 4, "capture pipeline entry");
-    const [id, active, stageCount, labelLength] = payload.slice(offset, offset + 4);
-    offset += 4;
+    requireBytes(payload, offset, 9, "capture pipeline entry");
+    const [id, active, stageCount, flags] = payload.slice(offset, offset + 4);
+    const settingsHash = view.getUint32(offset + 4, true);
+    const labelLength = payload[offset + 8];
+    offset += 9;
     requireBytes(payload, offset, labelLength, "capture pipeline label");
     pipelines.push({ id, active: active !== 0, stageCount,
+      replayable: Boolean(flags & CAPTURE.FLAG_REPLAYABLE), settingsHash,
       label: decoder.decode(payload.slice(offset, offset + labelLength)) });
     offset += labelLength;
   }
@@ -463,6 +478,9 @@ export function parseCaptureDescription(payload) {
   };
   const pipelineId = byte("capture description");
   const stableId = string("capture pipeline id");
+  requireBytes(payload, offset, 4, "capture settings hash");
+  const settingsHash = view.getUint32(offset, true);
+  offset += 4;
   const stages = [];
   for (let count = byte("capture stage count"); stages.length < count;) {
     const strategy = string("capture stage strategy");
@@ -476,7 +494,7 @@ export function parseCaptureDescription(payload) {
     }
     stages.push({ strategy, stableId: stageId, fixed });
   }
-  return { pipelineId, stableId, stages };
+  return { pipelineId, stableId, settingsHash, stages };
 }
 
 /* Records of one capture batch, each with its sequence number. */
@@ -515,4 +533,27 @@ export function parseCaptureBatch(payload) {
   }
   if (offset !== payload.length) throw new Error("Capture batch has trailing bytes");
   return records;
+}
+
+/* A pipeline's settings hash (docs/protocol.md, "Capture pipeline
+ * description") from a tuner profile export: the sum, modulo 2^32, of
+ * FNV-1a over stage stable id, NUL, key, NUL, and the value as 4
+ * little-endian bytes, for every parameter of the stages listed. */
+export function captureSettingsHash(profile, stageIds) {
+  const encoder = new TextEncoder();
+  let hash = 0;
+  for (const target of profile.targets) {
+    if (!stageIds.includes(target.stableId)) continue;
+    for (const { key, value } of target.parameters) {
+      const value32 = new Uint8Array(4);
+      new DataView(value32.buffer).setInt32(0, value, true);
+      let fnv = 0x811c9dc5;
+      for (const byte of [...encoder.encode(target.stableId), 0, ...encoder.encode(key), 0,
+        ...value32]) {
+        fnv = Math.imul(fnv ^ byte, 0x01000193) >>> 0;
+      }
+      hash = (hash + fnv) >>> 0;
+    }
+  }
+  return hash;
 }

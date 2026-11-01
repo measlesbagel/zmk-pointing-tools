@@ -169,6 +169,8 @@ static void zpt_gatt_sent(struct bt_conn *conn, void *user_data) {
     ARG_UNUSED(conn);
     ARG_UNUSED(user_data);
     k_sem_give(&zpt_gatt_credits);
+    /* A capture batch the link had no room for is waiting to retry. */
+    zpt_host_protocol_wake();
 }
 
 /* Copies bytes [offset, offset + length) of header followed by payload. */
