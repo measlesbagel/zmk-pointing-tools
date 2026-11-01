@@ -51,7 +51,9 @@ test("flick lag compares input and output progress", () => {
 });
 
 test("axis metrics count decided frames and sideways steps", () => {
-  const fixture = { version: 2, id: "s", source, processor: { kind: "composed-scroll" },
+  /* 20000 steps per metre at 254 CPI is 2 steps per count. */
+  const fixture = { version: 2, id: "s", source,
+    processor: { kind: "composed-scroll", settings: { stepsPerMeter: 20000 } },
     events: [0, 1, 2, 3, 4, 5].map((i) => ["motion", i ? 8000 : 0, 0, 3]),
     truth: { strokes: [{ id: "v", activity: "scroll", intended: false, axis: "vertical",
       startUs: 0, endUs: 50000 }] } };
@@ -64,7 +66,8 @@ test("axis metrics count decided frames and sideways steps", () => {
   assert.equal(stroke.metrics.axisLockPercent, 80);
   assert.equal(stroke.metrics.axisSwitches, 2);
   assert.equal(stroke.metrics.sidewaysLeakPercent, 12.5);
-  assert.equal(stroke.metrics.unintendedOutput, 8);
+  /* Eight output steps are four ball counts at 2 steps per count. */
+  assert.ok(Math.abs(stroke.metrics.unintendedOutput - 4) < 1e-9);
   assert.deepEqual(aggregate([stroke, { metrics: { axisSwitches: 0 } }]).axisSwitches,
     { value: 1, strokes: 2 });
 });

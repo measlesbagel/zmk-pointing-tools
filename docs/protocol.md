@@ -720,9 +720,11 @@ and the acceleration stage restarts its speed estimate unless the next frame
 carries a sensor span shorter than 40 ms. The reset therefore changes only
 what a rest leaves behind: the quantizer's sub-pixel remainder (less than
 one count) and, for such a frame, the speed estimate the stage would have
-blended it into. In a scroll or text pipeline it changes the scroll
-batcher's sub-step remainder, and the axis intent when its idle timeout is
-0 (never forgets). Frames between the drop or change and the resync don't
+blended it into. In a scroll or text pipeline the reset clears the scroll
+batcher's sub-step remainder and the axis intent estimator; after the rest
+the estimator would have started over anyway unless its idle timeout is 0
+(never forgets), so only the remainder and that case differ from firmware
+that never resynced. Frames between the drop or change and the resync don't
 replay. Only replayable pipelines resync; for others the recording replays
 up to the first drop or change.
 
@@ -757,8 +759,8 @@ so are all key presses for a pipeline without a guard. A clipped span
 becomes a 40 ms span, which restarts the acceleration speed estimate as the
 clipped flag does in firmware. A pipeline ending in a scroll batcher becomes
 a `scroll-pipeline` trace and one ending in text navigation a
-`text-pipeline` trace, with ground truth from optional labels (see
-[`trace-benchmark.md`](trace-benchmark.md#recorded-scroll-and-text-traces));
+`text-pipeline` trace; ground truth comes from optional labels and, on request, from the motion itself (see
+[`trace-benchmark.md`](trace-benchmark.md#recorded-traces-ground-truth));
 every other pipeline becomes a `cursor-pipeline` trace.
 
 The CTest `capture_replay` checks that this is faithful: it records a

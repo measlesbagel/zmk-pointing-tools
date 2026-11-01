@@ -7,7 +7,7 @@
  *
  *   node host/replay/capture.js --stream capture.bin --profile a.json \
  *     [--profile b.json …] --out trace.json [--id my-trace] [--device right-ball] \
- *     [--provenance "…"] [--labels labels.json]
+ *     [--provenance "…"] [--labels labels.json] [--truth labels-only|derive]
  *
  * The stream is the device's protocol bytes as received: a capture
  * description (0x8d) and the capture batches (0x92) of one recording; other
@@ -19,7 +19,9 @@
  * captureToFixtures in capture-convert.js, which the tuner shares.
  * --labels names the intended axis of stretches of a scroll or text
  * recording: a JSON list of { startMs, endMs, activity, axis } in device
- * uptime (docs/trace-benchmark.md, "Recorded scroll and text traces"). */
+ * uptime. --truth derive also derives strokes for the motion outside labels,
+ * tagged derived; the default, labels-only, writes only the labelled ones
+ * (docs/trace-benchmark.md, "Recorded traces: ground truth"). */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,11 +42,12 @@ function main() {
       device: { type: "string" },
       provenance: { type: "string" },
       labels: { type: "string" },
+      truth: { type: "string", default: "labels-only" },
     },
   });
   if (!values.stream || !values.profile || !values.out) {
     console.error("usage: capture.js --stream <bytes> --profile <profile.json> [--profile …] " +
-      "--out <trace.json>");
+      "--out <trace.json> [--labels <labels.json>] [--truth labels-only|derive]");
     process.exit(2);
   }
   const capture = decodeCaptureStream(new Uint8Array(readFileSync(values.stream)));

@@ -248,6 +248,10 @@ or `post-typing`), `intended` (whether the user meant the motion), and a
   `--profile`). The curve and gain are choices, so the truth follows them;
   orientation is the sensor's mounting, so a profile that changes it scores
   as wrong direction.
+  For a scroll or text stroke the ideal output is the path's net travel,
+  along the stroke's `axis` when it has one, at the replay's own steps per
+  count: the scroll batcher's `steps-per-meter`, or one text step per
+  threshold.
 - `intendedOutput`: `[x, y]` the output the user wanted, signed, in pointer
   units (cursor) or steps (scroll, text: right and down are positive). It is
   fixed truth that no setting changes, for example a playground target's
@@ -342,10 +346,14 @@ stroke scores 100 % rather than being skipped.
 Output from motion the user didn't mean, such as tremor at rest or shake from
 typing. Applies to strokes with `intended: false`. The stroke value is the
 summed magnitude of every report: the Euclidean length of each cursor report,
-or the absolute steps of each scroll or text report. Cursor output is divided
-by the pipeline's slow-motion gain, the replayed transfer gain times the
-curve's first-point sensitivity, so it reads in ball counts and lowering the
-gain doesn't hide it. Pixel quantization still makes a lower gain show a
+or the absolute steps of each scroll or text report. Every pipeline's output
+is divided by its own gain so it reads in ball counts and lowering the gain
+doesn't hide it: cursor output by the slow-motion gain, the replayed transfer
+gain times the curve's first-point sensitivity; scroll and text steps on each
+axis by the steps per count of that axis (the scroll batcher's
+`steps-per-meter`, or one step per text threshold). A gain so low that
+nothing comes out still reads 0 here, but then the intended strokes score
+100 % output error. Pixel quantization still makes a lower gain show a
 little less shake, which is real; the cost then shows in slow-stroke jitter.
 With a gain of zero the metric is unscored, which reads as worse.
 
@@ -390,38 +398,79 @@ and commit the new baseline with it. Keep both synthetic and real fixtures
 until the real set covers every case; then retire the synthetic ones in one
 commit that also moves the baseline.
 
-## Recorded scroll and text traces
+## Recorded traces: ground truth
 
-`capture.js` converts recordings of scroll and text-navigation pipelines into
-`scroll-pipeline` and `text-pipeline` traces (see
-[`trace-replay.md`](trace-replay.md#fixture-format)). They replay exactly, with
-the recorded stage chain and settings, and `--profile` changes them by stage
-`stableId`, so #109 (scroll curves) and #110 (axis locking) can be tuned on
-real motion.
+`capture.js` converts recordings of cursor, scroll, and text-navigation
+pipelines into `cursor-pipeline`, `scroll-pipeline`, and `text-pipeline`
+traces (see [`trace-replay.md`](trace-replay.md#fixture-format)). They replay
+exactly, with the recorded stage chain and settings, and `--profile` changes
+them by stage `stableId`, so #109 (scroll curves) and #110 (axis locking) can
+be tuned on real motion.
 
-Free-use recordings carry no intended axis, so the converter writes ground
-truth in three parts that don't overlap:
+A recording carries no intent, so `captureToFixtures` in
+`host/replay/capture-convert.js` is the one place that writes its ground
+truth. `options.truth` picks how:
 
-- **Labelled stretches.** `--labels labels.json` (the tuner passes
-  `options.labels` to `captureToFixtures`) names what the user meant in a
-  stretch of the recording, in device uptime milliseconds:
-  `[{ "startMs": 81200, "endMs": 82900, "activity": "scroll", "axis": "vertical" }]`.
-  `activity` is `scroll` or `text` and must match the pipeline; `axis` is
-  `horizontal` or `vertical` ("text navigation left/right" is `text` with
-  `horizontal`). Each becomes an intended stroke with that axis, scored on
-  axis lock, sideways leak, and switches. Labels must not overlap.
-- **Typing.** Motion within 100 ms of a recorded key press, outside a label,
-  is typing shake (`post-typing`, `intended: false`), scored on unintended
-  output. The window is a heuristic: the synthetic shake lasts 50 to 60 ms
-  per key, but a real stroke that starts sooner than 100 ms after typing is
-  counted as shake too. Key presses are recorded only for a pipeline whose
-  stages have a keypress guard.
-- **The rest.** Every other stretch with motion is an intended stroke
-  without an axis, so only the truth-free axis switches apply.
+- **`labels-only`** (the default, and `capture.js --truth labels-only`):
+  strokes only where labels say what the user meant. Unlabelled motion is
+  unscored.
+- **`derive`** (`--truth derive`; the tuner passes this): labels where
+  present, and strokes derived from the motion everywhere else, each tagged
+  `derived: true`, with `truth.derived: true` on the trace. Derived truth is
+  a heuristic; prefer labels for anything you tune against.
+
+**Labels.** `--labels labels.json`, or `options.labels`, names what the user
+meant in a stretch of a scroll or text recording, in device uptime
+milliseconds:
+`[{ "startMs": 81200, "endMs": 82900, "activity": "scroll", "axis": "vertical" }]`.
+`activity` is `scroll` or `text` and must match the pipeline; `axis` is
+`horizontal` or `vertical` ("text navigation left/right" is `text` with
+`horizontal`). Each becomes an intended stroke with that axis and the
+recorded ball path, scored on axis lock, sideways leak, switches, and output
+error. Labels must not overlap. Labels win: derived strokes stop at label
+boundaries. The converter warns about a label on the wrong kind of pipeline,
+one clamped to the trace it overlaps, one that covers no motion, and one that
+covers no trace at all.
+
+**Derived strokes.** Frames less than 40 ms apart form one stroke; a stroke
+starts one median frame interval before its first frame, but never inside a
+label. Then, in order:
+
+1. **Typing.** A stroke that starts within 150 ms of a recorded key press, or
+   has one inside it, is `post-typing` with `intended: false`, scored on
+   unintended output. This is one rule for every pipeline. It is longer than
+   the usual 100 ms keypress guard, so the metric sees shake the guard lets
+   through rather than only the guard's own window; the cost is that a real
+   stroke starting within 150 ms of typing counts as shake. Key presses are
+   recorded only for a pipeline whose stages have a keypress guard.
+2. **Too small.** Fewer than 5 frames or less than 0.3 mm of travel along
+   the smoothed path: no stroke.
+3. **Tremor.** Net travel less than half the smoothed path length: `tremor`
+   with `intended: false`.
+4. **Scroll and text.** Everything else is an intended `scroll` or `text`
+   stroke with the recorded path and no axis, so output error and the
+   truth-free axis switches apply but axis lock and sideways leak don't.
+5. **Flick** (cursor). A peak speed of at least 200 mm/s over a 10 ms window
+   makes a `flick`, bounded to the steps faster than a tenth of that peak
+   when they fit in 300 ms. The windowed peak reads below the true peak, so
+   the threshold sits below the generator's flick speeds.
+6. **Aim** (cursor). Otherwise `aim`, or `slow-aim` at 50 mm/s or less. A
+   steady stroke (outside its first and last fifth, its speed over 50 ms
+   windows has a standard deviation within 15 % of its mean) gets
+   `speedMmPerS` from the length of its smoothed path (positions resampled
+   every 2 ms and averaged over 5 samples) over its duration. A plain sum of
+   frame-to-frame distances reads high, because sensor noise adds length.
+
+The benchmark fixtures check these rules: with their truth stripped and
+derived, all 12 flicks, 4 tremor rests, and 8 typing bursts come back as
+such, and all 22 steady strokes are found steady with speeds within 6 %
+(`host/replay/capture.test.js`). The post-typing fixtures' reaches 20 to 150 ms
+after the last key are derived as typing, by rule 1.
 
 Limits: a recording replays only from an entered record, so a trace ends at
 a drop, a settings change, or a change of source, resolution, or link (see
 [`protocol.md`](protocol.md#drops-and-resyncs)); the converter writes no
-`intendedOutput`, so output error isn't scored on recordings; and the
+`intendedOutput`, so output error on recordings compares against the
+recorded path's ideal output; and the
 `host/tests/fixtures/*-capture-pipeline.json` regression fixtures come from
 the synthetic capture session, not a keyboard.

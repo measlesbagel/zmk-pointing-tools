@@ -200,6 +200,8 @@ static uint32_t stage_memory_ms(const struct zpt_pipeline *pipeline,
     }
     if (is_strategy(stage, "axis-constraint")) {
         const struct zpt_axis_constraint_config *config = stage->config;
+        /* It forgets its axis after the idle timeout, but a held remainder
+         * waits for the fold interval, so the longer of the two. */
         return config->idle_timeout_ms > config->fold_interval_ms ? config->idle_timeout_ms
                                                                   : config->fold_interval_ms;
     }

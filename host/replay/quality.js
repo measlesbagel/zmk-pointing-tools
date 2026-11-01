@@ -150,6 +150,39 @@ export function idealCursorOutput(fixture, stroke, profile = null) {
   return [ox, oy];
 }
 
+/* Output steps per ball count on each axis of a scroll or text pipeline,
+ * with the replay's settings: the scroll batcher's steps per millimetre,
+ * or one text step per threshold of travel. */
+function axisGains(fixture, profile) {
+  const { kind } = fixture.processor;
+  const cpi = fixture.version === 1 ? fixture.processor.settings.cpi : fixture.source.cpi;
+  const mmPerCount = 25.4 / cpi;
+  const chain = kind === "scroll-pipeline" || kind === "text-pipeline";
+  const settings = chain
+    ? Object.assign({}, ...resolveCursorStages(fixture, profile)
+      .filter(({ type }) => type === "scroll-batcher" || type === "text-nav")
+      .map((stage) => stage.settings))
+    : fixture.processor.settings;
+  if (kind === "scroll-pipeline" || kind === "composed-scroll") {
+    const perMm = (chain ? settings["steps-per-meter"] : settings.stepsPerMeter) / 1000;
+    return [perMm * mmPerCount, perMm * mmPerCount];
+  }
+  const thresholds = chain
+    ? [settings["horizontal-threshold"], settings["vertical-threshold"]]
+    : [settings.horizontalThresholdMicrometers, settings.verticalThresholdMicrometers];
+  return thresholds.map((micrometres) => (mmPerCount * 1000) / micrometres);
+}
+
+/* The output of an ideal scroll or text pipeline for a stroke's ball path:
+ * its net travel, along the intended axis when there is one, at the
+ * pipeline's own steps per count. */
+function idealAxisOutput(fixture, stroke, profile) {
+  const [gx, gy] = axisGains(fixture, profile);
+  const [x, y] = stroke.path.points.at(-1).map((value, axis) =>
+    value - stroke.path.points[0][axis]);
+  return [stroke.axis === "vertical" ? 0 : x * gx, stroke.axis === "horizontal" ? 0 : y * gy];
+}
+
 /* Ball travel along a stroke's path, in counts. */
 function pathTravel(stroke) {
   const points = stroke.path?.points ?? [];
@@ -170,6 +203,7 @@ function intendedOutput(stroke, fixture, profile) {
   if (stroke.path && fixture.processor.kind === "cursor-pipeline") {
     return idealCursorOutput(fixture, stroke, profile);
   }
+  if (stroke.path) return idealAxisOutput(fixture, stroke, profile);
   return undefined;
 }
 
@@ -239,7 +273,8 @@ function flickLag(frames, reports) {
 }
 
 /* Axis metrics against the stroke's intended axis. Without one, as for an
- * unlabelled recording, only axis switches apply: they need no truth. */
+ * unlabelled or derived recording stroke, only axis switches apply: they
+ * need no truth. */
 function axisMetrics(stroke, frames, reports) {
   const decided = frames.filter((frame) => frame.intent !== null &&
     frame.intent !== INTENT_UNDECIDED);
@@ -293,11 +328,16 @@ function strokeMetrics(stroke, frames, reports, fixture, profile) {
     }
   }
   if (!stroke.intended) {
-    /* Cursor output counts in ball counts, so lowering the gain can't hide it. */
-    const scale = cursor ? slowGain(cursorModel(fixture, profile)) : 1;
-    set("unintendedOutput", reports.reduce((total, report) =>
-      total + (cursor ? Math.hypot(report.x, report.y)
-        : Math.abs(report.x) + Math.abs(report.y)), 0) / scale);
+    /* Output counts in ball counts, so lowering the gain can't hide it. */
+    if (cursor) {
+      const scale = slowGain(cursorModel(fixture, profile));
+      set("unintendedOutput", reports.reduce((total, report) =>
+        total + Math.hypot(report.x, report.y), 0) / scale);
+    } else {
+      const [gx, gy] = axisGains(fixture, profile);
+      set("unintendedOutput", reports.reduce((total, report) =>
+        total + Math.abs(report.x) / gx + Math.abs(report.y) / gy, 0));
+    }
   }
   if (!cursor && (stroke.axis || ["scroll", "text"].includes(stroke.activity))) {
     for (const [name, value] of Object.entries(axisMetrics(stroke, frames, reports))) {

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { readdirSync, readFileSync } from "node:fs";
+
 import { captureToFixtures, decodeCaptureStream } from "./capture.js";
+import { deriveTruthStrokes } from "./capture-convert.js";
 import { encodeRunnerInput } from "./fixture.js";
 import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, parseCaptureBatch }
   from "../../web/protocol.js";
@@ -130,6 +133,43 @@ test("warns when the recording's first records were dropped", () => {
   assert.deepEqual(warnings, ["the recording starts at record 5; earlier records were dropped"]);
 });
 
+/* Derived truth against the benchmark's real truth: strip it from every
+ * benchmark fixture, derive it from the motion, and compare stroke by
+ * stroke. A derived stroke matches the real one it overlaps most. */
+test("derived truth finds the benchmark's strokes and speeds", () => {
+  const directory = new URL("../bench/fixtures/", import.meta.url);
+  const counts = { flick: [0, 0], tremor: [0, 0], typing: [0, 0], steady: [0, 0] };
+  for (const set of ["tune", "holdout"]) {
+    for (const name of readdirSync(new URL(set, directory))) {
+      const fixture = JSON.parse(readFileSync(new URL(`${set}/${name}`, directory), "utf8"));
+      const derived = deriveTruthStrokes({ ...fixture, truth: undefined });
+      for (const real of fixture.truth.strokes) {
+        const overlap = (stroke) => Math.max(0, Math.min(real.endUs, stroke.endUs) -
+          Math.max(real.startUs, stroke.startUs));
+        const match = derived.reduce((best, stroke) =>
+          (overlap(stroke) > (best ? overlap(best) : 0) ? stroke : best), null);
+        const tally = (kind, ok) => {
+          counts[kind][0] += ok ? 1 : 0;
+          counts[kind][1] += 1;
+        };
+        if (real.activity === "flick") tally("flick", match?.activity === "flick");
+        if (real.activity === "tremor") tally("tremor", match?.intended === false);
+        if (real.activity === "post-typing" && !real.intended) {
+          tally("typing", match?.intended === false);
+        }
+        if (real.activity === "slow-aim") {
+          tally("steady", match?.speedMmPerS !== undefined &&
+            Math.abs(match.speedMmPerS - real.speedMmPerS) <= 0.06 * real.speedMmPerS);
+        }
+      }
+    }
+  }
+  /* Every flick, rest tremor, and typing burst, and every slow stroke's
+   * speed within 6 %. */
+  assert.deepEqual(counts, { flick: [12, 12], tremor: [4, 4], typing: [8, 8],
+    steady: [22, 22] });
+});
+
 test("only stages the chain runner knows convert", () => {
   const other = { ...description, stages: [{ strategy: "sensor-pll", stableId: "a", fixed: {} }] };
   assert.throws(() => captureToFixtures({ description: other, records: [] }, profile),
@@ -159,10 +199,15 @@ test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", 
   const records = [entered(scroll.settingsHash), timed(CAPTURE.RECORD_KEYPRESS, 4990),
     source(800, CAPTURE.LINK_NONE), frame(5000, 0, 1), frame(5010, 0, 1), frame(5020, 0, 1),
     frame(5060, 0, 1), timed(CAPTURE.RECORD_KEYPRESS, 5100), frame(5200, 0, 1)];
+  const labels = [{ startMs: 5000, endMs: 5050, activity: "scroll", axis: "vertical" },
+    { startMs: 4000, endMs: 4100, activity: "scroll", axis: "horizontal" },
+    { startMs: 5052, endMs: 5058, activity: "scroll", axis: "horizontal" },
+    { startMs: 5150, endMs: 5400, activity: "scroll", axis: "horizontal" }];
   const { fixtures, warnings } = captureToFixtures({ description: scroll, records },
-    scrollProfile, { labels: [{ startMs: 5000, endMs: 5050, activity: "scroll",
-      axis: "vertical" }, { startMs: 6000, endMs: 6100, activity: "text", axis: "horizontal" }] });
-  assert.deepEqual(warnings, []);
+    scrollProfile, { labels });
+  assert.deepEqual(warnings, ["label 2 covers no motion in capture-left-scroll",
+    "label 3 is clamped to capture-left-scroll, which runs from 4990 ms for 211 ms",
+    "label 1 covers no trace and is dropped"]);
   const [fixture] = fixtures;
   assert.equal(fixture.processor.kind, "scroll-pipeline");
   assert.equal(fixture.processor.link, undefined);
@@ -176,14 +221,20 @@ test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", 
     ["motion", 10000], ["motion", 10000], ["motion", 10000], ["motion", 40000],
     ["keypress", 40000], ["motion", 100000]]);
   assert.match(encodeRunnerInput(fixture), /^L usb\nS normalize n\nS axis-intent i\n/m);
-  /* The label scores against its axis, motion within 100 ms of a key press
-   * is unintended, and the rest gets only truth-free metrics; a text label
-   * doesn't apply to a scroll trace. */
+  /* By default only labels are truth; the last runs past the trace's last
+   * event, so it is clamped there. */
   assert.deepEqual(fixture.truth.strokes.map(({ id, startUs, endUs, axis, intended }) =>
-    [id, startUs, endUs, axis, intended]), [
-    ["label-1", 10000, 60000, "vertical", true],
-    ["typing-1", 60000, 100000, undefined, false],
-    ["unlabelled-1", 210000, 210001, undefined, true]]);
+    [id, startUs, endUs, axis, intended]), [["label-1", 10000, 60000, "vertical", true],
+    ["label-2", 160000, 210001, "horizontal", true]]);
+  assert.equal(fixture.truth.derived, undefined);
+  /* With derive, motion outside the labels is typing: the frame between
+   * them comes within 150 ms of a key press. */
+  const derived = captureToFixtures({ description: scroll, records }, scrollProfile,
+    { labels, truth: "derive" }).fixtures[0].truth;
+  assert.equal(derived.derived, true);
+  assert.deepEqual(derived.strokes.map(({ id, activity, intended, derived: tag }) =>
+    [id, activity, intended, tag]), [["label-1", "scroll", true, undefined],
+    ["derived-2", "post-typing", false, true], ["label-3", "scroll", true, undefined]]);
   assert.throws(() => captureToFixtures({ description: scroll, records }, scrollProfile,
     { labels: [{ startMs: 1, endMs: 1, activity: "scroll", axis: "vertical" }] }), /label 0/);
 });

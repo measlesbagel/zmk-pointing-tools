@@ -41,11 +41,31 @@ const CHAIN_MODES = {
   "text-nav": { kind: "text-pipeline", mode: "text" },
 };
 const CURSOR_MODE = { kind: "cursor-pipeline", mode: "cursor" };
-/* Motion this soon after a key press counts as typing shake in an
- * unlabelled scroll or text trace (the synthetic benchmark's shake lasts
- * 50 to 60 ms per key). */
-const TYPING_SHAKE_US = 100000;
 const LABEL_AXES = ["horizontal", "vertical"];
+const TRUTH_MODES = ["labels-only", "derive"];
+/* Derived truth (docs/trace-benchmark.md, "Recorded traces: ground
+ * truth"). A rest this long ends a stroke: the acceleration stage's
+ * restart gap, which is also when firmware resyncs a recording. */
+const STROKE_GAP_US = 40000;
+/* A stroke that starts this soon after a key press, or holds one, is
+ * typing. */
+const TYPING_GAP_US = 150000;
+const MIN_FRAMES = 5;
+const MIN_TRAVEL_MM = 0.3;
+/* Net travel under this share of the path travelled: motion that goes
+ * nowhere. */
+const MIN_STRAIGHTNESS = 0.5;
+const PATH_INTERVAL_US = 2000;
+const SMOOTH_HALF_WINDOW = 2;
+const STEADY_CV = 0.15;
+const STEADY_WINDOW_US = 50000;
+const SLOW_MM_PER_S = 50;
+/* A peak averaged over FLICK_WINDOW_US reads a little under the true peak,
+ * so this sits below the 250 mm/s the benchmark calls a flick. */
+const FLICK_MM_PER_S = 200;
+const FLICK_WINDOW_US = 10000;
+const FLICK_EDGE = 0.1;
+const FLICK_MAX_US = 300000;
 
 const SIGNAL_FLAG_TRANSPORTED = 1 << 1;
 const SIGNAL_FLAG_SPAN_CLIPPED = 1 << 7;
@@ -197,13 +217,6 @@ function fixtureEvents(segment, windowMs) {
   return { events: out, spans, startMs: baseMs };
 }
 
-/* Intervals of [start, end) left after removing the cuts. */
-function subtract(intervals, cuts) {
-  return cuts.reduce((left, [cutStart, cutEnd]) => left.flatMap(([start, end]) =>
-    [[start, Math.min(end, cutStart)], [Math.max(start, cutEnd), end]]
-      .filter(([from, to]) => to > from)), intervals);
-}
-
 function validateLabels(labels) {
   for (const [index, label] of labels.entries()) {
     if (!Number.isSafeInteger(label?.startMs) || !Number.isSafeInteger(label.endMs) ||
@@ -219,38 +232,192 @@ function validateLabels(labels) {
   }
 }
 
-/* Ground truth for a scroll or text trace: labelled stretches score
- * against their axis; motion right after a key press is typing shake the
- * user didn't mean; the rest is unlabelled, and only the metrics that need
- * no truth apply to it. The strokes don't overlap. */
-function truthStrokes(fixture, startMs, mode, labels) {
+/* Motion events of a trace with absolute times. */
+function motionFrames(fixture) {
+  const times = eventTimesUs(fixture);
+  return fixture.events.flatMap((event, index) => (event[0] === "motion"
+    ? [{ tUs: times[index], x: event[2], y: event[3], spanUs: event[4] ?? 0 }] : []));
+}
+
+/* Positions every PATH_INTERVAL_US from startUs to endUs, interpolated
+ * between frames, then smoothed by a short moving average whose ends stay
+ * put, so the path keeps the stroke's net travel. */
+function strokePath(frames, startUs, endUs) {
+  const knots = [{ tUs: startUs, x: 0, y: 0 }];
+  for (const frame of frames) {
+    const last = knots.at(-1);
+    knots.push({ tUs: frame.tUs, x: last.x + frame.x, y: last.y + frame.y });
+  }
+  const raw = [];
+  let index = 0;
+  for (let tUs = startUs; ; tUs += PATH_INTERVAL_US) {
+    const t = Math.min(tUs, endUs);
+    while (index < knots.length - 2 && knots[index + 1].tUs <= t) index += 1;
+    const a = knots[index];
+    const b = knots[Math.min(index + 1, knots.length - 1)];
+    const f = b.tUs > a.tUs ? Math.min(Math.max((t - a.tUs) / (b.tUs - a.tUs), 0), 1) : 1;
+    raw.push([a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f]);
+    if (t >= endUs) break;
+  }
+  if (raw.length === 1) raw.push(raw[0]);
+  return raw.map((point, i) => {
+    if (i === 0 || i === raw.length - 1) return point;
+    const half = Math.min(SMOOTH_HALF_WINDOW, i, raw.length - 1 - i);
+    const window = raw.slice(i - half, i + half + 1);
+    return [0, 1].map((axis) => window.reduce((sum, p) => sum + p[axis], 0) / window.length);
+  }).map(([x, y]) => [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000]);
+}
+
+const stepLengths = (points) => points.slice(1).map((point, i) =>
+  Math.hypot(point[0] - points[i][0], point[1] - points[i][1]));
+const sum = (values) => values.reduce((total, value) => total + value, 0);
+
+/* Whether a path's speed, averaged over STEADY_WINDOW_US so sparse slow
+ * frames don't read as changes, stays within STEADY_CV of its mean,
+ * leaving out the first and last fifth where the ball speeds up and slows
+ * down. */
+function steady(points) {
+  const steps = windowedSpeeds(points, 1, STEADY_WINDOW_US);
+  const middle = steps.slice(Math.floor(steps.length / 5), Math.ceil((steps.length * 4) / 5));
+  if (middle.length < 5) return false;
+  const mean = sum(middle) / middle.length;
+  if (mean === 0) return false;
+  const sd = Math.sqrt(sum(middle.map((step) => (step - mean) ** 2)) / middle.length);
+  return sd / mean <= STEADY_CV;
+}
+
+/* Speed along a path in mm/s, averaged over windowUs around each point. */
+function windowedSpeeds(points, mmPerCount, windowUs = FLICK_WINDOW_US) {
+  const steps = stepLengths(points);
+  const half = Math.round(windowUs / PATH_INTERVAL_US / 2);
+  return steps.map((_, i) => {
+    const window = steps.slice(Math.max(0, i - half), i + half + 1);
+    return (sum(window) / window.length) * mmPerCount * (1e6 / PATH_INTERVAL_US);
+  });
+}
+
+/* One derived stroke from a group of frames (see docs/trace-benchmark.md,
+ * "Recorded traces: ground truth"), or null when it is too small to call. */
+function deriveStroke(frames, mode, keyTimes, mmPerCount, floorUs) {
+  /* The first frame's span reaches back over the rest before it, so the
+   * stroke starts one typical frame interval earlier instead, but not
+   * inside a label (floorUs). */
+  const gaps = frames.slice(1).map((frame, i) => frame.tUs - frames[i].tUs).sort((a, b) => a - b);
+  const leadUs = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1000;
+  const startUs = Math.max(floorUs, frames[0].tUs - Math.min(frames[0].spanUs || leadUs, leadUs));
+  const endUs = frames.at(-1).tUs + 1;
+  const base = { startUs, endUs, derived: true };
+  /* Typing: the hand is on the keys, whatever the ball does. */
+  if (keyTimes.some((key) => key <= endUs && startUs - key < TYPING_GAP_US)) {
+    return { ...base, activity: "post-typing", intended: false };
+  }
+  const points = strokePath(frames, startUs, endUs);
+  const travel = sum(stepLengths(points));
+  if (frames.length < MIN_FRAMES || travel * mmPerCount < MIN_TRAVEL_MM) return null;
+  /* Motion that goes nowhere, such as tremor, isn't meant. */
+  if (Math.hypot(...points.at(-1)) < MIN_STRAIGHTNESS * travel) {
+    return { ...base, activity: "tremor", intended: false };
+  }
+  if (mode !== "cursor") return { ...base, activity: mode, intended: true, path: {
+    intervalUs: PATH_INTERVAL_US, points } };
+  const speeds = windowedSpeeds(points, mmPerCount);
+  const peak = Math.max(...speeds);
+  if (peak >= FLICK_MM_PER_S) {
+    /* A flick spans the steps faster than a tenth of its peak. */
+    const first = speeds.findIndex((speed) => speed >= peak * FLICK_EDGE);
+    const last = speeds.findLastIndex((speed) => speed >= peak * FLICK_EDGE);
+    const flickStart = startUs + first * PATH_INTERVAL_US;
+    const flickEnd = Math.min(endUs, startUs + (last + 1) * PATH_INTERVAL_US);
+    if (flickEnd - flickStart <= FLICK_MAX_US) {
+      const inside = frames.filter((frame) => frame.tUs > flickStart && frame.tUs <= flickEnd);
+      return { ...base, startUs: flickStart, endUs: flickEnd, activity: "flick", intended: true,
+        path: { intervalUs: PATH_INTERVAL_US, points: strokePath(inside, flickStart, flickEnd) } };
+    }
+  }
+  const isSteady = steady(points);
+  const speed = (travel * mmPerCount * 1e6) / (endUs - startUs);
+  return { ...base, activity: isSteady && speed <= SLOW_MM_PER_S ? "slow-aim" : "aim",
+    intended: true, ...(isSteady ? { speedMmPerS: Math.round(speed * 10) / 10 } : {}),
+    path: { intervalUs: PATH_INTERVAL_US, points } };
+}
+
+const traceMode = (fixture) => ({ "scroll-pipeline": "scroll", "composed-scroll": "scroll",
+  "text-pipeline": "text", "composed-text": "text" }[fixture.processor.kind] ?? "cursor");
+
+/* Ground truth derived from a trace's own motion for the stretches outside
+ * cuts ([startUs, endUs) intervals that labels already cover). */
+export function deriveTruthStrokes(fixture, cuts = []) {
+  const mode = traceMode(fixture);
+  const times = eventTimesUs(fixture);
+  const keyTimes = fixture.events.flatMap((event, index) =>
+    (event[0] === "keypress" ? [times[index]] : []));
+  const cpi = fixture.version === 1 ? fixture.processor.settings.cpi : fixture.source.cpi;
+  const inCut = (tUs) => cuts.some(([start, end]) => tUs >= start && tUs < end);
+  /* A label boundary also ends a stroke. */
+  const groups = [];
+  for (const frame of motionFrames(fixture)) {
+    if (inCut(frame.tUs)) {
+      groups.push(null);
+      continue;
+    }
+    const current = groups.at(-1);
+    if (current && frame.tUs - current.at(-1).tUs < STROKE_GAP_US) current.push(frame);
+    else groups.push([frame]);
+  }
+  return groups.filter(Boolean)
+    .map((frames) => deriveStroke(frames, mode, keyTimes, 25.4 / cpi,
+      Math.max(0, ...cuts.map(([, end]) => end).filter((end) => end <= frames[0].tUs))))
+    .filter(Boolean);
+}
+
+/* Ground truth for a trace from labels and, with derive, from its own
+ * motion elsewhere. Returns the strokes, sorted and numbered, or none. */
+function traceTruth(fixture, labelled, derive) {
+  const strokes = [...labelled];
+  if (derive) {
+    strokes.push(...deriveTruthStrokes(fixture,
+      labelled.map((label) => [label.startUs, label.endUs])));
+  }
+  if (strokes.length === 0) return undefined;
+  strokes.sort((a, b) => a.startUs - b.startUs);
+  const derived = strokes.some((stroke) => stroke.derived);
+  return { strokes: strokes.map((stroke, index) => ({ id: `${stroke.derived ? "derived"
+    : "label"}-${index + 1}`, ...stroke })), ...(derived ? { derived: true } : {}) };
+}
+
+/* Labelled strokes of one trace, clamped to it, with the ball path inside
+ * them; warnings name labels that don't fit. */
+function labelledStrokes(fixture, startMs, mode, labels, warnings) {
   const times = eventTimesUs(fixture);
   const endUs = times.at(-1) + 1;
-  const toUs = (ms) => Math.min(Math.max(((ms - startMs) | 0) * 1000, 0), endUs);
-  const labelled = labels.filter((label) => label.activity === mode)
-    .map((label) => ({ ...label, startUs: toUs(label.startMs), endUs: toUs(label.endMs) }))
-    .filter((label) => label.endUs > label.startUs);
-  const cuts = labelled.map((label) => [label.startUs, label.endUs]);
-  const keys = fixture.events.flatMap((event, index) =>
-    event[0] === "keypress" ? [[times[index], Math.min(times[index] + TYPING_SHAKE_US, endUs)]]
-      : []);
-  const typing = subtract(keys.reduce((merged, [start, end]) => {
-    const last = merged.at(-1);
-    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
-    else merged.push([start, end]);
-    return merged;
-  }, []), cuts);
-  const moved = ([start, end]) => fixture.events.some((event, index) =>
-    event[0] === "motion" && times[index] >= start && times[index] < end);
-  const unlabelled = subtract([[0, endUs]], [...cuts, ...typing]).filter(moved);
-  return [
-    ...labelled.map((label, index) => ({ id: `label-${index + 1}`, startUs: label.startUs,
-      endUs: label.endUs, activity: mode, intended: true, axis: label.axis })),
-    ...typing.filter(moved).map(([start, end], index) => ({ id: `typing-${index + 1}`,
-      startUs: start, endUs: end, activity: "post-typing", intended: false })),
-    ...unlabelled.map(([start, end], index) => ({ id: `unlabelled-${index + 1}`,
-      startUs: start, endUs: end, activity: mode, intended: true })),
-  ].sort((a, b) => a.startUs - b.startUs);
+  const frames = motionFrames(fixture);
+  const result = [];
+  for (const [index, label] of labels.entries()) {
+    const from = ((label.startMs - startMs) | 0) * 1000;
+    const to = ((label.endMs - startMs) | 0) * 1000;
+    if (to <= 0 || from >= endUs) continue;
+    if (label.activity !== mode) {
+      warnings.push(`label ${index} (${label.activity}) is ignored on ${fixture.id}, a ${mode} ` +
+        "trace");
+      label.used = true;
+      continue;
+    }
+    label.used = true;
+    const startUs = Math.max(from, 0);
+    const stopUs = Math.min(to, endUs);
+    if (startUs !== from || stopUs !== to) {
+      warnings.push(`label ${index} is clamped to ${fixture.id}, which runs from ` +
+        `${startMs} ms for ${Math.ceil(endUs / 1000)} ms`);
+    }
+    const inside = frames.filter((frame) => frame.tUs >= startUs && frame.tUs < stopUs);
+    if (inside.length === 0) {
+      warnings.push(`label ${index} covers no motion in ${fixture.id}`);
+      continue;
+    }
+    result.push({ startUs, endUs: stopUs, activity: mode, intended: true, axis: label.axis,
+      path: { intervalUs: PATH_INTERVAL_US, points: strokePath(inside, startUs, stopUs) } });
+  }
+  return result;
 }
 
 /* Fixture v2 traces from a decoded capture and the settings it ran with:
@@ -259,7 +426,9 @@ function truthStrokes(fixture, startMs, mode, labels) {
  * options.labels, for scroll and text pipelines, lists stretches whose
  * intended axis the user or an agent named: { startMs, endMs, activity:
  * "scroll" | "text", axis: "horizontal" | "vertical" } in device uptime.
- * Returns { fixtures, warnings }. */
+ * options.truth is "labels-only" (the default: truth only from labels) or
+ * "derive" (labels where they apply, and strokes derived from the motion
+ * elsewhere, marked derived). Returns { fixtures, warnings }. */
 export function captureToFixtures(capture, profiles, options = {}) {
   const { description, records } = capture;
   profiles = Array.isArray(profiles) ? profiles : [profiles];
@@ -267,8 +436,12 @@ export function captureToFixtures(capture, profiles, options = {}) {
     validateProfile(profile);
     chainStages(description, profile);
   }
-  const labels = options.labels ?? [];
+  const labels = (options.labels ?? []).map((label) => ({ ...label }));
   validateLabels(labels);
+  const truthMode = options.truth ?? "labels-only";
+  if (!TRUTH_MODES.includes(truthMode)) {
+    throw new Error(`options.truth must be ${TRUTH_MODES.join(" or ")}`);
+  }
   const { kind, mode } = CHAIN_MODES[description.stages.at(-1)?.strategy] ?? CURSOR_MODE;
   /* The stages that take a keypress guard share one window. */
   const windowMs = Math.max(0, ...description.stages.map((stage) =>
@@ -331,10 +504,13 @@ export function captureToFixtures(capture, profiles, options = {}) {
       },
       events,
     };
-    if (mode !== "cursor") {
-      fixture.truth = { strokes: truthStrokes(fixture, startMs, mode, labels) };
-    }
+    const truth = traceTruth(fixture,
+      labelledStrokes(fixture, startMs, mode, labels, warnings), truthMode === "derive");
+    if (truth) fixture.truth = truth;
     return validateFixture(fixture, fixture.id);
   });
+  for (const [index, label] of labels.entries()) {
+    if (!label.used) warnings.push(`label ${index} covers no trace and is dropped`);
+  }
   return { fixtures, warnings };
 }
