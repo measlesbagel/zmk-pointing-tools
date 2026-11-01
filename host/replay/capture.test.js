@@ -130,10 +130,62 @@ test("warns when the recording's first records were dropped", () => {
   assert.deepEqual(warnings, ["the recording starts at record 5; earlier records were dropped"]);
 });
 
-test("only cursor pipelines convert", () => {
-  const scroll = { ...description, stages: [{ strategy: "axis-intent", stableId: "a", fixed: {} }] };
-  assert.throws(() => captureToFixtures({ description: scroll, records: [] }, profile),
-    /isn't a cursor stage/);
+test("only stages the chain runner knows convert", () => {
+  const other = { ...description, stages: [{ strategy: "sensor-pll", stableId: "a", fixed: {} }] };
+  assert.throws(() => captureToFixtures({ description: other, records: [] }, profile),
+    /doesn't replay/);
+});
+
+test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", () => {
+  const guard = { "suppress-after-keypress-ms": 40 };
+  const scrollStages = [
+    { strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
+    { strategy: "axis-intent", stableId: "i", fixed: { policy: 1, ...guard } },
+    { strategy: "axis-constraint", stableId: "c", fixed: guard },
+    { strategy: "scroll-batcher", stableId: "b", fixed: guard },
+  ];
+  const parameters = (entries) => entries.map(([key, value]) => ({ key, value }));
+  const scrollProfile = { schema: "zmk-pointing-tools/tuning-profile", version: 1, targets: [
+    { stableId: "i", parameters: parameters([["engage-ratio", 200], ["release-ratio", 150],
+      ["activation-distance", 400], ["window", 100], ["idle-timeout", 30]]) },
+    { stableId: "c", parameters: parameters([["discard-unclassified", 0],
+      ["idle-timeout", 30], ["fold-interval", 20]]) },
+    { stableId: "b", parameters: parameters([["steps-per-meter", 3000],
+      ["report-interval", 20]]) },
+  ] };
+  const scroll = { pipelineId: 1, stableId: "left-scroll", stages: scrollStages,
+    settingsHash: captureSettingsHash(scrollProfile, scrollStages.map((stage) => stage.stableId)) };
+  sequence = 0;
+  const records = [entered(scroll.settingsHash), timed(CAPTURE.RECORD_KEYPRESS, 4990),
+    source(800, CAPTURE.LINK_NONE), frame(5000, 0, 1), frame(5010, 0, 1), frame(5020, 0, 1),
+    frame(5060, 0, 1), timed(CAPTURE.RECORD_KEYPRESS, 5100), frame(5200, 0, 1)];
+  const { fixtures, warnings } = captureToFixtures({ description: scroll, records },
+    scrollProfile, { labels: [{ startMs: 5000, endMs: 5050, activity: "scroll",
+      axis: "vertical" }, { startMs: 6000, endMs: 6100, activity: "text", axis: "horizontal" }] });
+  assert.deepEqual(warnings, []);
+  const [fixture] = fixtures;
+  assert.equal(fixture.processor.kind, "scroll-pipeline");
+  assert.equal(fixture.processor.link, undefined);
+  assert.equal(fixture.metadata.mode, "scroll");
+  assert.deepEqual(fixture.processor.stages[1].settings, { "engage-ratio": 200,
+    "release-ratio": 150, "activation-distance": 400, window: 100, "idle-timeout": 30,
+    policy: 1, "suppress-after-keypress-ms": 40 });
+  /* The guard window comes from the scroll stages, so the key press before
+   * the first frame stays. */
+  assert.deepEqual(fixture.events.map((event) => event.slice(0, 2)), [["keypress", 0],
+    ["motion", 10000], ["motion", 10000], ["motion", 10000], ["motion", 40000],
+    ["keypress", 40000], ["motion", 100000]]);
+  assert.match(encodeRunnerInput(fixture), /^L usb\nS normalize n\nS axis-intent i\n/m);
+  /* The label scores against its axis, motion within 100 ms of a key press
+   * is unintended, and the rest gets only truth-free metrics; a text label
+   * doesn't apply to a scroll trace. */
+  assert.deepEqual(fixture.truth.strokes.map(({ id, startUs, endUs, axis, intended }) =>
+    [id, startUs, endUs, axis, intended]), [
+    ["label-1", 10000, 60000, "vertical", true],
+    ["typing-1", 60000, 100000, undefined, false],
+    ["unlabelled-1", 210000, 210001, undefined, true]]);
+  assert.throws(() => captureToFixtures({ description: scroll, records }, scrollProfile,
+    { labels: [{ startMs: 1, endMs: 1, activity: "scroll", axis: "vertical" }] }), /label 0/);
 });
 
 test("parses capture batches with consecutive sequences", () => {

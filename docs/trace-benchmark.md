@@ -35,7 +35,7 @@ This scores every fixture under `host/bench/fixtures` against
 
 | Option | Effect |
 | --- | --- |
-| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every cursor fixture's settings, matched by stage `stableId`. Scroll and text fixtures are not affected. |
+| `--profile <file>` | Apply a tuner profile export (`zmk-pointing-tools/tuning-profile` v1) on top of every stage-chain fixture's settings (cursor, and recorded scroll and text pipelines), matched by stage `stableId`. Composed scroll, text, and noise fixtures are not affected. |
 | `--sensor-spans` | Give the pipeline each frame's sensor sample span even where the firmware path has none today (what-if for #113). |
 | `--json <file>` | Write the full report: per-set scores, per-fixture and per-stroke values, and the baseline comparison. |
 | `--markdown <file>` | Write the tables as Markdown (CI appends this to the job summary). |
@@ -47,17 +47,19 @@ To see what a setting does, score it as a profile, for example
 `--profile host/bench/profiles/short-rise.json`; the `change` column then
 reads against the committed baseline.
 
-`--profile` changes only cursor fixtures; scroll and text fixtures keep
-their own settings, and the benchmark says so when it runs. It checks the
-profile first, so a mistake can't silently score as the baseline:
+`--profile` changes only stage-chain fixtures; composed scroll, text, and
+noise fixtures keep their own settings, and the benchmark says so when it
+runs. It checks the profile first, so a mistake can't silently score as the
+baseline:
 
 - A duplicate target or a duplicate parameter in one target is an error
   (exit code 2).
-- If none of the profile's cursor targets matches a stage `stableId` in any
+- If none of the profile's targets matches a stage `stableId` in any
   fixture, that is an error too: the profile would change nothing.
 - A full tuner export also lists targets the fixtures don't have, such as a
-  sniper pipeline's stages or scroll and text stages. Those are ignored with
-  a warning, so check the warnings when only some targets apply.
+  sniper pipeline's stages, or scroll and text stages when no recorded scroll
+  or text trace is scored. Those are ignored with a warning, so check the
+  warnings when only some targets apply.
 - A parameter key a matched stage doesn't publish, or a value out of its
   range, fails the replay.
 
@@ -360,8 +362,9 @@ Applies to scroll and text strokes with an `axis`. The share of output steps
 
 ### Mid-stroke switches (`axisSwitches`)
 
-Applies to scroll and text strokes with an `axis`. The number of times the
-decided intent changes between consecutive decided input frames of the stroke.
+Applies to scroll and text strokes, with or without an `axis`: it needs no
+truth. The number of times the decided intent changes between consecutive
+decided input frames of the stroke.
 
 ## Adding real recordings
 
@@ -386,3 +389,39 @@ Put it in `tune/` or `holdout/` by the convention above, run the benchmark,
 and commit the new baseline with it. Keep both synthetic and real fixtures
 until the real set covers every case; then retire the synthetic ones in one
 commit that also moves the baseline.
+
+## Recorded scroll and text traces
+
+`capture.js` converts recordings of scroll and text-navigation pipelines into
+`scroll-pipeline` and `text-pipeline` traces (see
+[`trace-replay.md`](trace-replay.md#fixture-format)). They replay exactly, with
+the recorded stage chain and settings, and `--profile` changes them by stage
+`stableId`, so #109 (scroll curves) and #110 (axis locking) can be tuned on
+real motion.
+
+Free-use recordings carry no intended axis, so the converter writes ground
+truth in three parts that don't overlap:
+
+- **Labelled stretches.** `--labels labels.json` (the tuner passes
+  `options.labels` to `captureToFixtures`) names what the user meant in a
+  stretch of the recording, in device uptime milliseconds:
+  `[{ "startMs": 81200, "endMs": 82900, "activity": "scroll", "axis": "vertical" }]`.
+  `activity` is `scroll` or `text` and must match the pipeline; `axis` is
+  `horizontal` or `vertical` ("text navigation left/right" is `text` with
+  `horizontal`). Each becomes an intended stroke with that axis, scored on
+  axis lock, sideways leak, and switches. Labels must not overlap.
+- **Typing.** Motion within 100 ms of a recorded key press, outside a label,
+  is typing shake (`post-typing`, `intended: false`), scored on unintended
+  output. The window is a heuristic: the synthetic shake lasts 50 to 60 ms
+  per key, but a real stroke that starts sooner than 100 ms after typing is
+  counted as shake too. Key presses are recorded only for a pipeline whose
+  stages have a keypress guard.
+- **The rest.** Every other stretch with motion is an intended stroke
+  without an axis, so only the truth-free axis switches apply.
+
+Limits: a recording replays only from an entered record, so a trace ends at
+a drop, a settings change, or a change of source, resolution, or link (see
+[`protocol.md`](protocol.md#drops-and-resyncs)); the converter writes no
+`intendedOutput`, so output error isn't scored on recordings; and the
+`host/tests/fixtures/*-capture-pipeline.json` regression fixtures come from
+the synthetic capture session, not a keyboard.

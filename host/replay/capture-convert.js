@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 
 /* Turns a firmware input capture (docs/protocol.md, "Input capture") into
- * fixture v2 traces that replay through the cursor runner. capture.js wraps
+ * fixture v2 traces of cursor, scroll, or text pipelines that replay
+ * through the stage-chain runner. capture.js wraps
  * it as a command; the tuner loads it as is from the Pages build's replay/
  * module, so it has no Node imports. host/wasm/build.sh rewrites the
  * protocol import below for that layout, where replay/ sits next to the
  * tuner's protocol.js. */
 
-import { FIXTURE_SCHEMA, validateFixture, validateProfile } from "./fixture.js";
+import { FIXTURE_SCHEMA, eventTimesUs, validateFixture, validateProfile } from "./fixture.js";
 import {
   CAPTURE,
   FrameDecoder,
@@ -20,7 +21,7 @@ import {
   parseDescribe,
 } from "../../web/protocol.js";
 
-/* Firmware stage strategies and the cursor runner's stage types. */
+/* Firmware stage strategies and the chain runner's stage types. */
 const STAGE_TYPES = {
   "orthogonal-orientation": "orientation",
   "resolution-normalize-mm": "normalize",
@@ -29,7 +30,22 @@ const STAGE_TYPES = {
   "cursor-transfer": "transfer",
   "cursor-quantizer": "quantizer",
   "cursor-coalescer": "coalescer",
+  "axis-intent": "axis-intent",
+  "axis-constraint": "axis-constraint",
+  "scroll-batcher": "scroll-batcher",
+  "text-nav": "text-nav",
 };
+/* A pipeline's fixture kind and mode follow from its last stage. */
+const CHAIN_MODES = {
+  "scroll-batcher": { kind: "scroll-pipeline", mode: "scroll" },
+  "text-nav": { kind: "text-pipeline", mode: "text" },
+};
+const CURSOR_MODE = { kind: "cursor-pipeline", mode: "cursor" };
+/* Motion this soon after a key press counts as typing shake in an
+ * unlabelled scroll or text trace (the synthetic benchmark's shake lasts
+ * 50 to 60 ms per key). */
+const TYPING_SHAKE_US = 100000;
+const LABEL_AXES = ["horizontal", "vertical"];
 
 const SIGNAL_FLAG_TRANSPORTED = 1 << 1;
 const SIGNAL_FLAG_SPAN_CLIPPED = 1 << 7;
@@ -69,13 +85,13 @@ function matchingProfile(description, profiles, settingsHash) {
   return profiles.find((profile) => captureSettingsHash(profile, stageIds) === settingsHash);
 }
 
-function cursorStages(description, profile) {
+function chainStages(description, profile) {
   const targets = new Map(profile.targets.map((target) => [target.stableId, target]));
   return description.stages.map((stage) => {
     const type = STAGE_TYPES[stage.strategy];
     if (type === undefined) {
       throw new Error(`${description.stableId}: stage ${stage.stableId} (${stage.strategy}) ` +
-        "isn't a cursor stage; only cursor pipelines replay so far");
+        "doesn't replay; only cursor, scroll, and text pipeline stages do");
     }
     const tuned = targets.get(stage.stableId)?.parameters ?? [];
     const settings = {
@@ -181,19 +197,82 @@ function fixtureEvents(segment, windowMs) {
   return { events: out, spans, startMs: baseMs };
 }
 
+/* Intervals of [start, end) left after removing the cuts. */
+function subtract(intervals, cuts) {
+  return cuts.reduce((left, [cutStart, cutEnd]) => left.flatMap(([start, end]) =>
+    [[start, Math.min(end, cutStart)], [Math.max(start, cutEnd), end]]
+      .filter(([from, to]) => to > from)), intervals);
+}
+
+function validateLabels(labels) {
+  for (const [index, label] of labels.entries()) {
+    if (!Number.isSafeInteger(label?.startMs) || !Number.isSafeInteger(label.endMs) ||
+        label.endMs <= label.startMs || !["scroll", "text"].includes(label.activity) ||
+        !LABEL_AXES.includes(label.axis)) {
+      throw new Error(`label ${index} needs startMs < endMs (device uptime), activity scroll ` +
+        "or text, and axis horizontal or vertical");
+    }
+  }
+  const sorted = [...labels].sort((a, b) => a.startMs - b.startMs);
+  if (sorted.some((label, index) => index > 0 && label.startMs < sorted[index - 1].endMs)) {
+    throw new Error("labels overlap");
+  }
+}
+
+/* Ground truth for a scroll or text trace: labelled stretches score
+ * against their axis; motion right after a key press is typing shake the
+ * user didn't mean; the rest is unlabelled, and only the metrics that need
+ * no truth apply to it. The strokes don't overlap. */
+function truthStrokes(fixture, startMs, mode, labels) {
+  const times = eventTimesUs(fixture);
+  const endUs = times.at(-1) + 1;
+  const toUs = (ms) => Math.min(Math.max(((ms - startMs) | 0) * 1000, 0), endUs);
+  const labelled = labels.filter((label) => label.activity === mode)
+    .map((label) => ({ ...label, startUs: toUs(label.startMs), endUs: toUs(label.endMs) }))
+    .filter((label) => label.endUs > label.startUs);
+  const cuts = labelled.map((label) => [label.startUs, label.endUs]);
+  const keys = fixture.events.flatMap((event, index) =>
+    event[0] === "keypress" ? [[times[index], Math.min(times[index] + TYPING_SHAKE_US, endUs)]]
+      : []);
+  const typing = subtract(keys.reduce((merged, [start, end]) => {
+    const last = merged.at(-1);
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+    return merged;
+  }, []), cuts);
+  const moved = ([start, end]) => fixture.events.some((event, index) =>
+    event[0] === "motion" && times[index] >= start && times[index] < end);
+  const unlabelled = subtract([[0, endUs]], [...cuts, ...typing]).filter(moved);
+  return [
+    ...labelled.map((label, index) => ({ id: `label-${index + 1}`, startUs: label.startUs,
+      endUs: label.endUs, activity: mode, intended: true, axis: label.axis })),
+    ...typing.filter(moved).map(([start, end], index) => ({ id: `typing-${index + 1}`,
+      startUs: start, endUs: end, activity: "post-typing", intended: false })),
+    ...unlabelled.map(([start, end], index) => ({ id: `unlabelled-${index + 1}`,
+      startUs: start, endUs: end, activity: mode, intended: true })),
+  ].sort((a, b) => a.startUs - b.startUs);
+}
+
 /* Fixture v2 traces from a decoded capture and the settings it ran with:
  * one profile, or several when settings changed while recording. A trace
  * whose settings hash no profile matches is skipped with a warning.
+ * options.labels, for scroll and text pipelines, lists stretches whose
+ * intended axis the user or an agent named: { startMs, endMs, activity:
+ * "scroll" | "text", axis: "horizontal" | "vertical" } in device uptime.
  * Returns { fixtures, warnings }. */
 export function captureToFixtures(capture, profiles, options = {}) {
   const { description, records } = capture;
   profiles = Array.isArray(profiles) ? profiles : [profiles];
   for (const profile of profiles) {
     validateProfile(profile);
-    cursorStages(description, profile);
+    chainStages(description, profile);
   }
-  const windowMs = description.stages.find((stage) => stage.strategy === "coherent-displacement")
-    ?.fixed["suppress-after-keypress-ms"] ?? 0;
+  const labels = options.labels ?? [];
+  validateLabels(labels);
+  const { kind, mode } = CHAIN_MODES[description.stages.at(-1)?.strategy] ?? CURSOR_MODE;
+  /* The stages that take a keypress guard share one window. */
+  const windowMs = Math.max(0, ...description.stages.map((stage) =>
+    stage.fixed["suppress-after-keypress-ms"] ?? 0));
   const warnings = [];
   if (capture.skipped > 0) {
     warnings.push(`${capture.skipped} delta frames had no frame to follow and were skipped`);
@@ -224,7 +303,7 @@ export function captureToFixtures(capture, profiles, options = {}) {
       description: options.description ??
         `Input capture of pipeline ${description.stableId}`,
       metadata: {
-        mode: "cursor",
+        mode,
         synthetic: false,
         provenance: options.provenance ?? "firmware input capture (host/replay/capture.js)",
         capture: {
@@ -243,13 +322,18 @@ export function captureToFixtures(capture, profiles, options = {}) {
         span: spans ? "sensor" : "none",
       },
       processor: {
-        kind: "cursor-pipeline",
-        link: segment.source.link === CAPTURE.LINK_BLE ? "ble" : "usb",
-        stages: cursorStages(description, profile),
+        kind,
+        /* Only a cursor coalescer reads the link. */
+        ...(kind !== "cursor-pipeline" && segment.source.link === CAPTURE.LINK_NONE ? {}
+          : { link: segment.source.link === CAPTURE.LINK_BLE ? "ble" : "usb" }),
+        stages: chainStages(description, profile),
         profile,
       },
       events,
     };
+    if (mode !== "cursor") {
+      fixture.truth = { strokes: truthStrokes(fixture, startMs, mode, labels) };
+    }
     return validateFixture(fixture, fixture.id);
   });
   return { fixtures, warnings };

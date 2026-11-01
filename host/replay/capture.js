@@ -2,11 +2,12 @@
 /* SPDX-License-Identifier: MIT */
 
 /* Turns a firmware input capture (docs/protocol.md, "Input capture") into
- * fixture v2 traces that replay through the cursor runner.
+ * fixture v2 traces of cursor, scroll, or text pipelines that replay
+ * through the stage-chain runner.
  *
  *   node host/replay/capture.js --stream capture.bin --profile a.json \
  *     [--profile b.json …] --out trace.json [--id my-trace] [--device right-ball] \
- *     [--provenance "…"]
+ *     [--provenance "…"] [--labels labels.json]
  *
  * The stream is the device's protocol bytes as received: a capture
  * description (0x8d) and the capture batches (0x92) of one recording; other
@@ -15,7 +16,10 @@
  * recording, such as the two sides of an A/B comparison. A recording
  * becomes one trace per stretch the pipeline ran unchanged, each with the
  * profile whose settings hash its entered record carries; see
- * captureToFixtures in capture-convert.js, which the tuner shares. */
+ * captureToFixtures in capture-convert.js, which the tuner shares.
+ * --labels names the intended axis of stretches of a scroll or text
+ * recording: a JSON list of { startMs, endMs, activity, axis } in device
+ * uptime (docs/trace-benchmark.md, "Recorded scroll and text traces"). */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,6 +39,7 @@ function main() {
       id: { type: "string" },
       device: { type: "string" },
       provenance: { type: "string" },
+      labels: { type: "string" },
     },
   });
   if (!values.stream || !values.profile || !values.out) {
@@ -44,7 +49,8 @@ function main() {
   }
   const capture = decodeCaptureStream(new Uint8Array(readFileSync(values.stream)));
   const profiles = values.profile.map((path) => JSON.parse(readFileSync(path, "utf8")));
-  const { fixtures, warnings } = captureToFixtures(capture, profiles, values);
+  const labels = values.labels ? JSON.parse(readFileSync(values.labels, "utf8")) : [];
+  const { fixtures, warnings } = captureToFixtures(capture, profiles, { ...values, labels });
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   fixtures.forEach((fixture, index) => {
     const path = fixtures.length === 1 ? values.out

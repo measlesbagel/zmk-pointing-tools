@@ -152,6 +152,29 @@ add_test(
     --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
     --buffer 512 --interval-us 15000 --expect drops
 )
+foreach(mode scroll text)
+  add_test(
+    NAME capture_replay_${mode}
+    COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+      --session "$<TARGET_FILE:capture_session>"
+      --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+      --mode ${mode}
+  )
+  add_test(
+    NAME capture_replay_${mode}_full_buffer
+    COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+      --session "$<TARGET_FILE:capture_session>"
+      --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+      --mode ${mode} --buffer 512 --interval-us 15000 --expect drops
+  )
+endforeach()
+add_test(
+  NAME capture_replay_text_horizontal
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+    --mode text-horizontal
+)
 add_test(
   NAME capture_replay_wraparound
   COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
