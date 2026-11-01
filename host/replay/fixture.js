@@ -310,6 +310,14 @@ function legacyConfiguration(fixture) {
     settings.suppressAfterKeypressMs];
 }
 
+/* Which runner replays a fixture: noisePipeline, scrollPipeline,
+ * textPipeline, or cursorPipeline. */
+export const runnerFor = (fixture) => ({
+  "composed-scroll": "scrollPipeline",
+  "composed-text": "textPipeline",
+  "cursor-pipeline": "cursorPipeline",
+}[fixture.processor.kind] ?? "noisePipeline");
+
 /* Runner input. The cursor runner takes microsecond times and sample spans;
  * the other runners take the millisecond arrival times firmware sees. */
 export function encodeRunnerInput(fixture, overrideProfile = null) {
