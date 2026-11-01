@@ -262,9 +262,7 @@ static int add_stage(struct replay *replay, const char *type_name, const char *s
             struct replay_stage *stage = &replay->replay_stages[replay->stage_count++];
             stage->type = (enum stage_type)type;
             memcpy(stage->stable_id, stable_id, id_length + 1U);
-            if (type == STAGE_GATE) {
-                stage->config.gate.suppression = &replay->suppression;
-            } else if (type == STAGE_INTENT) {
+            if (type == STAGE_INTENT) {
                 stage->config.intent.policy = ZPT_AXIS_POLICY_ADAPTIVE;
             } else if (type == STAGE_COALESCER) {
                 stage->config.coalescer.current_link = current_link;
@@ -436,7 +434,12 @@ static int build_pipeline(struct replay *replay) {
         };
         const struct zpt_suppression_policy *guard =
             source->suppress_after_keypress_ms > 0U ? &replay->suppression : NULL;
-        if (source->type == STAGE_INTENT) {
+        /* Only stages whose own window is set reference the guard, as in
+         * firmware, where a stage without a suppression property ignores
+         * key presses whatever its neighbours do. */
+        if (source->type == STAGE_GATE) {
+            source->config.gate.suppression = guard;
+        } else if (source->type == STAGE_INTENT) {
             source->config.intent.suppression = guard;
         } else if (source->type == STAGE_CONSTRAINT) {
             source->config.constraint.suppression = guard;

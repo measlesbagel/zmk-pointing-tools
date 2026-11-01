@@ -24,7 +24,9 @@
  * The mode picks the pipeline: cursor (the default), or scroll or text, a
  * chain of axis intent, axis constraint, and the scroll batcher or text
  * navigation, all under the same keypress guard and with the adaptive axis
- * policy; text-horizontal is the text chain locked to the horizontal axis.
+ * policy; scroll-gated puts a motion gate without a keypress guard in front
+ * of the guarded scroll stages; text-horizontal is the text chain locked to
+ * the horizontal axis.
  *
  * Prints one JSON object: the protocol bytes a host would receive (the
  * capture description and batches, as hex), the settings as a tuner
@@ -114,6 +116,8 @@ enum session_mode { MODE_CURSOR, MODE_SCROLL, MODE_TEXT };
 struct session {
     enum session_mode mode;
     enum zpt_axis_policy policy;
+    /* A motion gate without a keypress guard in front of the axis stages. */
+    bool unguarded_gate;
     uint32_t now_us;
     bool recording;
     bool have_keypress;
@@ -370,16 +374,21 @@ static int apply_settings(const struct tuned_stage *stage) {
 static const struct tuned_stage *tuned_stages(size_t *count) {
     static struct tuned_stage stages[4];
     if (session.mode != MODE_CURSOR) {
-        stages[0] = (struct tuned_stage){"axis-intent", &zpt_axis_intent_tuning_ops,
-                                         &session.intent, intent_settings, 5};
-        stages[1] = (struct tuned_stage){"axis-constraint", &zpt_axis_constraint_tuning_ops,
-                                         &session.constraint, constraint_settings, 3};
-        stages[2] = session.mode == MODE_SCROLL
-                        ? (struct tuned_stage){"scroll-batcher", &zpt_scroll_batcher_tuning_ops,
-                                               &session.batcher, batcher_settings, 2}
-                        : (struct tuned_stage){"text-nav", &zpt_text_nav_tuning_ops, &session.text,
-                                               text_settings, 3};
-        *count = 3;
+        size_t n = 0;
+        if (session.unguarded_gate) {
+            stages[n++] = (struct tuned_stage){"axis-gate", &zpt_coherent_displacement_tuning_ops,
+                                               &session.gate, gate_settings, 5};
+        }
+        stages[n++] = (struct tuned_stage){"axis-intent", &zpt_axis_intent_tuning_ops,
+                                           &session.intent, intent_settings, 5};
+        stages[n++] = (struct tuned_stage){"axis-constraint", &zpt_axis_constraint_tuning_ops,
+                                           &session.constraint, constraint_settings, 3};
+        stages[n++] = session.mode == MODE_SCROLL
+                          ? (struct tuned_stage){"scroll-batcher", &zpt_scroll_batcher_tuning_ops,
+                                                 &session.batcher, batcher_settings, 2}
+                          : (struct tuned_stage){"text-nav", &zpt_text_nav_tuning_ops,
+                                                 &session.text, text_settings, 3};
+        *count = n;
         return stages;
     }
     stages[0] = (struct tuned_stage){"cursor-gate", &zpt_coherent_displacement_tuning_ops,
@@ -458,17 +467,26 @@ static int build_pipeline(void) {
         session.intent.suppression = &session.suppression;
         session.constraint.suppression = &session.suppression;
         session.batcher.suppression = &session.suppression;
-        add_stage(2, "axis-intent", &zpt_axis_intent_stage_api, &session.intent,
+        size_t next = 2;
+        if (session.unguarded_gate) {
+            /* Firmware lets every frame through this gate whatever the key
+             * presses; only the stages after it ask the guard. */
+            session.gate.suppression = NULL;
+            add_stage(next++, "axis-gate", &zpt_coherent_displacement_stage_api, &session.gate,
+                      &session.gate_state);
+        }
+        add_stage(next++, "axis-intent", &zpt_axis_intent_stage_api, &session.intent,
                   &session.intent_state);
-        add_stage(3, "axis-constraint", &zpt_axis_constraint_stage_api, &session.constraint,
+        add_stage(next++, "axis-constraint", &zpt_axis_constraint_stage_api, &session.constraint,
                   &session.constraint_state);
         if (session.mode == MODE_SCROLL) {
-            add_stage(4, "scroll-batcher", &zpt_scroll_batcher_stage_api, &session.batcher,
+            add_stage(next++, "scroll-batcher", &zpt_scroll_batcher_stage_api, &session.batcher,
                       &session.batcher_state);
         } else {
-            add_stage(4, "text-nav", &zpt_text_nav_stage_api, &session.text, &session.text_state);
+            add_stage(next++, "text-nav", &zpt_text_nav_stage_api, &session.text,
+                      &session.text_state);
         }
-        stage_count = 5;
+        stage_count = next;
     }
     session.sink = (struct zpt_sink){.stable_id = "output", .api = &report_api};
     session.pipeline = (struct zpt_pipeline){
@@ -727,16 +745,19 @@ static bool set_mode(const char *mode) {
         const char *name;
         enum session_mode mode;
         enum zpt_axis_policy policy;
+        bool unguarded_gate;
     } modes[] = {
-        {"cursor", MODE_CURSOR, ZPT_AXIS_POLICY_ADAPTIVE},
-        {"scroll", MODE_SCROLL, ZPT_AXIS_POLICY_ADAPTIVE},
-        {"text", MODE_TEXT, ZPT_AXIS_POLICY_ADAPTIVE},
-        {"text-horizontal", MODE_TEXT, ZPT_AXIS_POLICY_HORIZONTAL},
+        {"cursor", MODE_CURSOR, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"scroll", MODE_SCROLL, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"scroll-gated", MODE_SCROLL, ZPT_AXIS_POLICY_ADAPTIVE, true},
+        {"text", MODE_TEXT, ZPT_AXIS_POLICY_ADAPTIVE, false},
+        {"text-horizontal", MODE_TEXT, ZPT_AXIS_POLICY_HORIZONTAL, false},
     };
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
         if (strcmp(mode, modes[i].name) == 0) {
             session.mode = modes[i].mode;
             session.policy = modes[i].policy;
+            session.unguarded_gate = modes[i].unguarded_gate;
             return true;
         }
     }
@@ -750,7 +771,7 @@ int main(int argc, char **argv) {
     if (buffer_bytes == 0U || buffer_bytes > sizeof(session.storage) || session.credits < 2U ||
         session.interval_us == 0U || !set_mode(argc > 4 ? argv[4] : "cursor")) {
         fputs("usage: capture_session [buffer-bytes [credits >= 2 [interval-us "
-              "[cursor|scroll|text|text-horizontal]]]]\n",
+              "[cursor|scroll|scroll-gated|text|text-horizontal]]]]\n",
               stderr);
         return 2;
     }

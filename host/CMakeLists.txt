@@ -169,6 +169,13 @@ foreach(mode scroll text)
   )
 endforeach()
 add_test(
+  NAME capture_replay_scroll_gated
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+    --mode scroll-gated
+)
+add_test(
   NAME capture_replay_text_horizontal
   COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
     --session "$<TARGET_FILE:capture_session>"

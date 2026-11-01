@@ -8,7 +8,7 @@
  *   node host/replay/capture-check.js --session build/host/capture_session \
  *     --cursor-pipeline-runner build/host/zpt_cursor_pipeline_replay \
  *     [--buffer 4096] [--credits 2] [--interval-us 7500] [--expect drops|no-drops] \
- *     [--min-peak <bytes>] [--mode cursor|scroll|text|text-horizontal]
+ *     [--min-peak <bytes>] [--mode cursor|scroll|scroll-gated|text|text-horizontal]
  *
  * The session's records go through the firmware's burst buffer and a
  * simulated Bluetooth link, which refills every credit each connection
@@ -18,6 +18,7 @@
  * Either way every record must arrive or show as a gap, in order, and every
  * trace must replay exactly. --mode records a cursor pipeline, or a scroll
  * or text-navigation pipeline through the firmware's axis stages;
+ * scroll-gated puts an unguarded motion gate in front of guarded ones;
  * text-horizontal locks the text pipeline's axis, so its axis constraint
  * never holds motion for a flush to fold. */
 
@@ -41,10 +42,10 @@ const { values } = parseArgs({
     mode: { type: "string", default: "cursor" },
   },
 });
-const KINDS = { cursor: "cursor-pipeline", scroll: "scroll-pipeline", text: "text-pipeline",
-  "text-horizontal": "text-pipeline" };
+const KINDS = { cursor: "cursor-pipeline", scroll: "scroll-pipeline",
+  "scroll-gated": "scroll-pipeline", text: "text-pipeline", "text-horizontal": "text-pipeline" };
 if (!(values.mode in KINDS)) {
-  console.error("--mode must be cursor, scroll, text, or text-horizontal");
+  console.error(`--mode must be one of ${Object.keys(KINDS).join(", ")}`);
   process.exit(2);
 }
 
@@ -113,7 +114,10 @@ if (expectedWarnings.length > 0) failures.push(`unexpected warnings: ${expectedW
 if (session.injectedKeypresses === 0 || (flushing && session.lateFlushes === 0)) {
   failures.push("the session should land key presses mid-frame and run flushes late");
 }
-if (!fixtures.slice(1).some((fixture) => fixture.events[0][0] === "keypress")) {
+/* In scroll-gated the gate's idle deadline delays the resync past the
+ * guard's window, so nothing is left to re-record. */
+if (values.mode !== "scroll-gated" &&
+    !fixtures.slice(1).some((fixture) => fixture.events[0][0] === "keypress")) {
   failures.push("a trace after a resync should start with the key press the guard still holds");
 }
 const events = fixtures.flatMap((fixture) => fixture.events);
