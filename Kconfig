@@ -5,6 +5,7 @@ DT_COMPAT_ZPT_SENSOR_TUNNEL := measlesbagel,zpt-sensor-control
 DT_COMPAT_ZPT_PAW3222 := pixart,paw3222
 DT_COMPAT_ZPT_ROUTE_BEHAVIOR := measlesbagel,zpt-behavior-route
 DT_COMPAT_ZPT_COMPACT_SPLIT_ENCODER := measlesbagel,zpt-input-processor-compact-split-encoder
+DT_CHOSEN_ZPT_TELEMETRY_UART := measlesbagel,zpt-telemetry-uart
 
 menu "ZMK Pointing Tools"
 
@@ -96,11 +97,10 @@ config ZMK_POINTING_TOOLS_COMPACT_SPLIT_ENCODER
 config ZMK_POINTING_TOOLS_TELEMETRY
     bool "Pointing telemetry and tuning host service"
     default $(dt_compat_enabled,$(DT_COMPAT_ZPT_TELEMETRY))
-    depends on SERIAL
-    depends on UART_INTERRUPT_DRIVEN
+    depends on (SERIAL && UART_INTERRUPT_DRIVEN) || ZMK_BLE
     help
-      Expose state samples, discovery, and tuning over a dedicated USB
-      CDC-ACM serial interface, and optionally over Bluetooth.
+      Expose state samples, discovery, and tuning to a host over USB serial,
+      Bluetooth GATT, or both. At least one transport must be enabled.
 
 if ZMK_POINTING_TOOLS_TELEMETRY
 
@@ -139,15 +139,28 @@ config ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY
 
 endif
 
+config ZMK_POINTING_TOOLS_TELEMETRY_UART
+    bool "Host protocol over USB serial"
+    default $(dt_chosen_enabled,$(DT_CHOSEN_ZPT_TELEMETRY_UART))
+    depends on SERIAL
+    depends on UART_INTERRUPT_DRIVEN
+    help
+      Serve the host protocol over the USB CDC-ACM port named by the
+      measlesbagel,zpt-telemetry-uart chosen node. On by default when that
+      chosen node exists.
+
 config ZMK_POINTING_TOOLS_TELEMETRY_BLE
     bool "Host protocol over Bluetooth GATT"
+    default y
     depends on ZMK_BLE
     depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
     help
-      Also serve the host protocol over a custom GATT service on the
-      Bluetooth host connection, beside the HID service, so the web tuner
-      can connect over Web Bluetooth without a cable. Requests need an
-      encrypted link to a bonded host. USB serial keeps working. See
+      Serve the host protocol over a custom GATT service on the Bluetooth
+      host connection, beside the HID service, so the web tuner can connect
+      over Web Bluetooth without a cable. On by default wherever it applies
+      (Bluetooth keyboards and split centrals). Requests need an encrypted
+      link to a bonded host. Idle cost is near zero: the service isn't
+      advertised and sends nothing until a host enables telemetry. See
       docs/protocol.md for the service and characteristic UUIDs.
 
 config ZMK_POINTING_TOOLS_TELEMETRY_BLE_TX_CREDITS
@@ -158,9 +171,9 @@ config ZMK_POINTING_TOOLS_TELEMETRY_BLE_TX_CREDITS
     help
       Notifications handed to the Bluetooth stack and not yet sent. HID
       reports leave on the same connection in order, so one waits behind at
-      most this many telemetry notifications. State samples that don't fit in the free
-      budget are dropped whole and counted, so every-frame telemetry runs at
-      whatever rate the connection sustains.
+      most this many telemetry notifications. State samples that don't fit in
+      the free budget are dropped whole and counted, so every-frame telemetry
+      runs at whatever rate the connection sustains.
 
 config ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE
     int "Maximum queued telemetry samples"

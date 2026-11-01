@@ -102,10 +102,19 @@ enum zpt_tuning_status {
     ZPT_TUNING_STATUS_UNREACHABLE = 5,
 };
 
+#if !IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART) &&                                       \
+    !IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE)
+/* USB serial needs a measlesbagel,zpt-telemetry-uart chosen node; Bluetooth
+ * needs CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE on a Bluetooth central. */
+#error "the telemetry service needs a USB serial or Bluetooth transport"
+#endif
+
 /* Every link the protocol runs over. Each has its own parser, so frames
  * arriving on different links never interleave. */
 static const struct zpt_host_transport *const zpt_transports[] = {
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART)
     &zpt_uart_transport,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE)
     &zpt_gatt_transport,
 #endif
@@ -121,8 +130,9 @@ struct zpt_frame_parser {
 
 static struct zpt_frame_parser zpt_parsers[ARRAY_SIZE(zpt_transports)];
 
-/* The link that sent the latest request. Only the worker thread uses it. */
-static const struct zpt_host_transport *zpt_host_link = &zpt_uart_transport;
+/* The link that sent the latest request. Only the worker thread uses it;
+ * it starts on the first link. */
+static const struct zpt_host_transport *zpt_host_link;
 
 enum zpt_record_kind {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -955,6 +965,7 @@ static void zpt_receive(void) {
 }
 
 static void zpt_thread(void) {
+    zpt_host_link = zpt_transports[0];
     for (;;) {
         k_sem_take(&zpt_wake, K_FOREVER);
 

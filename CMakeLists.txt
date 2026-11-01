@@ -115,7 +115,7 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
 
   # Cross-cutting runtime services.
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY src/service/telemetry.c)
-  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART
     src/service/transport/uart.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE
     src/service/transport/gatt.c)

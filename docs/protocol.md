@@ -35,23 +35,31 @@ frame.
 ### USB serial
 
 The `measlesbagel,zpt-telemetry-uart` chosen node names a USB CDC-ACM port.
+`CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART` is on whenever that chosen node
+exists, so a keyboard without it builds without the USB serial transport.
 Writes block until the port takes each byte, so no frame is dropped.
 
 ### Bluetooth GATT
 
-An opt-in GATT service on the central's host connection, beside ZMK's HID
-service. Turn it on in the keyboard's config (for a split keyboard, the
-central half's config, or a config shared by both halves, where the
-peripheral's build warns about the unmet dependency and leaves it off):
+A GATT service on the central's host connection, beside ZMK's HID service.
+`CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE` is on by default wherever the
+telemetry service is (a `measlesbagel,zpt-telemetry` node in the keymap) on a
+Bluetooth keyboard or split central; a keyboard config needs nothing extra.
+It doesn't apply to split peripherals, which build without it and without a
+warning, so a config shared by both halves stays as it is. Turn it off with:
 
 ```ini
-CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE=y
+CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE=n
 ```
 
-It needs the telemetry service as USB serial does: the
-`measlesbagel,zpt-telemetry` node and the `measlesbagel,zpt-telemetry-uart`
-chosen node stay in the keymap. Builds without the option don't include the
-service.
+Builds with it off don't include the service. Idle cost is near zero: the
+service isn't advertised, the worker sleeps until a host writes, and telemetry
+stays off until a host enables it.
+
+Bluetooth also works without USB serial: a keymap with the
+`measlesbagel,zpt-telemetry` node but no `measlesbagel,zpt-telemetry-uart`
+chosen node (and no CDC-ACM settings) serves the protocol over Bluetooth only.
+The build fails if neither transport is available.
 
 | | UUID | Properties |
 | --- | --- | --- |
@@ -108,6 +116,22 @@ at whatever rate the link sustains, at most about two samples per connection
 event with the default budget, and drops the rest visibly. A calibration run
 then reports its dropped samples. Raising the budget trades HID headroom for
 telemetry rate.
+
+#### Power
+
+Nobody has measured the battery cost of streaming yet. Connected but idle, the
+service sends nothing. While every-frame telemetry streams, the radio sends
+extra packets in connection events it would otherwise keep short, and with
+ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
+
+- Compare battery drain: note the reported battery level, stream every-frame
+  telemetry from the tuner for an hour or so of normal use, and compare the
+  drop with an hour of the same use without the tuner connected. Battery
+  percentages are coarse, so use long runs.
+- For a direct number, power the keyboard through a power profiler (for
+  example a Nordic Power Profiler Kit II in source mode on the battery
+  terminals) and compare average current with the tuner disconnected,
+  connected with telemetry off, and streaming every frame.
 
 ## Messages
 

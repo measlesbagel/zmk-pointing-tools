@@ -35,7 +35,8 @@ struct zpt_host_transport {
  * from interrupt context. */
 void zpt_host_protocol_wake(void);
 
-/* USB CDC-ACM serial (src/service/transport/uart.c). */
+/* USB CDC-ACM serial, with CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART
+ * (src/service/transport/uart.c). */
 extern const struct zpt_host_transport zpt_uart_transport;
 /* Bluetooth GATT, with CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE
  * (src/service/transport/gatt.c). */
