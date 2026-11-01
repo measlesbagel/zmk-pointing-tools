@@ -51,23 +51,24 @@ test("simulated capture drops during a link stall, resyncs, and converts with a 
 
 test("truth sources are counted per metric over the strokes that scored it", () => {
   const traces = [
-    { id: "a", truth: { strokes: [{ id: "s1", activity: "aim", derived: true }, { id: "s2", activity: "post-typing", derived: true }] } },
-    { id: "b", truth: { strokes: [{ id: "s1", activity: "scroll", axis: "vertical" }] } },
+    { id: "a", truth: { strokes: [{ id: "derived-1", source: "derived" }, { id: "typing-2", source: "typing" }] } },
+    /* Untagged strokes count as derived, never as labelled. */
+    { id: "b", truth: { strokes: [{ id: "s1", activity: "scroll", axis: "vertical" }, { id: "label-2", source: "label" }] } },
   ];
   const result = (strokes) => ({ fixtureResults: [{ id: "a", strokes: strokes.a }, { id: "b", strokes: strokes.b }] });
   const truth = metricTruth(traces, [
-    result({ a: [{ id: "s1", metrics: { outputErrorPercent: 3 } }, { id: "s2", metrics: { unintendedOutput: 1 } }],
-      b: [{ id: "s1", metrics: { axisLockPercent: 90, unintendedOutput: 0 } }] }),
+    result({ a: [{ id: "derived-1", metrics: { outputErrorPercent: 3 } }, { id: "typing-2", metrics: { unintendedOutput: 1 } }],
+      b: [{ id: "s1", metrics: { axisLockPercent: 90, unintendedOutput: 0 } }, { id: "label-2", metrics: { axisLockPercent: 70 } }] }),
     /* The same stroke scored by a second set counts once. */
-    result({ a: [{ id: "s1", metrics: { outputErrorPercent: 4 } }], b: [] }),
+    result({ a: [{ id: "derived-1", metrics: { outputErrorPercent: 4 } }], b: [] }),
   ]);
   assert.deepEqual(truth, {
     outputErrorPercent: { derived: 1 },
-    /* An untagged stroke is never shown as labelled. */
     unintendedOutput: { typing: 1, derived: 1 },
-    axisLockPercent: { derived: 1 },
+    axisLockPercent: { derived: 1, label: 1 },
   });
   assert.equal(describeTruth(truth.unintendedOutput), "derived 1, typing heuristic 1");
+  assert.equal(describeTruth(truth.axisLockPercent), "labels 1, derived 1");
   assert.match(describeTruth(undefined), /no stroke/);
 });
 
