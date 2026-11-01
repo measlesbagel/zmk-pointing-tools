@@ -131,6 +131,28 @@ config ZMK_POINTING_TOOLS_STATE_TELEMETRY
       gesture lifecycle decisions from observed pipeline stages. State
       telemetry remains off until requested by a connected host.
 
+config ZMK_POINTING_TOOLS_INPUT_CAPTURE
+    bool "Input capture for trace recording"
+    default y if ZMK_POINTING_TOOLS_PIPELINE
+    help
+      Let a host record the input frames going into one pointing pipeline,
+      with microsecond timing and sensor sample spans, and the key presses
+      its keypress guard decides with, so the recording replays through the
+      same stage code on the host. On by default in builds with the pipeline
+      runtime and runtime tuning. Capture stays off at runtime until a host
+      starts a recording and stops with the host heartbeat; while nothing
+      records, each frame costs one atomic read. See docs/protocol.md,
+      "Input capture".
+
+config ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES
+    int "Maximum recordable pipelines"
+    default 8
+    range 1 12
+    depends on ZMK_POINTING_TOOLS_INPUT_CAPTURE
+    help
+      Every devicetree pipeline is recordable, up to this many. The capture
+      status response lists them all in one 512-byte payload.
+
 config ZMK_POINTING_TOOLS_PIPELINE_TELEMETRY_INIT_PRIORITY
     int "Pipeline stage telemetry init priority"
     default 90

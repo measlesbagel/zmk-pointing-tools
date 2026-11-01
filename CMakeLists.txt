@@ -120,6 +120,11 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE
     src/service/transport/gatt.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING src/service/tuning.c)
+  zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE src/observer/capture.c)
+  # Pipelines and key presses reach the capture service through ZMK.
+  if(CONFIG_ZMK_POINTING_TOOLS_PIPELINE AND CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
+    zephyr_library_sources(src/platform/zmk/input_capture.c)
+  endif()
   # Runtime stage tuning needs both the pipeline and the tuning service.
   if(CONFIG_ZMK_POINTING_TOOLS_PIPELINE AND CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     zephyr_library_sources(src/stage/stage_tuning.c)

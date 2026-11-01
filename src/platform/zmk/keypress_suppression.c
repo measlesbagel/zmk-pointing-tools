@@ -21,17 +21,47 @@ struct zpt_keypress_suppression_data {
     /* Written by the ZMK event listener thread, read by the input thread. */
     atomic_t last_keypress_ms;
     atomic_t have_keypress;
+    /* Input capture's frozen view: FROZEN_NONE, or the frozen key press in
+     * frozen_ms, published before the state. */
+    atomic_t frozen;
+    atomic_t frozen_ms;
     struct zpt_suppression_policy policy;
+};
+
+enum {
+    FROZEN_NONE = 0,
+    FROZEN_NO_KEYPRESS,
+    FROZEN_KEYPRESS,
 };
 
 static bool keypress_is_suppressed(void *context, const struct zpt_signal *signal,
                                    uint32_t now_ms) {
     (void)signal;
     struct zpt_keypress_suppression_data *data = context;
+    const atomic_val_t frozen = atomic_get(&data->frozen);
+    if (frozen != FROZEN_NONE) {
+        return frozen == FROZEN_KEYPRESS &&
+               now_ms - (uint32_t)atomic_get(&data->frozen_ms) < data->suppress_after_ms;
+    }
     /* have_keypress is published after last_keypress_ms, so observing it
      * nonzero means the timestamp is already the newest press. */
     return atomic_get(&data->have_keypress) != 0 &&
            now_ms - (uint32_t)atomic_get(&data->last_keypress_ms) < data->suppress_after_ms;
+}
+
+static bool keypress_freeze(void *context, uint32_t *time_ms) {
+    struct zpt_keypress_suppression_data *data = context;
+    const bool have = atomic_get(&data->have_keypress) != 0;
+    const atomic_val_t latest = atomic_get(&data->last_keypress_ms);
+    atomic_set(&data->frozen_ms, latest);
+    atomic_set(&data->frozen, have ? FROZEN_KEYPRESS : FROZEN_NO_KEYPRESS);
+    *time_ms = (uint32_t)latest;
+    return have;
+}
+
+static void keypress_thaw(void *context) {
+    struct zpt_keypress_suppression_data *data = context;
+    atomic_set(&data->frozen, FROZEN_NONE);
 }
 
 static const struct zpt_suppression_policy *
@@ -75,6 +105,9 @@ static int keypress_suppression_init(const struct device *dev) {
     data->policy = (struct zpt_suppression_policy){
         .is_suppressed = keypress_is_suppressed,
         .context = data,
+        .keypress_window_ms = config->suppress_after_ms,
+        .freeze_keypress = keypress_freeze,
+        .thaw_keypress = keypress_thaw,
     };
     return 0;
 }

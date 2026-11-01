@@ -64,6 +64,20 @@ struct zpt_pipeline_result {
     uint32_t outputs;
 };
 
+/* Sees what goes into a pipeline, for input capture: every signal pushed
+ * into it, before its first stage, and input_done once the pipeline has
+ * finished with it; every flush that runs a due deadline, before the first
+ * one runs; and each activation and deactivation. Any callback may be
+ * NULL. */
+struct zpt_pipeline_observer {
+    void (*input)(const struct zpt_pipeline *pipeline, const struct zpt_signal *signal,
+                  void *user_data);
+    void (*input_done)(const struct zpt_pipeline *pipeline, void *user_data);
+    void (*flush)(const struct zpt_pipeline *pipeline, uint32_t now_ms, void *user_data);
+    void (*lifecycle)(const struct zpt_pipeline *pipeline, bool active, void *user_data);
+    void *user_data;
+};
+
 typedef int (*zpt_stage_process_t)(struct zpt_stage *stage, const struct zpt_signal *signal,
                                    struct zpt_stage_context *context);
 typedef int (*zpt_stage_flush_t)(struct zpt_stage *stage, uint32_t now_ms,
@@ -132,8 +146,10 @@ struct zpt_pipeline {
     struct zpt_sink *sink;
     uint32_t dispatch_budget;
 
+    /* Runtime-owned fields. Statically initialize them to zero. */
     bool validated;
     bool active;
+    struct zpt_pipeline_observer observer;
 };
 
 int zpt_pipeline_validate(struct zpt_pipeline *pipeline);

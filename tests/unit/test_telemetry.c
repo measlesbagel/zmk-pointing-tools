@@ -5,7 +5,7 @@
  * zephyr/drivers/serial/serial_test.c): host requests are injected into
  * the RX queue, service responses are captured from the TX buffer.
  *
- * The wire protocol constants below are the public protocol (v6); they
+ * The wire protocol constants below are the public protocol (v8); they
  * mirror src/service/telemetry.c, which keeps its own private copies.
  *
  * All cases of this binary belong to the single zpt_unit suite (defined in
@@ -27,9 +27,9 @@
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/service/tuning.h>
 
-/* --- Wire protocol (v6) ---------------------------------------------- */
+/* --- Wire protocol (v8) ---------------------------------------------- */
 
-#define ZPT_PROTOCOL_VERSION 7
+#define ZPT_PROTOCOL_VERSION 8
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -68,11 +68,13 @@
 
 /* Record queue owned by the service; the drop test fills it directly.
  * Same layout as the private struct zpt_telemetry_record in
- * src/service/telemetry.c (kind byte, then a one-member union). */
+ * src/service/telemetry.c (kind and generation bytes, then a union whose
+ * largest member is the state sample). */
 extern struct k_msgq zpt_record_queue;
 
 struct zpt_test_record {
     uint8_t kind;
+    uint8_t generation;
     union {
         struct zpt_state_sample state;
     } sample;
@@ -318,8 +320,10 @@ ZTEST(zpt_unit, ping) {
     tx_frame(ZPT_REQ_PING, NULL, 0);
     zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
     zassert_equal(frame_type, ZPT_RESP_ACK);
-    zassert_equal(length, 4);
+    zassert_equal(length, 8);
     zassert_equal(sys_get_le32(&payload[0]), 0u);
+    /* payload[4..7] counts capture drops; capture_records_pipeline_input,
+     * which runs earlier, drops one on purpose. */
 }
 
 ZTEST(zpt_unit, parser_resync) {
@@ -952,4 +956,356 @@ ZTEST(zpt_unit, z_capacity_fill) {
     }
     zassert_equal(index, (size_t)ZPT_FILL_TARGETS);
     zassert_equal(zpt_tuning_register(&fill_overflow_target), -ENOMEM);
+}
+
+/* --- Input capture (protocol v8) ------------------------------------- */
+
+#include <zmk/pointing_tools/core/fixed.h>
+#include <zmk/pointing_tools/observer/capture.h>
+#include <zmk/pointing_tools/service/capture.h>
+#include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
+#include <zmk/pointing_tools/stage/orientation.h>
+#include <zmk/pointing_tools/stage/resolution_normalize.h>
+
+#define ZPT_TEST_REQ_CAPTURE_CONTROL 0x10
+#define ZPT_TEST_REQ_CAPTURE_DESCRIBE 0x11
+#define ZPT_TEST_RESP_CAPTURE_STATUS 0x8c
+#define ZPT_TEST_RESP_CAPTURE_DESCRIPTION 0x8d
+#define ZPT_TEST_EVENT_CAPTURE 0x92
+
+/* The test app has no ZMK routers to hold, so no frame can be running. */
+int zpt_capture_between_frames(void (*fn)(void *arg), void *arg) {
+    fn(arg);
+    return 0;
+}
+
+/* A cursor pipeline front, so a recording resets it and enters it as the
+ * session in host/tests/capture_session.c does, and a keypress guard that
+ * input capture can freeze. The gate stage borrows tuning target A's
+ * stable id, so the settings hash covers A's parameters. */
+static bool capture_guard_have;
+static uint32_t capture_guard_ms;
+
+static bool capture_guard_suppressed(void *context, const struct zpt_signal *signal,
+                                     uint32_t now_ms) {
+    ARG_UNUSED(context);
+    ARG_UNUSED(signal);
+    ARG_UNUSED(now_ms);
+    return false;
+}
+
+/* Freezes not yet thawed: zero after every push. */
+static int capture_guard_frozen;
+
+static bool capture_guard_freeze(void *context, uint32_t *time_ms) {
+    ARG_UNUSED(context);
+    capture_guard_frozen++;
+    *time_ms = capture_guard_ms;
+    return capture_guard_have;
+}
+
+static void capture_guard_thaw(void *context) {
+    ARG_UNUSED(context);
+    capture_guard_frozen--;
+}
+
+/* The link refuses this many droppable frames (src/service/telemetry.c). */
+extern atomic_t zpt_test_refuse_droppable;
+
+static const struct zpt_suppression_policy capture_guard = {
+    .is_suppressed = capture_guard_suppressed,
+    .keypress_window_ms = 40,
+    .freeze_keypress = capture_guard_freeze,
+    .thaw_keypress = capture_guard_thaw,
+};
+
+static int capture_sink_emit(struct zpt_sink *sink, const struct zpt_signal *signal) {
+    ARG_UNUSED(sink);
+    ARG_UNUSED(signal);
+    return 0;
+}
+
+static const struct zpt_sink_api capture_sink_api = {
+    .type_id = "test-sink",
+    .accepted_kinds = ZPT_SIGNAL_KIND_MASK(ZPT_SIGNAL_NORMALIZED_MOTION),
+    .emit = capture_sink_emit,
+};
+
+static const struct zpt_orientation_config capture_orientation = {.invert_y = true};
+static const struct zpt_coherent_displacement_stage_config capture_gate = {
+    .settings = {.enabled = true,
+                 .activation_distance = ZPT_FIXED_ONE,
+                 .coherence_percent = 50,
+                 .qualification_timeout_ms = 100,
+                 .idle_timeout_ms = 100},
+    .suppression = &capture_guard,
+};
+static struct zpt_coherent_displacement_stage_state capture_gate_state;
+static struct zpt_stage capture_stage_list[] = {
+    {.stable_id = "o",
+     .api = &zpt_orthogonal_orientation_stage_api,
+     .config = &capture_orientation},
+    {.stable_id = "n", .api = &zpt_resolution_normalize_stage_api},
+    {.stable_id = "zpt-test-target-a",
+     .api = &zpt_coherent_displacement_stage_api,
+     .config = &capture_gate,
+     .state = &capture_gate_state},
+};
+static struct zpt_stage *capture_stages[] = {&capture_stage_list[0], &capture_stage_list[1],
+                                             &capture_stage_list[2]};
+static struct zpt_sink capture_sink = {.stable_id = "test-sink", .api = &capture_sink_api};
+static struct zpt_pipeline capture_pipeline = {
+    .stable_id = "test-capture",
+    .input_kind = ZPT_SIGNAL_RAW_MOTION,
+    .stages = capture_stages,
+    .stage_count = ARRAY_SIZE(capture_stages),
+    .sink = &capture_sink,
+    .dispatch_budget = 4,
+};
+
+static void capture_push(int32_t x, int32_t y) {
+    const struct zpt_signal signal = {
+        .kind = ZPT_SIGNAL_RAW_MOTION,
+        .metadata = {.observed_at_ms = k_uptime_get_32(),
+                     .sample_span_us = 1500,
+                     .flags = ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED,
+                     .source_id = 9,
+                     .resolution_cpi = 800},
+        .data.raw_motion = {.x_counts = x, .y_counts = y},
+    };
+    struct zpt_pipeline_result result;
+    zassert_ok(zpt_pipeline_push(&capture_pipeline, &signal, &result));
+    zassert_equal(capture_guard_frozen, 0, "the guard is thawed after every frame");
+}
+
+static uint32_t capture_dropped(void) {
+    uint8_t frame_type;
+    uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t length;
+    tx_frame(ZPT_REQ_PING, NULL, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_RESP_ACK);
+    return sys_get_le32(&payload[4]);
+}
+
+/* Sends a capture control request and checks the status; returns the
+ * settings hash it reports. */
+static uint32_t capture_control(const uint8_t *payload, uint16_t length, uint8_t recording) {
+    uint8_t frame_type;
+    uint8_t response[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t response_length;
+
+    tx_frame(ZPT_TEST_REQ_CAPTURE_CONTROL, payload, length);
+    zassert_ok(rx_frame(&frame_type, response, &response_length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_STATUS);
+    zassert_equal(response[0], 1, "capture schema");
+    zassert_equal(response[1], recording);
+    zassert_equal(response[6], 1, "one recordable pipeline");
+    /* id, active, three stages, replayable; then the hash and the label. */
+    static const uint8_t entry[] = {0, 1, 3, 1};
+    static const uint8_t label[] = {12, 't', 'e', 's', 't', '-', 'c', 'a', 'p', 't', 'u', 'r', 'e'};
+    zassert_equal(response_length, 7 + sizeof(entry) + 4 + sizeof(label));
+    zassert_mem_equal(&response[7], entry, sizeof(entry));
+    zassert_mem_equal(&response[15], label, sizeof(label));
+    return sys_get_le32(&response[11]);
+}
+
+/* Collects capture batches until count records arrived; returns the
+ * concatenated record bytes and checks the sequence continues. */
+static size_t capture_records(uint8_t *records, size_t count, uint32_t *sequence) {
+    size_t offset = 0;
+    size_t received = 0;
+    while (received < count) {
+        uint8_t frame_type;
+        uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+        uint16_t length;
+        zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+        zassert_equal(frame_type, ZPT_TEST_EVENT_CAPTURE);
+        zassert_equal(sys_get_le32(&payload[0]), *sequence);
+        *sequence += payload[4];
+        received += payload[4];
+        memcpy(&records[offset], &payload[5], length - 5U);
+        offset += length - 5U;
+    }
+    zassert_equal(received, count);
+    return offset;
+}
+
+/* Lets the gate's idle deadline run and the pipeline rest, then pushes a
+ * frame: a pending resync resets the pipeline and enters it again. */
+static void capture_resync(uint32_t settings_hash, uint32_t *sequence) {
+    uint8_t records[64];
+    struct zpt_pipeline_result result;
+    k_sleep(K_MSEC(150));
+    zassert_ok(zpt_pipeline_flush(&capture_pipeline, k_uptime_get_32(), &result));
+    zassert_equal(capture_records(records, 1, sequence), 5);
+    zassert_equal(records[0], 7, "flush");
+    k_sleep(K_MSEC(ZPT_CAPTURE_RESYNC_REST_MS + 20));
+    capture_push(1, 0);
+    zassert_equal(capture_records(records, 4, sequence), 5 + 6 + 5 + 20);
+    zassert_equal(records[0], 4, "entered");
+    zassert_equal(sys_get_le32(&records[1]), settings_hash);
+    zassert_equal(records[5], 2, "source");
+    zassert_equal(records[11], 3, "the guard's key press, again");
+    zassert_equal(records[16], 1, "frame");
+}
+
+ZTEST(zpt_unit, capture_records_pipeline_input) {
+    uint8_t frame_type;
+    uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t length;
+    uint8_t records[256];
+    uint32_t sequence = 0;
+
+    zassert_ok(zpt_pipeline_validate(&capture_pipeline));
+    zassert_ok(zpt_pipeline_activate(&capture_pipeline, ZPT_RESET_PIPELINE_ENTERED));
+    zassert_ok(zpt_capture_register_pipeline(&capture_pipeline));
+
+    /* Off by default: frames before a recording send nothing. */
+    const uint32_t hash = capture_control(NULL, 0, 0xff);
+    zassert_not_equal(hash, 0, "target A's settings are hashed");
+    capture_guard_have = true;
+    capture_guard_ms = 1234;
+    capture_push(1, 1);
+    expect_no_frame(200);
+
+    /* Starting runs zpt_capture_tap_start, as the host session does: the
+     * replayable pipeline resets and enters, and the first frame then
+     * describes its source and the key press the guard holds. */
+    const uint8_t start = 0;
+    zassert_equal(capture_control(&start, 1, 0), hash);
+    size_t bytes = capture_records(records, 1, &sequence);
+    zassert_equal(bytes, 5);
+    zassert_equal(records[0], 4, "entered");
+    zassert_equal(sys_get_le32(&records[1]), hash);
+
+    const uint32_t before_ms = k_uptime_get_32();
+    capture_push(-3, 70000);
+    bytes = capture_records(records, 3, &sequence);
+    zassert_equal(bytes, 6 + 5 + 20);
+    static const uint8_t opening[] = {2, 0xff, 9, 0, 0x20, 0x03, 3, 0xd2, 0x04, 0, 0};
+    zassert_mem_equal(records, opening, sizeof(opening));
+    const uint8_t *frame = &records[sizeof(opening)];
+    zassert_equal(frame[0], 1);
+    zassert_equal(frame[1], (uint8_t)ZPT_SIGNAL_FLAG_SAMPLE_SPAN_CLIPPED);
+    zassert_true(sys_get_le32(&frame[2]) - before_ms <= 1);
+    zassert_true(sys_get_le16(&frame[6]) < 1000);
+    zassert_equal((int32_t)sys_get_le32(&frame[8]), -3);
+    zassert_equal((int32_t)sys_get_le32(&frame[12]), 70000);
+    zassert_equal(sys_get_le32(&frame[16]), 1500);
+
+    /* A newer key press is recorded before the frame it decides; the same
+     * one isn't recorded twice. */
+    capture_guard_ms = before_ms + 1;
+    capture_push(1, 0);
+    capture_push(1, 0);
+    bytes = capture_records(records, 3, &sequence);
+    zassert_equal(bytes, 5 + 20 + 20);
+    zassert_equal(records[0], 3);
+    zassert_equal(sys_get_le32(&records[1]), before_ms + 1);
+    zassert_equal(records[5], 1);
+    zassert_equal(records[25], 1);
+
+    /* A link without room keeps the batch and appends to it: two refused
+     * sends, then the three frames go out intact in one batch. */
+    atomic_set(&zpt_test_refuse_droppable, 2);
+    for (int i = 0; i < 3; i++) {
+        capture_push(1, 0);
+        if (i < 2) {
+            expect_no_frame(50);
+        }
+    }
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_TEST_EVENT_CAPTURE);
+    zassert_equal(sys_get_le32(&payload[0]), sequence);
+    zassert_equal(payload[4], 3);
+    zassert_equal(length, 5 + 3 * 20);
+    sequence += 3;
+    zassert_equal(atomic_get(&zpt_test_refuse_droppable), 0);
+
+    /* A full batch the link still refuses is dropped and counted; the
+     * record that didn't fit starts the next batch, after the gap. */
+    const uint32_t dropped_at_start = capture_dropped();
+    const int full = (ZPT_CAPTURE_BATCH_MAX_PAYLOAD - ZPT_CAPTURE_BATCH_HEADER_SIZE) / 20;
+    atomic_set(&zpt_test_refuse_droppable, 1000);
+    for (int i = 0; i <= full; i++) {
+        capture_push(1, 0);
+        k_sleep(K_MSEC(2));
+    }
+    atomic_set(&zpt_test_refuse_droppable, 0);
+    zassert_equal(capture_dropped(), dropped_at_start + (uint32_t)full);
+    sequence += (uint32_t)full;
+    bytes = capture_records(records, 1, &sequence);
+    zassert_equal(records[0], 1, "the frame after the dropped batch");
+    /* The pipeline kept running; at the next rest the tap resyncs. */
+    capture_resync(hash, &sequence);
+
+    /* A tuning change while recording: the next entered record, at the
+     * next rest, carries the new settings' hash. */
+    int32_t gain;
+    zassert_ok(zpt_tuning_get(0, 0, false, &gain));
+    zassert_ok(zpt_tuning_set(0, 0, gain + 5));
+    zpt_capture_settings_changed();
+    zassert_equal(capture_records(records, 1, &sequence), 1);
+    zassert_equal(records[0], 6, "settings changed");
+    capture_resync(zpt_capture_settings_hash_add(
+                       hash - zpt_capture_settings_hash_add(0, "zpt-test-target-a", "gain", gain),
+                       "zpt-test-target-a", "gain", gain + 5),
+                   &sequence);
+    zassert_ok(zpt_tuning_set(0, 0, gain));
+
+    /* A full queue drops records and counts them like state samples. */
+    tx_frame(ZPT_REQ_PING, NULL, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_RESP_ACK);
+    const uint32_t dropped_before = sys_get_le32(&payload[4]);
+    struct zpt_test_record dummy = {.kind = 0xff};
+    for (int i = 0; i < CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_QUEUE_SIZE; i++) {
+        zassert_ok(k_msgq_put(&zpt_record_queue, &dummy, K_NO_WAIT));
+    }
+    capture_push(1, 0);
+    tx_frame(ZPT_REQ_PING, NULL, 0);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_RESP_ACK);
+    zassert_equal(sys_get_le32(&payload[4]), dropped_before + 1);
+    expect_no_frame(200);
+
+    /* Stopping ends the stream. */
+    const uint8_t stop = 0xff;
+    capture_control(&stop, 1, 0xff);
+    capture_push(1, 0);
+    expect_no_frame(200);
+
+    /* The description names the pipeline, its settings hash, its stages,
+     * and the settings they take that tuning doesn't publish. */
+    const uint8_t describe = 0;
+    tx_frame(ZPT_TEST_REQ_CAPTURE_DESCRIBE, &describe, 1);
+    zassert_ok(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS));
+    zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_DESCRIPTION);
+    static const uint8_t named[] = {0,   12,  't', 'e', 's', 't', '-',
+                                    'c', 'a', 'p', 't', 'u', 'r', 'e'};
+    zassert_mem_equal(payload, named, sizeof(named));
+    zassert_equal(sys_get_le32(&payload[sizeof(named)]), hash);
+    static const uint8_t orientation[] = {
+        3,   22,  'o', 'r', 't', 'h', 'o', 'g', 'o', 'n', 'a', 'l', '-', 'o', 'r', 'i', 'e',
+        'n', 't', 'a', 't', 'i', 'o', 'n', 1,   'o', 3,   7,   's', 'w', 'a', 'p', '-', 'x',
+        'y', 0,   0,   0,   0,   8,   'i', 'n', 'v', 'e', 'r', 't', '-', 'x', 0,   0,   0,
+        0,   8,   'i', 'n', 'v', 'e', 'r', 't', '-', 'y', 1,   0,   0,   0,
+    };
+    size_t offset = sizeof(named) + 4;
+    zassert_mem_equal(&payload[offset], orientation, sizeof(orientation));
+    offset += sizeof(orientation);
+    /* Normalize takes nothing; the gate takes the guard's window. */
+    offset += 1 + strlen("resolution-normalize-mm") + 2 + 1;
+    offset += 1 + strlen("coherent-displacement") + 1 + strlen("zpt-test-target-a");
+    zassert_equal(payload[offset], 1);
+    zassert_equal(payload[offset + 1], strlen("suppress-after-keypress-ms"));
+    offset += 2 + strlen("suppress-after-keypress-ms");
+    zassert_equal(sys_get_le32(&payload[offset]), 40);
+    zassert_equal(offset + 4, length);
+    const uint8_t unknown = 5;
+    tx_frame(ZPT_TEST_REQ_CAPTURE_DESCRIBE, &unknown, 1);
+    const uint8_t failure[] = {
+        ZPT_TEST_REQ_CAPTURE_DESCRIBE, ZPT_TUNING_STATUS_UNKNOWN_TARGET, 5, 0xff, 0, 0, 0, 0};
+    expect_frame(ZPT_RESP_TUNING_RESULT, failure, sizeof(failure));
 }

@@ -25,4 +25,12 @@ target_sources(app PRIVATE
   test_tuning.c
   test_telemetry.c
   test_devices.c
+  # The capture case drives a pipeline; the app builds without ZMK, so the
+  # module's pipeline core and stages (CONFIG_ZMK_POINTING_TOOLS_PIPELINE)
+  # are off.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/pipeline.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/stage/orientation.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/stage/resolution_normalize.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/stage/motion_gate/coherent_displacement.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/stage/motion_gate/coherent_displacement_stage.c
 )

@@ -172,10 +172,23 @@ when `source.span` is `"sensor"` (or with `--sensor-spans`). Times are read
 as 32-bit microseconds, so a fixture must be shorter than about 71.6 minutes;
 split longer recordings.
 
+A recorded trace (from firmware input capture, see
+[`protocol.md`](protocol.md#input-capture)) may also hold `["flush", deltaUs]`
+events where firmware ran stage deadlines. A cursor trace with any flush event
+runs deadlines only there, as the device did, instead of at their own time,
+and nothing runs after the last event. A recorded cursor trace's events may
+end with one more field, `late`: how many whole milliseconds before the
+event's own time its stages saw it, for a frame that firmware recorded after
+a later flush (`["motion", deltaUs, x, y, spanUs, late]`, `["flush", deltaUs,
+late]`, `["keypress", deltaUs, late]`). Replay hands the stages
+`floor(t / 1000) - late`.
+
 The span is replayed exactly as recorded. A peripheral's firmware path
 quantizes it on the way to the central (2 ms steps in
 `src/source/transport/compact_split_codec.c`), so exact-span replay of a
-peripheral is slightly optimistic about what the firmware sees today.
+synthetic peripheral trace is slightly optimistic about what the firmware sees
+today. A captured trace doesn't have this problem: capture records spans at
+the pipeline's input, after the split link has already quantized them.
 
 **Processor.** Scroll, text, and noise fixtures keep their version 1
 `settings`, except that the resolution comes from `source.cpi`. The cursor
@@ -362,7 +375,9 @@ A recording becomes a fixture when it has:
 4. The pipeline the device ran, as `processor.stages` and, ideally, the
    tuner's profile export in `processor.profile`.
 5. Raw motion events with microsecond arrival times and sensor spans, and
-   keypress events if they were recorded.
+   keypress events if they were recorded. `host/replay/capture.js` writes
+   items 1 to 5 from a firmware input capture and the settings read from the
+   device (see [`protocol.md`](protocol.md#turning-a-capture-into-a-trace)).
 6. `truth.strokes` labelled by activity, with whatever ground truth is
    known: the steady speed, the intended axis, the intended ball `path`, or
    the playground target as `intendedOutput`.
