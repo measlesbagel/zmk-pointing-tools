@@ -28,6 +28,7 @@ import {
   FrameDecoder,
   MESSAGE,
   captureSettingsHash,
+  captureDecoder,
   parseCaptureBatch,
   parseCaptureDescription,
   parseCaptureStatus,
@@ -56,6 +57,7 @@ const RESTART_SPAN_US = 40000;
  * a protocol stream. */
 export function decodeCaptureStream(bytes) {
   const decoder = new FrameDecoder();
+  const batches = captureDecoder();
   let description = null;
   const statuses = [];
   const records = [];
@@ -68,7 +70,7 @@ export function decodeCaptureStream(bytes) {
     } else if (frame.type === MESSAGE.CAPTURE_STATUS_RESPONSE) {
       statuses.push(parseCaptureStatus(frame.payload));
     } else if (frame.type === MESSAGE.CAPTURE_BATCH) {
-      records.push(...parseCaptureBatch(frame.payload));
+      records.push(...parseCaptureBatch(frame.payload, batches));
     }
   }
   if (description === null) throw new Error("stream has no capture description");

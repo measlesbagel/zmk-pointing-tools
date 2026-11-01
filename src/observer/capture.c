@@ -19,11 +19,18 @@ static void put_le32(uint8_t *out, uint32_t value) {
     }
 }
 
+static uint32_t get_le32(const uint8_t *bytes) {
+    return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 | (uint32_t)bytes[2] << 16 |
+           (uint32_t)bytes[3] << 24;
+}
+
 static int32_t saturate_int32(int64_t value) {
     return value > INT32_MAX ? INT32_MAX : (value < INT32_MIN ? INT32_MIN : (int32_t)value);
 }
 
-size_t zpt_capture_record_encode(const struct zpt_capture_record *record, uint8_t *out) {
+/* Encode one record in full, without its sequence; out holds
+ * ZPT_CAPTURE_RECORD_MAX_SIZE bytes. Returns the encoded length. */
+static size_t encode_full(const struct zpt_capture_record *record, uint8_t *out) {
     out[0] = record->kind;
     switch (record->kind) {
     case ZPT_CAPTURE_RECORD_FRAME:
@@ -294,31 +301,226 @@ void zpt_capture_tap_start(struct zpt_capture_tap *tap) {
     }
 }
 
-void zpt_capture_batch_clear(struct zpt_capture_batch *batch) {
-    batch->length = ZPT_CAPTURE_BATCH_HEADER_SIZE;
-    batch->count = 0;
-    batch->next_sequence = 0;
+/* Internal to the buffer, never sent: kind, then how many records were
+ * dropped (u32) before the record that follows. */
+#define GAP_MARKER 0x7fU
+#define GAP_MARKER_SIZE 5U
+
+static size_t put_varint(uint8_t *out, uint32_t value) {
+    size_t length = 0;
+    while (value >= 0x80U) {
+        out[length++] = (uint8_t)(value | 0x80U);
+        value >>= 7;
+    }
+    out[length++] = (uint8_t)value;
+    return length;
 }
 
-bool zpt_capture_batch_add(struct zpt_capture_batch *batch,
-                           const struct zpt_capture_record *record) {
-    uint8_t encoded[ZPT_CAPTURE_RECORD_MAX_SIZE];
-    const size_t length = zpt_capture_record_encode(record, encoded);
-    if (batch->count > 0U &&
-        (record->sequence != batch->next_sequence || batch->count == UINT8_MAX ||
-         batch->length + length > sizeof(batch->payload))) {
+static uint32_t zigzag(int32_t value) {
+    return ((uint32_t)value << 1) ^ (value < 0 ? UINT32_MAX : 0U);
+}
+
+static size_t varint_size(uint32_t value) {
+    uint8_t scratch[5];
+    return put_varint(scratch, value);
+}
+
+static uint64_t frame_us(const struct zpt_capture_record *record) {
+    return (uint64_t)record->time_ms * 1000U + record->time_us;
+}
+
+/* A frame as a delta from the buffer's previous frame, or 0 when it has to
+ * go whole. out holds ZPT_CAPTURE_RECORD_MAX_SIZE + 2 bytes. */
+static size_t encode_delta(const struct zpt_capture_buffer *buffer,
+                           const struct zpt_capture_record *record, uint8_t *out) {
+    const int64_t elapsed = (int64_t)(frame_us(record) - buffer->previous_us);
+    if (!buffer->have_previous || elapsed > INT32_MAX || elapsed < INT32_MIN) {
+        return 0;
+    }
+    uint8_t mode = ZPT_CAPTURE_SPAN_ABSOLUTE;
+    if (record->span_us == buffer->previous_span_us) {
+        mode = ZPT_CAPTURE_SPAN_PREVIOUS;
+    } else if (elapsed >= 0 && record->span_us == (uint64_t)elapsed) {
+        mode = ZPT_CAPTURE_SPAN_ELAPSED;
+    } else if ((int64_t)record->span_us - elapsed >= INT32_MIN &&
+               (int64_t)record->span_us - elapsed <= INT32_MAX &&
+               varint_size(zigzag((int32_t)((int64_t)record->span_us - elapsed))) <
+                   varint_size(record->span_us)) {
+        mode = ZPT_CAPTURE_SPAN_ELAPSED_PLUS;
+    }
+    const bool flags = record->flags != buffer->previous_flags;
+    size_t length = 1;
+    out[0] = (uint8_t)(ZPT_CAPTURE_DELTA_FRAME | (flags ? ZPT_CAPTURE_DELTA_FLAGS : 0U) | mode);
+    length += put_varint(&out[length], zigzag((int32_t)elapsed));
+    length += put_varint(&out[length], zigzag(record->x));
+    length += put_varint(&out[length], zigzag(record->y));
+    if (flags) {
+        out[length++] = record->flags;
+    }
+    if (mode == ZPT_CAPTURE_SPAN_ELAPSED_PLUS) {
+        length += put_varint(&out[length], zigzag((int32_t)((int64_t)record->span_us - elapsed)));
+    } else if (mode == ZPT_CAPTURE_SPAN_ABSOLUTE) {
+        length += put_varint(&out[length], record->span_us);
+    }
+    return length < ZPT_CAPTURE_RECORD_MAX_SIZE ? length : 0;
+}
+
+static size_t varint_length(const uint8_t *bytes, size_t available) {
+    size_t length = 0;
+    while (length < available && length < 5U && (bytes[length] & 0x80U) != 0U) {
+        length++;
+    }
+    return length + 1U;
+}
+
+/* The length of the stored record or gap marker that starts bytes. */
+static size_t stored_length(const uint8_t *bytes, size_t available) {
+    const uint8_t kind = bytes[0];
+    if ((kind & ZPT_CAPTURE_DELTA_FRAME) != 0U) {
+        size_t length = 1;
+        for (int field = 0; field < 3; field++) {
+            length += varint_length(&bytes[length], available - length);
+        }
+        length += (kind & ZPT_CAPTURE_DELTA_FLAGS) != 0U ? 1U : 0U;
+        const uint8_t mode = kind & 0x03U;
+        if (mode == ZPT_CAPTURE_SPAN_ELAPSED_PLUS || mode == ZPT_CAPTURE_SPAN_ABSOLUTE) {
+            length += varint_length(&bytes[length], available - length);
+        }
+        return length;
+    }
+    switch (kind) {
+    case ZPT_CAPTURE_RECORD_FRAME:
+        return 20;
+    case ZPT_CAPTURE_RECORD_SOURCE:
+        return 6;
+    case ZPT_CAPTURE_RECORD_KEYPRESS:
+    case ZPT_CAPTURE_RECORD_FLUSH:
+    case ZPT_CAPTURE_RECORD_ENTERED:
+    case GAP_MARKER:
+        return 5;
+    default:
+        return 1;
+    }
+}
+
+static void ring_write(struct zpt_capture_buffer *buffer, const uint8_t *bytes, uint32_t length) {
+    uint32_t tail = (buffer->head + buffer->used) % buffer->capacity;
+    for (uint32_t i = 0; i < length; i++) {
+        buffer->data[tail] = bytes[i];
+        tail = tail + 1U == buffer->capacity ? 0U : tail + 1U;
+    }
+    buffer->used += length;
+}
+
+static void ring_read(const struct zpt_capture_buffer *buffer, uint32_t offset, uint8_t *out,
+                      uint32_t length) {
+    uint32_t position = (buffer->head + offset) % buffer->capacity;
+    for (uint32_t i = 0; i < length; i++) {
+        out[i] = buffer->data[position];
+        position = position + 1U == buffer->capacity ? 0U : position + 1U;
+    }
+}
+
+void zpt_capture_buffer_init(struct zpt_capture_buffer *buffer, uint8_t *storage,
+                             uint32_t capacity) {
+    *buffer = (struct zpt_capture_buffer){.data = storage, .capacity = capacity};
+}
+
+void zpt_capture_buffer_reset(struct zpt_capture_buffer *buffer) {
+    zpt_capture_buffer_init(buffer, buffer->data, buffer->capacity);
+}
+
+bool zpt_capture_buffer_put(struct zpt_capture_buffer *buffer,
+                            const struct zpt_capture_record *record) {
+    buffer->next_sequence++;
+    uint8_t encoded[ZPT_CAPTURE_RECORD_MAX_SIZE + 2U];
+    size_t length = 0;
+    const bool frame = record->kind == ZPT_CAPTURE_RECORD_FRAME;
+    if (frame) {
+        length = encode_delta(buffer, record, encoded);
+    }
+    if (length == 0U) {
+        length = encode_full(record, encoded);
+    }
+    const uint32_t needed = (uint32_t)length + (buffer->pending_gap > 0U ? GAP_MARKER_SIZE : 0U);
+    if (buffer->capacity - buffer->used < needed) {
+        buffer->pending_gap++;
+        /* The host can't follow a delta past a lost frame. */
+        buffer->have_previous = false;
         return false;
     }
-    if (batch->count == 0U) {
-        batch->length = ZPT_CAPTURE_BATCH_HEADER_SIZE;
-        put_le32(&batch->payload[0], record->sequence);
+    if (buffer->pending_gap > 0U) {
+        uint8_t marker[GAP_MARKER_SIZE] = {GAP_MARKER};
+        put_le32(&marker[1], buffer->pending_gap);
+        ring_write(buffer, marker, sizeof(marker));
+        buffer->pending_gap = 0;
     }
-    memcpy(&batch->payload[batch->length], encoded, length);
-    batch->length = (uint16_t)(batch->length + length);
-    batch->count++;
-    batch->payload[4] = batch->count;
-    batch->next_sequence = record->sequence + 1U;
+    ring_write(buffer, encoded, (uint32_t)length);
+    buffer->records++;
+    if (frame) {
+        buffer->previous_us = frame_us(record);
+        buffer->previous_span_us = record->span_us;
+        buffer->previous_flags = record->flags;
+        buffer->have_previous = true;
+    }
     return true;
+}
+
+size_t zpt_capture_buffer_peek(const struct zpt_capture_buffer *buffer, uint8_t *out,
+                               size_t capacity, struct zpt_capture_take *take) {
+    uint32_t offset = 0;
+    uint32_t sequence = buffer->out_sequence;
+    size_t length = ZPT_CAPTURE_BATCH_HEADER_SIZE;
+    uint32_t count = 0;
+    while (offset < buffer->used && count < UINT8_MAX) {
+        uint8_t record[ZPT_CAPTURE_RECORD_MAX_SIZE] = {0};
+        const uint32_t left = buffer->used - offset;
+        const uint32_t available = left < sizeof(record) ? left : (uint32_t)sizeof(record);
+        ring_read(buffer, offset, record, available);
+        const size_t record_length = stored_length(record, available);
+        if (record[0] == GAP_MARKER) {
+            /* Records after a gap start the next batch. */
+            if (count > 0U) {
+                break;
+            }
+            sequence += get_le32(&record[1]);
+        } else {
+            if (length + record_length > capacity) {
+                break;
+            }
+            memcpy(&out[length], record, record_length);
+            length += record_length;
+            count++;
+        }
+        offset += (uint32_t)record_length;
+    }
+    *take = (struct zpt_capture_take){
+        .bytes = offset, .records = count, .next_sequence = sequence + count};
+    if (count == 0U) {
+        return 0;
+    }
+    put_le32(out, sequence);
+    out[4] = (uint8_t)count;
+    return length;
+}
+
+void zpt_capture_buffer_consume(struct zpt_capture_buffer *buffer,
+                                const struct zpt_capture_take *take) {
+    buffer->head = (buffer->head + take->bytes) % buffer->capacity;
+    buffer->used -= take->bytes;
+    buffer->records -= take->records;
+    buffer->out_sequence = take->next_sequence;
+}
+
+uint32_t zpt_capture_buffer_discard(struct zpt_capture_buffer *buffer) {
+    const uint32_t lost = buffer->records;
+    buffer->head = 0;
+    buffer->used = 0;
+    buffer->records = 0;
+    buffer->pending_gap = 0;
+    buffer->out_sequence = buffer->next_sequence;
+    buffer->have_previous = false;
+    return lost;
 }
 
 /* Settings a stage takes that runtime tuning doesn't publish. */

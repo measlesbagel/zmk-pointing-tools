@@ -10,22 +10,28 @@
  * a busy router executor does, so frames sometimes follow a later flush.
  * Some key presses land while a frame runs, after the guard was read for
  * it. Partway through, a recording starts through zpt_capture_tap_start,
- * as the telemetry service starts one. Later a few records are dropped as
- * a full queue drops them, and a tuning change lands mid-stroke, as an
- * agent's A/B preview does; the tap resyncs at the next rest after each.
+ * as the telemetry service starts one. Records go through the firmware's
+ * burst buffer and leave over a simulated Bluetooth link: a few credits of
+ * 62-byte notifications per connection event. Fast flicks outrun the link;
+ * a small buffer fills and drops records, and a tuning change lands
+ * mid-stroke, as an agent's A/B preview does; the tap resyncs at the next
+ * rest after each.
+ *
+ *   capture_session [buffer-bytes [credits [interval-us]]]
  *
  * Prints one JSON object: the protocol bytes a host would receive (the
  * capture description and batches, as hex), the settings as a tuner
  * profile export, and every cursor report the pipeline sent while
- * recording, tagged with the trace it belongs to (the number of entered
- * records before it); reports sent between a drop and the resync belong to
- * none. Replaying each converted trace must reproduce its reports.
+ * recording, tagged with the trace it belongs to (the sequence of the
+ * entered record that starts it); reports sent between a drop and the
+ * resync belong to none. Replaying each converted trace must reproduce its reports.
  */
 
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <zmk/pointing_tools/core/pipeline.h>
@@ -90,13 +96,12 @@ struct session {
     bool frozen;
     bool frozen_have;
     uint32_t frozen_ms;
-    uint32_t sequence;
     /* Records still to drop, whether a drop awaits a resync, and the trace
      * reports belong to (-1 between a drop and the resync). */
-    uint32_t drop_remaining;
     bool resync;
+    /* Key presses land during strokes; not during the fast flicks. */
+    bool typing;
     int32_t trace;
-    uint32_t entered;
     uint32_t dropped;
     uint32_t injected_keypresses;
     uint32_t late_flushes;
@@ -104,7 +109,16 @@ struct session {
     uint32_t start_hash;
     /* Profile exports before and after the tuning change. */
     char profiles[2][MAX_PROFILE];
-    struct zpt_capture_batch batch;
+    /* The burst buffer and the simulated link. */
+    struct zpt_capture_buffer buffer;
+    uint8_t storage[65536];
+    uint32_t credits;
+    uint32_t interval_us;
+    uint32_t next_event_us;
+    uint32_t records;
+    uint32_t frames;
+    uint32_t frame_bytes;
+    uint32_t peak_used;
     uint8_t stream[MAX_STREAM];
     size_t stream_length;
     int32_t outputs[MAX_OUTPUTS][4];
@@ -200,11 +214,34 @@ static void stream_frame(uint8_t type, const uint8_t *payload, size_t length) {
     session.stream_length += 5U + length;
 }
 
-static void send_batch(void) {
-    if (session.batch.count > 0U) {
-        stream_frame(CAPTURE_BATCH_EVENT, session.batch.payload, session.batch.length);
+/* Send batches while the link has credits, as the telemetry worker does;
+ * a batch needs one credit per 62-byte notification of its frame. Returns
+ * whether the buffer is empty. */
+static bool send_batches(uint32_t credits) {
+    for (;;) {
+        uint8_t payload[ZPT_CAPTURE_BATCH_MAX_PAYLOAD];
+        struct zpt_capture_take take;
+        const size_t length =
+            zpt_capture_buffer_peek(&session.buffer, payload, sizeof(payload), &take);
+        if (length == 0U) {
+            return true;
+        }
+        const uint32_t needed = (uint32_t)(5U + length + 61U) / 62U;
+        if (needed > credits) {
+            return false;
+        }
+        credits -= needed;
+        stream_frame(CAPTURE_BATCH_EVENT, payload, length);
+        zpt_capture_buffer_consume(&session.buffer, &take);
     }
-    zpt_capture_batch_clear(&session.batch);
+}
+
+/* The connection events up to now_us, each with a fresh credit budget. */
+static void run_link(uint32_t now_us) {
+    while ((int32_t)(now_us - session.next_event_us) >= 0) {
+        (void)send_batches(session.credits);
+        session.next_event_us += session.interval_us;
+    }
 }
 
 static void keypress(void) {
@@ -212,31 +249,36 @@ static void keypress(void) {
     session.last_keypress_ms = session.now_us / 1000U;
 }
 
-/* The telemetry service's path: number the record and batch it, or drop
- * it as a full queue does, still numbered, so the host sees the gap. */
+/* The telemetry service's path: store the record in the burst buffer, or
+ * drop it when the buffer is full, still numbered, so the host sees the
+ * gap, and ask the tap to resync. */
 static void capture_submit(void *context, const struct zpt_capture_record *record) {
     (void)context;
-    struct zpt_capture_record numbered = *record;
-    numbered.sequence = session.sequence++;
-    if (record->kind == ZPT_CAPTURE_RECORD_ENTERED) {
-        session.trace = (int32_t)session.entered++;
-    } else if (record->kind == ZPT_CAPTURE_RECORD_SETTINGS_CHANGED) {
+    if (record->kind == ZPT_CAPTURE_RECORD_SETTINGS_CHANGED) {
         session.trace = -1;
     }
-    if (session.drop_remaining > 0U) {
-        session.drop_remaining--;
+    session.records++;
+    const uint32_t before = session.buffer.used + (session.buffer.pending_gap > 0U ? 5U : 0U);
+    if (!zpt_capture_buffer_put(&session.buffer, record)) {
         session.dropped++;
         session.resync = true;
         session.trace = -1;
         return;
     }
-    if (!zpt_capture_batch_add(&session.batch, &numbered)) {
-        send_batch();
-        (void)zpt_capture_batch_add(&session.batch, &numbered);
+    /* Reports from here on belong to the trace this entered record starts. */
+    if (record->kind == ZPT_CAPTURE_RECORD_ENTERED) {
+        session.trace = (int32_t)(session.buffer.next_sequence - 1U);
+    }
+    if (record->kind == ZPT_CAPTURE_RECORD_FRAME) {
+        session.frames++;
+        session.frame_bytes += session.buffer.used - before;
+    }
+    if (session.buffer.used > session.peak_used) {
+        session.peak_used = session.buffer.used;
     }
     /* A key press landing while the frame runs, after the tap read the
      * guard for it: the stages must not see it until the next frame. */
-    if (record->kind == ZPT_CAPTURE_RECORD_FRAME && random_between(0, 30) == 0) {
+    if (record->kind == ZPT_CAPTURE_RECORD_FRAME && session.typing && random_between(0, 30) == 0) {
         keypress();
         session.injected_keypresses++;
     }
@@ -390,6 +432,7 @@ static int run_deadlines(uint32_t until_ms) {
         const uint32_t flush_ms = deadline + late;
         session.late_flushes += late > 0U ? 1U : 0U;
         session.now_us = flush_ms * 1000U;
+        run_link(session.now_us);
         if (zpt_pipeline_flush(&session.pipeline, flush_ms, &result) < 0) {
             return -EIO;
         }
@@ -401,6 +444,7 @@ static int advance(uint32_t delta_us) {
     const uint32_t target = session.now_us + delta_us;
     int ret = run_deadlines(target / 1000U);
     session.now_us = target;
+    run_link(target);
     return ret;
 }
 
@@ -433,7 +477,8 @@ static void export_profile(char *out, size_t capacity);
 /* What starting a recording does in the telemetry service
  * (zpt_capture_start_between_frames). */
 static void start_recording(void) {
-    session.sequence = 0;
+    zpt_capture_buffer_reset(&session.buffer);
+    session.next_event_us = session.now_us;
     session.resync = false;
     session.trace = -1;
     session.settings_hash = settings_hash();
@@ -452,7 +497,7 @@ static int stroke(uint32_t frames, int32_t step_x, int32_t step_y, uint32_t min_
         if (advance(gap) < 0) {
             return -EIO;
         }
-        if (random_between(0, 40) == 0) {
+        if (session.typing && random_between(0, 40) == 0) {
             keypress();
         }
         const int32_t jitter_x = (int32_t)random_between(0, 2) - 1;
@@ -466,29 +511,27 @@ static int stroke(uint32_t frames, int32_t step_x, int32_t step_y, uint32_t min_
     return 0;
 }
 
-static int run_session(void) {
+static int run_session(uint32_t buffer_bytes) {
     session.rng = 0x1234567U;
     session.trace = -1;
     session.now_us = 5000000U + 377U;
-    zpt_capture_batch_clear(&session.batch);
+    session.typing = true;
+    zpt_capture_buffer_init(&session.buffer, session.storage, buffer_bytes);
     int ret = build_pipeline();
     /* Before the recording: motion and a key press the guard remembers. */
     ret = ret < 0 ? ret : stroke(40, 3, 1, 900, 2500);
     keypress();
     ret = ret < 0 ? ret : advance(12000);
     start_recording();
-    /* Slow aims, a flick, typing shake, and pauses past the idle timeouts. */
+    /* Slow aims, flicks, typing shake, and pauses past the idle timeouts;
+     * the two flicks near the end read the sensor about every half
+     * millisecond, with no typing, then a slow aim follows them. */
     static const int32_t strokes[][5] = {
-        {120, 1, 0, 1500, 9000},  {60, 0, -2, 800, 3000}, {80, 14, 9, 900, 1300},
-        {30, -1, 1, 3000, 45000}, {90, -6, 3, 700, 1100}, {50, 2, 2, 1000, 20000},
+        {120, 1, 0, 1500, 9000},  {60, 0, -2, 800, 3000},   {80, 14, 9, 900, 1300},
+        {30, -1, 1, 3000, 45000}, {90, -6, 3, 700, 1100},   {50, 2, 2, 1000, 20000},
+        {300, 70, -40, 400, 700}, {250, -90, 60, 400, 700}, {60, 1, 1, 1500, 4000},
     };
     for (size_t i = 0; ret == 0 && i < sizeof(strokes) / sizeof(strokes[0]); i++) {
-        /* Drop a few records in the middle of the third stroke. */
-        if (i == 2) {
-            ret = stroke(20, (int32_t)strokes[i][1], (int32_t)strokes[i][2],
-                         (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
-            session.drop_remaining = 3;
-        }
         /* An A/B preview mid-stroke. */
         if (i == 4) {
             ret = ret < 0 ? ret
@@ -496,18 +539,24 @@ static int run_session(void) {
                                    (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
             ret = ret < 0 ? ret : change_settings();
         }
+        session.typing = i < 6 || i > 7;
         ret = ret < 0 ? ret
                       : stroke((uint32_t)strokes[i][0], strokes[i][1], strokes[i][2],
                                (uint32_t)strokes[i][3], (uint32_t)strokes[i][4]);
         keypress();
-        /* After the drop and the tuning change, rest just past the resync
-         * gap but inside the guard's window, so the resync re-records the
-         * key press that ended the stroke. */
-        ret = ret < 0 ? ret : advance(i == 2 || i == 4 ? 60000U : random_between(10000, 300000));
+        /* After the tuning change, rest just past the resync gap but inside
+         * the guard's window, so the resync re-records the key press that
+         * ended the stroke. After a flick the gate's idle deadline (120 ms)
+         * runs first, so the rest that resyncs ends 40 ms after it. */
+        ret = ret < 0 ? ret
+                      : advance(i == 4             ? 60000U
+                                : i == 6 || i == 7 ? 200000U
+                                                   : random_between(10000, 300000));
     }
-    /* Let every pending deadline run, then end the recording. */
+    /* Let every pending deadline run, then end the recording: firmware
+     * sends what is stored before the status, whatever the link rate. */
     ret = ret < 0 ? ret : advance(1000000);
-    send_batch();
+    (void)send_batches(UINT32_MAX);
     return ret;
 }
 
@@ -565,8 +614,16 @@ static int change_settings(void) {
     return 0;
 }
 
-int main(void) {
-    if (run_session() < 0) {
+int main(int argc, char **argv) {
+    const uint32_t buffer_bytes = argc > 1 ? (uint32_t)strtoul(argv[1], NULL, 0) : 16384U;
+    session.credits = argc > 2 ? (uint32_t)strtoul(argv[2], NULL, 0) : 2U;
+    session.interval_us = argc > 3 ? (uint32_t)strtoul(argv[3], NULL, 0) : 7500U;
+    if (buffer_bytes == 0U || buffer_bytes > sizeof(session.storage) || session.credits < 2U ||
+        session.interval_us == 0U) {
+        fputs("usage: capture_session [buffer-bytes [credits >= 2 [interval-us]]]\n", stderr);
+        return 2;
+    }
+    if (run_session(buffer_bytes) < 0) {
         fputs("capture session failed\n", stderr);
         return 1;
     }
@@ -586,9 +643,11 @@ int main(void) {
     print_hex(session.stream, session.stream_length);
     printf("\",");
     printf("\"profiles\":[%s,%s]", session.profiles[0], session.profiles[1]);
-    printf(",\"dropped\":%" PRIu32 ",\"injectedKeypresses\":%" PRIu32 ",\"lateFlushes\":%" PRIu32
-           ",\"outputs\":[",
-           session.dropped, session.injected_keypresses, session.late_flushes);
+    printf(",\"records\":%" PRIu32 ",\"dropped\":%" PRIu32 ",\"frames\":%" PRIu32
+           ",\"frameBytes\":%" PRIu32 ",\"peakBuffer\":%" PRIu32 ",\"bufferSize\":%" PRIu32
+           ",\"injectedKeypresses\":%" PRIu32 ",\"lateFlushes\":%" PRIu32 ",\"outputs\":[",
+           session.records, session.dropped, session.frames, session.frame_bytes, session.peak_used,
+           buffer_bytes, session.injected_keypresses, session.late_flushes);
     for (size_t i = 0; i < session.output_count; i++) {
         printf("%s[%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "]", i == 0 ? "" : ",",
                session.outputs[i][0], session.outputs[i][1], session.outputs[i][2],

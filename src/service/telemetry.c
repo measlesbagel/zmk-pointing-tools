@@ -145,22 +145,14 @@ static const struct zpt_host_transport *zpt_host_link;
 
 enum zpt_record_kind {
     ZPT_RECORD_STATE,
-    ZPT_RECORD_CAPTURE,
 };
 
+/* Capture records don't use the queue; they wait in the capture buffer. */
 struct zpt_telemetry_record {
     uint8_t kind;
-    /* Capture records: the recording they belong to. */
-    uint8_t generation;
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY) ||                                       \
-    IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-    union {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
+    union {
         struct zpt_state_sample state;
-#endif
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-        struct zpt_capture_record capture;
-#endif
     } sample;
 #endif
 };
@@ -639,7 +631,7 @@ static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) 
 
 #define ZPT_CAPTURE_NONE UINT8_MAX
 #define ZPT_CAPTURE_LABEL_MAX_LENGTH 27
-#define ZPT_CAPTURE_STATUS_HEADER_SIZE 7
+#define ZPT_CAPTURE_STATUS_HEADER_SIZE 15
 /* id, active, stage count, flags, settings hash, label length. */
 #define ZPT_CAPTURE_STATUS_ENTRY_SIZE (9 + ZPT_CAPTURE_LABEL_MAX_LENGTH)
 #define ZPT_CAPTURE_FLAG_REPLAYABLE 0x01
@@ -669,14 +661,15 @@ static atomic_t zpt_capture_resync;
 /* The recorded pipeline's settings hash, for its entered records. Set
  * while no frame runs: at the start and when a tuning change lands. */
 static atomic_t zpt_capture_hash;
-/* Numbers recordings, so the worker drops records of an earlier one, and
- * the records of the current one; both under the lock. */
+/* Records of the running recording, encoded, until the link has room for
+ * them. Taps on the input thread and the worker share it under the lock;
+ * the lock also orders the recording flag with the records. */
 static struct k_spinlock zpt_capture_lock;
-static uint8_t zpt_capture_generation;
-static uint32_t zpt_capture_sequence;
-/* Only the worker thread fills and sends it. A batch the link has no room
- * for stays here and keeps filling until it is full. */
-static struct zpt_capture_batch zpt_capture_batch;
+static uint8_t zpt_capture_storage[CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE];
+static struct zpt_capture_buffer zpt_capture_buffer = {
+    .data = zpt_capture_storage,
+    .capacity = sizeof(zpt_capture_storage),
+};
 
 static bool zpt_capture_entry_recording(void *context) {
     const struct zpt_capture_entry *entry = context;
@@ -690,21 +683,17 @@ static void zpt_capture_count_drop(atomic_val_t records) {
 
 static void zpt_capture_submit(void *context, const struct zpt_capture_record *capture) {
     ARG_UNUSED(context);
-    struct zpt_telemetry_record record = {
-        .kind = ZPT_RECORD_CAPTURE,
-        .sample.capture = *capture,
-    };
-    int ret;
-    /* Records enter the queue in the order they are numbered, so the host
-     * reads every gap as a drop. k_msgq_put with K_NO_WAIT never blocks, so
-     * it may run under the spinlock. */
+    bool stored = true;
+    /* Records are numbered and stored in one step, so the host reads every
+     * gap as a drop; none lands after the recording stopped. Encoding a
+     * record takes a few dozen instructions. */
     K_SPINLOCK(&zpt_capture_lock) {
-        record.generation = zpt_capture_generation;
-        record.sample.capture.sequence = zpt_capture_sequence++;
-        ret = k_msgq_put(&zpt_record_queue, &record, K_NO_WAIT);
+        if (atomic_get(&zpt_capture_recording) != ZPT_CAPTURE_NONE) {
+            stored = zpt_capture_buffer_put(&zpt_capture_buffer, capture);
+        }
     }
-    /* A full queue drops the record; the host sees the sequence gap. */
-    if (ret < 0) {
+    /* A full buffer drops the record; the host sees the sequence gap. */
+    if (!stored) {
         zpt_capture_count_drop(1);
         return;
     }
@@ -767,51 +756,43 @@ void zpt_capture_settings_changed(void) {
     atomic_set(&zpt_capture_resync, 1);
 }
 
-/* Send the batch if the link has room, else keep it. A recording that
- * ends sends it whatever the room, waiting for it. */
-static bool zpt_capture_send_batch(bool droppable) {
-    if (zpt_capture_batch.count == 0U) {
-        return true;
-    }
-    if (zpt_send_frame_on_link(ZPT_EVENT_CAPTURE, zpt_capture_batch.payload,
-                               zpt_capture_batch.length, droppable) < 0) {
-        if (!droppable) {
-            zpt_capture_count_drop(zpt_capture_batch.count);
-            zpt_capture_batch_clear(&zpt_capture_batch);
+/* Send stored records while the link has room. With wait, as when a
+ * recording ends, send them all, waiting for room; a link that fails then
+ * loses what is left, counted as dropped. */
+static void zpt_capture_drain(bool wait) {
+    for (;;) {
+        uint8_t payload[ZPT_CAPTURE_BATCH_MAX_PAYLOAD];
+        struct zpt_capture_take take;
+        size_t length;
+        K_SPINLOCK(&zpt_capture_lock) {
+            length = zpt_capture_buffer_peek(&zpt_capture_buffer, payload, sizeof(payload), &take);
         }
-        return false;
+        if (length == 0U) {
+            return;
+        }
+        if (zpt_send_frame_on_link(ZPT_EVENT_CAPTURE, payload, (uint16_t)length, !wait) < 0) {
+            if (wait) {
+                uint32_t lost;
+                K_SPINLOCK(&zpt_capture_lock) {
+                    lost = zpt_capture_buffer_discard(&zpt_capture_buffer);
+                }
+                zpt_capture_count_drop((atomic_val_t)lost);
+            }
+            return;
+        }
+        K_SPINLOCK(&zpt_capture_lock) { zpt_capture_buffer_consume(&zpt_capture_buffer, &take); }
     }
-    zpt_capture_batch_clear(&zpt_capture_batch);
-    return true;
 }
 
-static void zpt_capture_take(const struct zpt_telemetry_record *record) {
-    uint8_t generation;
-    K_SPINLOCK(&zpt_capture_lock) { generation = zpt_capture_generation; }
-    if (record->generation != generation ||
-        zpt_capture_batch_add(&zpt_capture_batch, &record->sample.capture)) {
-        return;
-    }
-    /* The batch is full, or the record follows a drop. A full batch the
-     * link still can't take is dropped whole, like a refused state sample;
-     * the host sees the gap and the counter counts its records. */
-    if (!zpt_capture_send_batch(true)) {
-        zpt_capture_count_drop(zpt_capture_batch.count);
-        zpt_capture_batch_clear(&zpt_capture_batch);
-    }
-    (void)zpt_capture_batch_add(&zpt_capture_batch, &record->sample.capture);
+static void zpt_capture_stop(void) {
+    K_SPINLOCK(&zpt_capture_lock) { atomic_set(&zpt_capture_recording, ZPT_CAPTURE_NONE); }
 }
-
-static void zpt_capture_stop(void) { atomic_set(&zpt_capture_recording, ZPT_CAPTURE_NONE); }
 
 /* Runs while no frame is in any pipeline, so the reset and the first
  * records come before the recording's first frame. */
 static void zpt_capture_start_between_frames(void *arg) {
     struct zpt_capture_entry *entry = arg;
-    K_SPINLOCK(&zpt_capture_lock) {
-        zpt_capture_generation++;
-        zpt_capture_sequence = 0;
-    }
+    K_SPINLOCK(&zpt_capture_lock) { zpt_capture_buffer_reset(&zpt_capture_buffer); }
     atomic_clear(&zpt_capture_resync);
     atomic_set(&zpt_capture_hash, (atomic_val_t)zpt_capture_settings_hash(entry->pipeline));
     atomic_set(&zpt_capture_recording, (atomic_val_t)(entry - zpt_capture_entries));
@@ -846,6 +827,12 @@ static void zpt_send_capture_status(void) {
     zpt_large_payload[offset++] = (uint8_t)atomic_get(&zpt_capture_recording);
     sys_put_le32((uint32_t)atomic_get(&zpt_capture_dropped), &zpt_large_payload[offset]);
     offset += 4;
+    uint32_t used;
+    K_SPINLOCK(&zpt_capture_lock) { used = zpt_capture_buffer.used; }
+    sys_put_le32(used, &zpt_large_payload[offset]);
+    offset += 4;
+    sys_put_le32(zpt_capture_buffer.capacity, &zpt_large_payload[offset]);
+    offset += 4;
     zpt_large_payload[offset++] = (uint8_t)zpt_capture_count;
     for (size_t i = 0; i < zpt_capture_count; i++) {
         const struct zpt_capture_entry *entry = &zpt_capture_entries[i];
@@ -871,7 +858,7 @@ static void zpt_handle_capture_control(const uint8_t *payload, uint16_t length) 
          * far before the status that confirms it. */
         zpt_capture_stop();
         zpt_drain_records();
-        (void)zpt_capture_send_batch(false);
+        zpt_capture_drain(true);
         if (payload[0] < zpt_capture_count) {
             int ret = zpt_capture_between_frames(zpt_capture_start_between_frames,
                                                  &zpt_capture_entries[payload[0]]);
@@ -1285,10 +1272,6 @@ static void zpt_drain_records(void) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
             zpt_state_disable_all();
 #endif
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-            zpt_capture_stop();
-            zpt_capture_batch_clear(&zpt_capture_batch);
-#endif
             return;
         }
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_STATE_TELEMETRY)
@@ -1297,26 +1280,25 @@ static void zpt_drain_records(void) {
             zpt_send_state(&record.sample.state);
         }
 #endif
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-        if (record.kind == ZPT_RECORD_CAPTURE) {
-            zpt_capture_take(&record);
-        }
-#endif
     }
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-    /* Send what is batched once the queue is empty, so records wait no
-     * longer than the worker takes to drain the queue. A link without room
-     * keeps it filling; the worker retries when the link frees a credit
-     * (it wakes the worker) or the next record arrives. */
-    (void)zpt_capture_send_batch(true);
+    if (atomic_get(&zpt_capture_recording) != ZPT_CAPTURE_NONE &&
+        k_uptime_get_32() - (uint32_t)atomic_get(&zpt_last_contact) >
+            CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_HOST_TIMEOUT_MS) {
+        /* The host is gone: stop, and drop what nobody will read. */
+        zpt_capture_stop();
+        K_SPINLOCK(&zpt_capture_lock) { (void)zpt_capture_buffer_discard(&zpt_capture_buffer); }
+        return;
+    }
+    /* Send what is stored while the link has room. A link without room
+     * keeps it; the worker retries when the link frees a credit (it wakes
+     * the worker) or the next record arrives. */
+    zpt_capture_drain(false);
 #endif
 }
 
 static void zpt_thread(void) {
     zpt_host_link = zpt_transports[0];
-#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE)
-    zpt_capture_batch_clear(&zpt_capture_batch);
-#endif
     for (;;) {
         k_sem_take(&zpt_wake, K_FOREVER);
 

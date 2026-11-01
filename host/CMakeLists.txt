@@ -128,11 +128,29 @@ add_test(
 
 # Input capture is faithful: a capture recorded from the firmware's stages
 # replays to exactly the reports they sent.
+# Records leave through the burst buffer over a simulated Bluetooth link of
+# two 62-byte notifications per connection event: at 7.5 ms it keeps up;
+# at 15 ms the fast flicks outrun it and the buffer holds them; a 512-byte
+# buffer fills and drops records.
 add_test(
   NAME capture_replay
   COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
     --session "$<TARGET_FILE:capture_session>"
     --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+)
+add_test(
+  NAME capture_replay_slow_link
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+    --interval-us 15000 --min-peak 500
+)
+add_test(
+  NAME capture_replay_full_buffer
+  COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/replay/capture-check.js"
+    --session "$<TARGET_FILE:capture_session>"
+    --cursor-pipeline-runner "$<TARGET_FILE:zpt_cursor_pipeline_replay>"
+    --buffer 512 --interval-us 15000 --expect drops
 )
 
 # Scores the benchmark sets and prints the table. Scores never fail it; it

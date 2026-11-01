@@ -144,6 +144,19 @@ config ZMK_POINTING_TOOLS_INPUT_CAPTURE
       records, each frame costs one atomic read. See docs/protocol.md,
       "Input capture".
 
+config ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE
+    int "Input capture burst buffer (bytes)"
+    default 16384
+    range 512 131072
+    depends on ZMK_POINTING_TOOLS_INPUT_CAPTURE
+    help
+      Static RAM that holds encoded capture records until the link has
+      room for them, so a recording keeps every frame through bursts
+      faster than the link and sends them during the rests that follow.
+      A frame takes about 6 bytes, so the default holds about 2700 frames,
+      close to three seconds of continuous motion read every millisecond.
+      Records are dropped, and counted, only when it is full.
+
 config ZMK_POINTING_TOOLS_INPUT_CAPTURE_MAX_PIPELINES
     int "Maximum recordable pipelines"
     default 8
