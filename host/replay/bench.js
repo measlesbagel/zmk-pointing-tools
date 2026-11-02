@@ -106,6 +106,7 @@ function checkProfile(profile, fixtures, path) {
 function compare(name, score, baseline) {
   if (baseline === undefined) return { change: "new" };
   if (score.value === undefined) return { change: "worse", note: "missing" };
+  if (score.guard) return { change: "worse", note: score.guard };
   if (baseline.strokes !== undefined && score.strokes !== baseline.strokes) {
     return { delta: round(round(score.value) - baseline.value), change: "worse",
       note: `strokes ${baseline.strokes}→${score.strokes}` };

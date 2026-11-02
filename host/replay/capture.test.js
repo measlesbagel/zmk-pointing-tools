@@ -289,6 +289,51 @@ test("cursor trial labels carry their target and the browser's pointer path", ()
     { labels, pointer: { samples: [[1, 2]], acceleration: "off" } }), /options.pointer/);
 });
 
+test("a cursor trial the trace doesn't hold whole is dropped", () => {
+  const trial = (startMs, endMs, index) => ({ startMs, endMs, activity: "cursor",
+    target: { x: 100, y: 0, size: 8 }, start: { x: 0, y: 0 }, trial: index });
+  /* The first trace starts the recording, so a trial that began at rest
+   * before its first frame lost nothing and is kept. The second trace
+   * follows dropped records: a trial reaching back before it, or one
+   * running past the first trace's end, would compare part of a reach
+   * with the whole distance. */
+  sequence = 0;
+  const records = [entered(), source()];
+  for (let i = 0; i < 10; i += 1) records.push(frame(1000 + i * 5, 0, 1));
+  sequence += 4;
+  records.push(entered(), source());
+  for (let i = 0; i < 10; i += 1) records.push(frame(2000 + i * 5, 0, 1));
+  const labels = [trial(900, 1040, 0), trial(1040, 1100, 1), trial(1950, 2040, 2)];
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile, { labels });
+  assert.deepEqual(fixtures.map((fixture) => fixture.truth?.strokes.map((stroke) => stroke.trial)),
+    [[0], undefined]);
+  assert.deepEqual(warnings.filter((warning) => /dropped:/.test(warning)).map((warning) =>
+    warning.match(/trial \d/)[0]), ["trial 1", "trial 2"]);
+});
+
+test("a scroll label splits into a stroke per gesture", () => {
+  const scrollStages = [{ strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
+    { strategy: "scroll-batcher", stableId: "b", fixed: {} }];
+  const scrollProfile = { schema: "zmk-pointing-tools/tuning-profile", version: 1, targets: [
+    { stableId: "b", parameters: [{ key: "steps-per-meter", value: 3000 },
+      { key: "report-interval", value: 20 }] }] };
+  const scroll = { pipelineId: 1, stableId: "s", stages: scrollStages,
+    settingsHash: captureSettingsHash(scrollProfile, ["n", "b"]) };
+  /* Two flicks of the finger 150 ms apart, then a third 60 ms after. */
+  sequence = 0;
+  const records = [entered(scroll.settingsHash), source(800, CAPTURE.LINK_NONE)];
+  for (const startMs of [5000, 5200, 5290]) {
+    for (let i = 0; i < 5; i += 1) records.push(frame(startMs + i * 10, 0, 1));
+  }
+  const { fixtures: [fixture] } = captureToFixtures({ description: scroll, records }, scrollProfile,
+    { labels: [{ startMs: 4990, endMs: 5400, activity: "scroll", axis: "vertical" }] });
+  /* The first starts with the trace (the label began before it), each
+   * later one at its first frame; the last ends after its last frame, at
+   * 5330 ms. */
+  assert.deepEqual(fixture.truth.strokes.map(({ startUs, endUs, axis }) => [startUs, endUs, axis]),
+    [[0, 200000, "vertical"], [200000, 330001, "vertical"]]);
+});
+
 test("parses capture batches with consecutive sequences", () => {
   const payload = Uint8Array.of(7, 0, 0, 0, 3,
     CAPTURE.RECORD_SOURCE, 1, 2, 0, 0x20, 0x03,

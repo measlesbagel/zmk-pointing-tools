@@ -29,15 +29,24 @@ export function scoreFixtures(fixtures, run, profile = null) {
       output: profile === null ? outputs[index] : run(fixture, null) });
   });
   const screens = new Map([...recordings].map(([key, traces]) => [key, fitScreenScale(traces)]));
-  const fixtureResults = fixtures.map((fixture, index) => {
-    const output = outputs[index];
+  const recordedOutputs = new Map([...recordings.values()].flat()
+    .map(({ fixture, output }) => [fixture, output]));
+  const scored = fixtures.map((fixture, index) => {
     const screen = screens.get(fixture.metadata?.capture?.recording ?? fixture.id) ?? null;
-    const strokes = scoreFixture(fixture, output, profile, screen);
-    return { id: fixture.id, synthetic: fixture.metadata?.synthetic === true,
-      scores: aggregate(strokes), strokes, ...(screen ? { screen } : {}) };
+    const strokes = scoreFixture(fixture, outputs[index], profile, screen);
+    /* The same trials with the recorded settings arm the gain guard. */
+    const recorded = !recordedOutputs.has(fixture) ? null : profile === null ? strokes
+      : scoreFixture(fixture, recordedOutputs.get(fixture), null, screen);
+    return { fixture, screen, strokes, recorded };
   });
+  const fixtureResults = scored.map(({ fixture, screen, strokes, recorded }) => ({
+    id: fixture.id, synthetic: fixture.metadata?.synthetic === true,
+    scores: aggregate(strokes, recorded), strokes, ...(screen ? { screen } : {}) }));
+  const recordedAll = scored.some(({ recorded }) => recorded)
+    ? scored.flatMap(({ recorded }) => recorded ?? []) : null;
   return { fixtures: fixtureResults.length,
-    scores: aggregate(fixtureResults.flatMap((result) => result.strokes)), fixtureResults };
+    scores: aggregate(fixtureResults.flatMap((result) => result.strokes), recordedAll),
+    fixtureResults };
 }
 
 /* Score fixture v1 or v2 traces, such as tuner recordings, through the

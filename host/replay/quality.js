@@ -26,10 +26,11 @@ export const METRICS = {
   axisLockDelayMs: { higherIsBetter: false, unit: "ms" },
   intendedOutputDelayMs: { higherIsBetter: false, unit: "ms" },
   /* Guided cursor trials, by phase. Pixel metrics need a usable screen
-   * scale (fitScreenScale). A trial's ballistic landing error aggregates as
-   * its spread across trials, the headline, and as its mean, which partly
-   * reflects how the user adapted to the recorded gain, so it isn't
-   * ranked. */
+   * scale (fitScreenScale). A trial's ballistic landing, as a share of its
+   * distance, aggregates as its coefficient of variation across trials,
+   * the headline, which a uniform gain change leaves alone; and as its
+   * mean error, which partly reflects how the user adapted to the recorded
+   * gain, so it isn't ranked. */
   ballisticSpreadPercent: { higherIsBetter: false, unit: "%", spread: true },
   ballisticBiasPercent: { higherIsBetter: false, unit: "%", ranked: false },
   homingStepPercent: { higherIsBetter: false, unit: "%" },
@@ -42,6 +43,13 @@ export const METRICS = {
 /* Metrics that need the screen scale: they read in screen pixels. */
 export const PIXEL_METRICS = ["ballisticSpreadPercent", "ballisticBiasPercent",
   "homingStepPercent", "homingJitterPercent"];
+/* Lowering the gain shrinks homing steps and wobble against fixed targets,
+ * so these count as worse when the candidate's ballistic bias moves further
+ * than GAIN_GUARD_POINTS from the recorded settings' bias: the user would
+ * have aimed differently with that gain, and replay can't say how. */
+export const GAIN_GUARDED = ["ballisticSpreadPercent", "homingStepPercent",
+  "homingJitterPercent"];
+const GAIN_GUARD_POINTS = 25;
 
 const SETTLE_US = 100000;
 const TAIL_US = 100000;
@@ -71,7 +79,13 @@ const SUBMOVEMENT_STOP = 0.1;
 const HOMING_WIDTHS = 3;
 const PHASE_BIN_US = 16000;
 const PHASE_MIN_BINS = 4;
-const TRANSITION_TAIL_US = 150000;
+/* Gains are averaged over this long before the largest change between
+ * neighbouring windows counts, so speed-estimate noise frame to frame
+ * doesn't read as a curve's slope. */
+const TRANSITION_WINDOW_US = 12000;
+/* A submovement's end is a speed minimum the speed then rises from by at
+ * least this share of the peak, not a plateau between sparse frames. */
+const SUBMOVEMENT_RISE = 0.05;
 const TEXT_DIRECTIONS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -539,18 +553,27 @@ export function fitScreenScale(traces) {
 }
 
 /* When the first submovement peaks and ends, from the ball's own path:
- * the user's input, the same whatever the settings. */
-function trialPhases(stroke) {
+ * the user's input, the same whatever the settings. frameTimes are the
+ * stroke's input frame times: the speed is smoothed over a window at least
+ * one and a half median frame gaps wide either side, so sparse frames,
+ * which the path interpolates into plateaus, don't make false minima. */
+export function trialPhases(stroke, frameTimes = []) {
   const { intervalUs, points } = stroke.path;
   const steps = points.slice(1).map((point, i) =>
     Math.hypot(point[0] - points[i][0], point[1] - points[i][1]));
-  const speeds = steps.map((_, i) => mean(steps.slice(Math.max(0, i - 2), i + 3)));
+  const gaps = frameTimes.slice(1).map((time, i) => time - frameTimes[i]).sort((a, b) => a - b);
+  const gapUs = gaps.length ? gaps[gaps.length >> 1] : 0;
+  const half = Math.max(2, Math.round((1.5 * gapUs) / intervalUs));
+  const speeds = steps.map((_, i) => mean(steps.slice(Math.max(0, i - half), i + half + 1)));
   const peak = speeds.indexOf(Math.max(...speeds));
   const top = speeds[peak];
   if (!(top > 0)) return null;
   let end = speeds.length;
   for (let i = peak + 1; i < speeds.length; i += 1) {
-    const minimum = speeds[i] <= speeds[i - 1] && speeds[i] <= (speeds[i + 1] ?? Infinity);
+    const later = speeds.slice(i + 1, i + 2 * half + 2);
+    const minimum = speeds[i] < speeds[i - 1] &&
+      speeds[i] <= Math.min(...speeds.slice(Math.max(0, i - half), i + half + 1)) &&
+      Math.max(...later, -Infinity) >= speeds[i] + SUBMOVEMENT_RISE * top;
     if (speeds[i] < SUBMOVEMENT_STOP * top || (minimum && speeds[i] < SUBMOVEMENT_MINIMUM * top)) {
       end = i + 1;
       break;
@@ -577,7 +600,7 @@ function phaseBins(items, fromUs, toUs) {
  * "Guided cursor trials". */
 function targetMetrics(stroke, frames, reports, fixture, screen) {
   const values = {};
-  const phases = trialPhases(stroke);
+  const phases = trialPhases(stroke, frames.map((frame) => frame.tUs));
   if (!phases) return values;
   const { target, start } = stroke;
   const scale = screen?.usable ? screen.pxPerCount : null;
@@ -587,12 +610,23 @@ function targetMetrics(stroke, frames, reports, fixture, screen) {
      * first submovement ended, along the line to the target. */
     const [ox, oy] = sum(reports.filter((report) => report.tUs < phases.ballisticEndUs));
     const along = (scale * (ox * (target.x - start.x) + oy * (target.y - start.y))) / distance;
+    /* Per trial: where it landed, in percent of the distance; the set's
+     * spread is the coefficient of variation of these (aggregate). */
+    values.ballisticSpreadPercent = (100 * along) / distance;
     values.ballisticBiasPercent = (100 * (along - distance)) / distance;
-    values.ballisticSpreadPercent = values.ballisticBiasPercent;
   }
-  /* The gain as the speed falls out of the first submovement. */
-  const gains = frames.filter((frame) => frame.gain !== null && frame.tUs >= phases.peakUs &&
-    frame.tUs < phases.ballisticEndUs + TRANSITION_TAIL_US).map((frame) => frame.gain);
+  /* The gain as the speed falls out of the first submovement, averaged
+   * over short windows. */
+  const fromUs = phases.peakUs;
+  const windows = new Map();
+  for (const frame of frames) {
+    if (frame.gain === null || frame.tUs < fromUs ||
+      frame.tUs >= phases.ballisticEndUs) continue;
+    const index = Math.floor((frame.tUs - fromUs) / TRANSITION_WINDOW_US);
+    if (!windows.has(index)) windows.set(index, []);
+    windows.get(index).push(frame.gain);
+  }
+  const gains = [...windows].sort(([a], [b]) => a - b).map(([, values_]) => mean(values_));
   if (gains.length >= 3 && mean(gains) > 0) {
     values.transitionStepPercent =
       (100 * Math.max(...gains.slice(1).map((gain, i) => Math.abs(gain - gains[i])))) / mean(gains);
@@ -673,17 +707,41 @@ export function scoreFixture(fixture, output, profile = null, screen = null) {
 }
 
 /* Mean of each metric over the strokes it applies to, or for a spread
- * metric the sample standard deviation over at least two strokes. */
-export function aggregate(strokes) {
+ * metric the coefficient of variation (sample standard deviation over the
+ * absolute mean, in percent) over at least two strokes. recorded, the same
+ * strokes scored with the recorded settings, arms the gain guard: when the
+ * candidate's mean ballistic bias is more than GAIN_GUARD_POINTS from the
+ * recorded one, or its trials land on average at or behind their start,
+ * the GAIN_GUARDED scores carry a guard reason and count as worse. */
+export function aggregate(strokes, recorded = null) {
   const scores = {};
   for (const [name, { spread }] of Object.entries(METRICS)) {
     const values = strokes.map((stroke) => stroke.metrics[name]).filter((v) => v !== undefined);
     if (spread) {
       if (values.length < 2) continue;
       const average = mean(values);
-      scores[name] = { value: Math.sqrt(values.reduce((total, value) =>
-        total + (value - average) ** 2, 0) / (values.length - 1)), strokes: values.length };
+      const sd = Math.sqrt(values.reduce((total, value) =>
+        total + (value - average) ** 2, 0) / (values.length - 1));
+      scores[name] = { value: average === 0 ? Infinity : (100 * sd) / Math.abs(average),
+        strokes: values.length };
     } else if (values.length) scores[name] = { value: mean(values), strokes: values.length };
   }
+  const guard = gainGuard(scores, recorded && aggregate(recorded));
+  if (guard) {
+    for (const name of GAIN_GUARDED) if (scores[name]) scores[name].guard = guard;
+  }
   return scores;
+}
+
+/* Why a candidate's pixel metrics can't be trusted, or null. */
+function gainGuard(scores, recorded) {
+  const bias = scores.ballisticBiasPercent?.value;
+  if (bias === undefined) return null;
+  if (bias <= -100) return "trials land at or behind their start on average";
+  const base = recorded?.ballisticBiasPercent?.value;
+  if (base !== undefined && Math.abs(bias - base) > GAIN_GUARD_POINTS) {
+    return `ballistic bias ${bias.toFixed(0)} % is more than ${GAIN_GUARD_POINTS} points from ` +
+      `the recorded ${base.toFixed(0)} %: the user would have aimed differently with this gain`;
+  }
+  return null;
 }

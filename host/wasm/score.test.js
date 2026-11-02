@@ -148,8 +148,10 @@ test("guided cursor trials score a too-high gain and a gain jump as worse", () =
   assert.ok(Math.abs(screen.pxPerCount - 1) < 0.03, `scale ${screen.pxPerCount}`);
   assert.equal(recorded.scores.homingStepPercent.strokes, 6);
   assert.equal(recorded.scores.ballisticSpreadPercent.strokes, 6);
-  /* Every first submovement was built to land 10 % short. */
-  assert.ok(Math.abs(recorded.scores.ballisticBiasPercent.value + 10) < 2,
+  /* Every first submovement was built to land 10 % short; the homing
+   * wobble starts as it ends, moving its speed minimum, and so the
+   * landing, up to a few percent on. */
+  assert.ok(Math.abs(recorded.scores.ballisticBiasPercent.value + 10) < 4,
     `bias ${recorded.scores.ballisticBiasPercent.value}`);
   /* Three times the gain: every homing step and wobble is three times the
    * size against the same targets. */
@@ -159,6 +161,20 @@ test("guided cursor trials score a too-high gain and a gain jump as worse", () =
     assert.ok(high[name].value > 2 * recorded.scores[name].value,
       `${name}: ${high[name].value} vs ${recorded.scores[name].value}`);
   }
+  /* A third or a tenth of the gain shrinks homing steps and wobble against
+   * the same targets, but lands every trial at the same share of its
+   * distance, so it can't win on spread, and moves the bias so far that
+   * the pixel metrics count as worse. */
+  for (const divisor of [3, 10]) {
+    const low = scoreTraces([fixture], profile(transfer.stableId, { "scale-divisor": divisor }),
+      runners).scores;
+    assert.ok(low.ballisticSpreadPercent.value > 0.95 * recorded.scores.ballisticSpreadPercent.value,
+      `÷${divisor} spread ${low.ballisticSpreadPercent.value} vs ${recorded.scores.ballisticSpreadPercent.value}`);
+    for (const name of ["ballisticSpreadPercent", "homingStepPercent", "homingJitterPercent"]) {
+      assert.match(low[name].guard ?? "", /more than 25 points/, `÷${divisor} ${name}`);
+    }
+  }
+  assert.equal(recorded.scores.homingJitterPercent.guard, undefined);
   /* The same sensitivity range, but all of it at 40 mm/s, which every
    * first submovement slows through. */
   const jump = {};
@@ -169,4 +185,12 @@ test("guided cursor trials score a too-high gain and a gain jump as worse", () =
   const jumped = scoreTraces([fixture], profile(acceleration.stableId, jump), runners).scores;
   assert.ok(jumped.transitionStepPercent.value > 1.5 * recorded.scores.transitionStepPercent.value,
     `${jumped.transitionStepPercent.value} vs ${recorded.scores.transitionStepPercent.value}`);
+  /* A steep ramp from 30 to 60 mm/s is smoother than the jump but rougher
+   * than the recorded curve, which spreads the same rise from 25 to
+   * 250 mm/s. */
+  const ramp = { ...jump, "curve-speed-4": 30, "curve-speed-5": 60 };
+  const ramped = scoreTraces([fixture], profile(acceleration.stableId, ramp), runners).scores;
+  assert.ok(ramped.transitionStepPercent.value > recorded.scores.transitionStepPercent.value &&
+    ramped.transitionStepPercent.value < jumped.transitionStepPercent.value,
+  `ramp ${ramped.transitionStepPercent.value}`);
 });

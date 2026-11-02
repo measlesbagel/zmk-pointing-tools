@@ -416,9 +416,14 @@ left to live runs**, and target strokes score no output error. Replay can
 judge the parts of a trial that don't depend on the user's reactions:
 
 - The **ballistic phase** runs from the trial's start to the end of the
-  first submovement: on the ball path, smoothed over 10 ms, the first speed
-  minimum below half the peak after the peak, or where the speed falls under
-  a tenth of the peak. Both depend only on the user's input.
+  first submovement: on the ball path, with its speed smoothed over at least
+  10 ms and at least one and a half median frame gaps either side, the first
+  point after the peak where the speed falls under a tenth of the peak, or a
+  speed minimum below half the peak that the speed then rises from by at
+  least 5 % of the peak. Sparse frames make plateaus in the path, which the
+  smoothing and the rise keep from reading as minima: on 8 ms frames at
+  684 CPI, the end of 2 to 5 mm reaches falls within 20 ms of its true time
+  (`host/replay/quality.test.js`). Both depend only on the user's input.
 - The **homing phase** starts when the browser's pointer, as the user saw it,
   first comes within three target widths of the target, and runs to the
   trial's end.
@@ -433,7 +438,7 @@ The scale is usable when it explains at least 90 % of the pointer's motion
 each other, and the user didn't say the computer's pointer acceleration was
 on. Otherwise the pixel metrics (ballistic landing, homing step size and
 jitter) are unscored, and only the scale-free ones are. The scale is fitted
-once per trace and used for every candidate. A synthetic run recovers a flat
+once per recording, over all its traces, and used for every candidate. A synthetic run recovers a flat
 1.7 px per count within 3 %, and flags an accelerated mapping
 (`host/replay/quality.test.js`).
 
@@ -442,13 +447,27 @@ once per trace and used for every candidate. A synthetic run recovers a flat
 Applies to target strokes longer than the target's size, with a usable scale.
 The candidate's summed output up to the end of the ballistic phase, times the
 scale, projected on the line from `start` to `target`, gives the landing
-distance `d` along that line; the stroke value is `(d − D) / D` in percent of
-the trial's distance `D`, negative when it lands short. The headline is the
-**spread**: the sample standard deviation of that value across trials (at
-least two), so a gain that lands at the same fraction of every distance and
-target size scores well. The **bias** is its mean. Users adapt their
-movements to the gain they recorded with, so the bias partly reflects that
-adaptation; it is reported but not ranked, never better or worse.
+distance `d` along that line, and `r = d / D` the share of the trial's
+distance `D` it covered. The headline is the **spread**: the coefficient of
+variation of `r` across trials (at least two), `SD(r) / |mean(r)|` in
+percent, so a gain that lands at the same share of every distance and target
+size scores well, and a uniform gain change, which scales every `r` alike,
+can't improve it. Each stroke's value in the JSON report is `100 r`. The
+**bias** is the mean of `(d − D) / D`, in percent, negative when trials land
+short. Users adapt their movements to the gain they recorded with, so the
+bias partly reflects that adaptation; it is reported but not ranked, never
+better or worse.
+
+**Gain guard.** Against fixed targets, a lower gain makes smaller homing
+steps and less wobble whatever else it does, but the user would have aimed
+differently with it, and replay can't say how. So when a candidate's bias is
+more than 25 points from the recorded settings' bias over the same trials,
+or its trials land at or behind their start on average, its spread, homing
+step size, and homing jitter carry a `guard` reason and count as worse, as a
+missing metric does. Dividing the gain by 3 or 10 trips it
+(`host/wasm/score.test.js`). Guided scoring therefore judges how consistent
+and smooth a gain is near the one the user recorded with; it can't say which
+gain is best. That stays with live runs.
 
 #### Homing step size (`homingStepPercent`)
 
@@ -477,11 +496,15 @@ that moves one axis at a time while the ball moves diagonally.
 #### Speed transitions (`transitionStepPercent`)
 
 Applies to target strokes in a pipeline with an acceleration stage; needs no
-scale. Over the input frames from the ballistic phase's peak speed to 150 ms
-after its end, as the speed falls into homing, the largest change between
-consecutive frames of the sensitivity the stage applies, in percent of their
-mean. A curve with a gain jump in the speeds every trial slows through scores
-worse than one that reaches the same sensitivities smoothly
+scale. Over the input frames from the ballistic phase's peak speed to its
+end, as the speed falls toward homing, the sensitivity the stage applies is
+averaged in 12 ms windows; the stroke value is the largest change between
+neighbouring windows, in percent of their mean. The windows keep the speed
+estimate's frame-to-frame noise from reading as slope, and ending at the
+ballistic phase keeps the slow homing speeds, where the estimate wobbles
+most, out. A curve with a gain jump in the speeds every trial slows through
+scores worse than a steep ramp over the same speeds, which scores worse
+than a curve that spreads the rise over a wide range of speeds
 (`host/wasm/score.test.js`).
 
 ## Adding real recordings
@@ -542,10 +565,16 @@ scroll and text, `axis` is `horizontal` or `vertical` ("text navigation
 left/right" is `text` with `horizontal`), or for scroll `both`. Each becomes
 an intended stroke with that axis and the recorded ball path, scored on axis
 lock and its delay, sideways leak, wrong-axis output, switches, the delay
-before intended output, and output error. A cursor label is a trial:
+before intended output, and output error. A rest of 100 ms or more in the
+ball's motion splits a scroll or text label into one stroke per gesture, so
+the delays count for every gesture, not only the first. A cursor label is a trial:
 `{ "activity": "cursor", "target": { "x", "y", "size" }, "start": { "x", "y" } }`
 in CSS pixels, which becomes a `target` stroke scored by phase
-([Guided cursor trials](#guided-cursor-trials)). `test` and `trial`, when
+([Guided cursor trials](#guided-cursor-trials)). A trial the trace doesn't
+hold whole, such as one cut by a drop or a settings change, is dropped with a
+warning, since its output would be measured against the whole distance; only
+the recording's first trace, with nothing lost before it, may start inside a
+trial, which then began at rest. `test` and `trial`, when
 given, name the guided test and trial and are kept on the stroke.
 `--pointer pointer.json`, or `options.pointer`, is the browser's pointer path
 during a guided cursor test, `{ "samples": [[ms, x, y], …], "acceleration":
