@@ -103,7 +103,7 @@ function checkProfile(profile, fixtures, path) {
 /* Baselines hold { value, strokes } per metric. A metric that lost
  * strokes or vanished is worse: a setting must not improve a score by
  * making strokes unscorable. */
-function compare(name, score, baseline) {
+export function compare(name, score, baseline) {
   if (baseline === undefined) return { change: "new" };
   if (score.value === undefined) return { change: "worse", note: "missing" };
   if (score.guard) return { change: "worse", note: score.guard };
@@ -228,9 +228,11 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 2;
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 2;
+  }
 }
