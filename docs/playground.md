@@ -77,7 +77,9 @@ and is part of the run's result.
   dropped and it is saved as a free recording.
 - **Pointer path.** Cursor tests also keep the browser's pointer path, every
   2 ms at most, which the scoring uses to fit the screen scale and to find
-  when each trial starts homing. Say whether the computer's own pointer
+  when each trial starts homing. Each cursor trial adds a sample where the
+  pointer was when it started, even if it hasn't moved since, such as on
+  **Start**. Say whether the computer's own pointer
   acceleration is off in **Computer's pointer acceleration**: with it on,
   pixel metrics aren't scored.
 

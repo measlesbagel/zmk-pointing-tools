@@ -83,6 +83,13 @@ export class PointingPlayground {
     this.label = root.querySelector("[data-playground-label]");
     this.acquire = root.querySelector("[data-playground-acquire]");
     this.results = root.querySelector("[data-playground-results]");
+    /* Where the pointer last was in the dialog, such as on Start, so a
+     * cursor trial that starts before it moves has a path sample. */
+    for (const type of ["pointermove", "pointerdown"]) {
+      this.dialog.addEventListener(type, ({ clientX, clientY }) => {
+        this.lastPointer = { clientX, clientY };
+      });
+    }
     this.acquire.addEventListener("change", () => {
       this.run = undefined;
       this.renderActivity();
@@ -420,8 +427,14 @@ export class PointingPlayground {
     this.surface.append(area);
     let targetIndex = 0;
     let previous;
-    /* Each click on a target ends a trial that started at the last one. */
+    /* Each click on a target ends a trial that started at the last one.
+     * The pointer path gets a sample where each trial starts, since the
+     * browser sends none while the pointer is still. */
     let trialStart = { perf: this.runStartedPerf, point: undefined };
+    const startTrial = (perf, point) => {
+      trialStart = { perf, point };
+      if (point && this.running) this.onPointer(perf, point.x, point.y);
+    };
     const local = (event) => {
       const bounds = area.getBoundingClientRect();
       return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
@@ -446,7 +459,7 @@ export class PointingPlayground {
         this.trial({ activity: "cursor", trial: targetIndex, startPerf: trialStart.perf, endPerf: event.timeStamp,
           target: { x: bounds.left + bounds.width / 2 - areaBounds.left, y: bounds.top + bounds.height / 2 - areaBounds.top, size: bounds.width },
           start: trialStart.point ?? point });
-        trialStart = { perf: event.timeStamp, point };
+        startTrial(event.timeStamp, point);
         recordClick(this.run, true);
         targetIndex += 1;
         placeTarget();
@@ -455,7 +468,7 @@ export class PointingPlayground {
       area.append(target);
     };
     this.whenCaptureReady(() => {
-      trialStart = { perf: performance.now(), point: undefined };
+      startTrial(performance.now(), this.lastPointer && local(this.lastPointer));
       placeTarget();
     });
     this.listen(area, "click", () => {

@@ -591,7 +591,9 @@ warning, since its output would be measured against the whole distance; only
 the recording's first trace, with nothing lost before it, may start inside a
 trial, and only when the pointer path puts the browser's pointer within the
 target's size of the trial's start at the trace's first frame: the reach
-hadn't begun. Without a pointer path such a trial is dropped. `test` and `trial`, when
+hadn't begun. The browser sends no samples while the pointer is still, so
+the last sample at or before that frame says where it was; the playground
+adds one where each trial starts. Without one such a trial is dropped. `test` and `trial`, when
 given, name the guided test and trial and are kept on the stroke.
 `--pointer pointer.json`, or `options.pointer`, is the browser's pointer path
 during a guided cursor test, `{ "samples": [[ms, x, y], …], "acceleration":

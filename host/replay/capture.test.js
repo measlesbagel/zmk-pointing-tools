@@ -313,6 +313,12 @@ test("a cursor trial the trace doesn't hold whole is dropped", () => {
     [[0], undefined]);
   assert.deepEqual(warnings.filter((warning) => /dropped:/.test(warning)).map((warning) =>
     warning.match(/trial \d/)[0]), ["trial 1", "trial 2"]);
+  /* The user kept still until after the first frame: the only sample
+   * before it is the one the playground records as the trial starts, and
+   * the pointer is far along 12 ms later. It was still at rest. */
+  const still = { acceleration: "off", samples: [[900, 0, 0], [1012, 60, 0], [1100, 100, 0]] };
+  assert.deepEqual(captureToFixtures({ description, records }, profile,
+    { labels, pointer: still }).fixtures[0].truth?.strokes.map((stroke) => stroke.trial), [0]);
   /* Capture started mid-reach: the pointer was already 40 px along, more
    * than the 8 px target, when the first frame came, so trial 0 is cut
    * and dropped too; and without a pointer path nothing shows it began at
