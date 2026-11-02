@@ -432,17 +432,19 @@ export function encodeCaptureDescribe(pipelineId) {
 
 export function parseCaptureStatus(payload) {
   requireBytes(payload, 0, 1, "capture status");
-  /* Older schemas (schema 2 has no uptime) aren't read: record again with
-   * current firmware. */
-  if (payload[0] !== CAPTURE.SCHEMA_VERSION) {
+  /* Schema 2 has no uptime: recordings saved with it, and firmware not
+   * yet flashed, still record and replay, but can't line labels up.
+   * Schema 1 (no burst buffer) isn't read: record again. */
+  if (payload[0] !== CAPTURE.SCHEMA_VERSION && payload[0] !== 2) {
     throw new Error(`Unsupported capture schema ${payload[0]}; expected ${CAPTURE.SCHEMA_VERSION}`);
   }
-  requireBytes(payload, 0, 19, "capture status");
+  const header = payload[0] === 2 ? 15 : 19;
+  requireBytes(payload, 0, header, "capture status");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const decoder = new TextDecoder();
   const pipelines = [];
-  let offset = 19;
-  for (let index = 0; index < payload[18]; index += 1) {
+  let offset = header;
+  for (let index = 0; index < payload[header - 1]; index += 1) {
     requireBytes(payload, offset, 9, "capture pipeline entry");
     const [id, active, stageCount, flags] = payload.slice(offset, offset + 4);
     const settingsHash = view.getUint32(offset + 4, true);
@@ -463,7 +465,7 @@ export function parseCaptureStatus(payload) {
     bufferSize: view.getUint32(10, true),
     /* Device uptime in milliseconds when the status was sent: the clock
      * of record times. */
-    uptimeMs: view.getUint32(14, true),
+    uptimeMs: header === 19 ? view.getUint32(14, true) : null,
     pipelines,
   };
 }
