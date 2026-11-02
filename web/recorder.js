@@ -18,7 +18,7 @@ import { CAPTURE, MESSAGE, captureDecoder, captureSettingsHash, encodeFrame, par
   parseCaptureDescription, parseCaptureStatus } from "./protocol.js";
 import { ACTIVITIES, GUIDED_TESTS } from "./playground-model.js";
 import { FREE_TRUTH, SCORE_CAVEAT, TRUTH_SOURCES, addRecords, compareScoreSets, createRecordingStats, describeTruth,
-  deviceGuide, exportRecording, importRecording, metricTruth, newRecordingId, pipelineMode, resyncs } from "./recording-model.js";
+  deviceGuide, exportRecording, importRecording, metricTruth, newRecordingId, nextClock, resyncs } from "./recording-model.js";
 
 const STATUS_TIMEOUT_MS = 2_500;
 /* Stopping sends everything buffered first; a large buffer on a slow link
@@ -28,6 +28,8 @@ const POLL_MS = 1_000;
 const DB_NAME = "zmk-pointing-tools";
 const DB_STORE = "recordings";
 const RECORDING_LIMIT = 30;
+/* Labels move by up to half the clock's round trip; past this, say so. */
+const CLOCK_WARN_MS = 100;
 /* Browser pointer samples closer together than this are thinned. */
 const POINTER_INTERVAL_MS = 2;
 const REPLAY_MISSING = "Scoring needs the browser replay module (replay/ next to the tuner). The hosted tuner has it; for a local copy, run host/wasm/build.sh web/replay in the devenv shell.";
@@ -232,14 +234,9 @@ export class Recorder {
     return this.status;
   }
 
-  /* Lines this page's clock up with the device's while recording: the
-   * status with the shortest round trip places its uptime halfway between
-   * the request and the answer. */
+  /* Lines this page's clock up with the device's while recording. */
   #syncClock(uptimeMs, { sentAt, receivedAt }) {
-    if (!this.active) return;
-    const roundTripMs = receivedAt - sentAt;
-    if (this.active.clock && this.active.clock.roundTripMs <= roundTripMs) return;
-    this.active.clock = { roundTripMs, offsetMs: uptimeMs - (sentAt + receivedAt) / 2 };
+    if (this.active) this.active.clock = nextClock(this.active.clock, uptimeMs, sentAt, receivedAt);
   }
 
   async #describe(pipelineId) {
@@ -253,6 +250,9 @@ export class Recorder {
    * told apart by their stages, never by name. */
   async #pipelineFor(mode) {
     const matching = [];
+    /* The converter decides what kind a pipeline is, so the tuner and
+     * replay agree. */
+    const { pipelineMode } = await this.#loadReplay();
     for (const pipeline of this.pipelines().filter(({ replayable }) => replayable)) {
       if (!this.#modes.has(pipeline.id)) {
         try {
@@ -484,7 +484,13 @@ export class Recorder {
       stream: concat(chunks),
       firmwareDropped: this.status && active.startDropped !== null ? Math.max(0, this.status.dropped - active.startDropped) : null,
     };
-    if (guided && !clock) recording.warnings.push("The keyboard's clock couldn't be read, so the guided test's labels were dropped.");
+    if (guided && !clock) recording.warnings.push("The keyboard's clock couldn't be read (its firmware predates capture schema 3), so the guided test's labels were dropped and this is a free recording.");
+    if (recording.guided && clock.roundTripMs > CLOCK_WARN_MS) {
+      recording.warnings.push(`The keyboard answered slowly (${Math.round(clock.roundTripMs)} ms round trip), so labels may sit up to ${Math.round(clock.roundTripMs / 2)} ms off the motion.`);
+    }
+    if (recording.guided && !recording.guided.labels.length) {
+      recording.warnings.push("No trial or stretch of the guided test finished, so the recording has no labels to score.");
+    }
     this.add(recording);
     this.host.onEnd?.(recording.pipeline, { completed: reason !== "the connection ended", result: this.describe(recording) },
       { guided: Boolean(guided) });
@@ -505,13 +511,18 @@ export class Recorder {
     const { mode } = GUIDED_TESTS[test] ?? {};
     this.guide = null;
     if (!mode) return { recording: false, reason: "this activity isn't a guided test" };
-    /* Reset restarts the test: the run so far is kept as its own recording. */
-    if (this.active?.guided) await this.stop("the guided test restarted");
-    if (this.active || this.starting) return { recording: false, reason: `"${this.active?.label ?? "a recording"}" is already recording` };
-    if (!(await this.checkSupport())) return { recording: false, reason: "this keyboard can't record motion" };
+    /* The guide is current at once, so a finish while this starts waits
+     * for it (guidedFinish) instead of missing it. */
     const guide = { test, acceleration, labels: [], pointer: mode === "cursor" ? [] : null };
     this.guide = guide;
+    const previous = this.guideStarting;
     this.guideStarting = (async () => {
+      await previous?.catch(() => {});
+      /* Reset restarts the test: the run so far is kept as its own recording. */
+      if (this.active?.guided) await this.stop("the guided test restarted");
+      if (this.active || this.starting) throw new Error(`"${this.active?.label ?? "a recording"}" is already recording`);
+      if (!(await this.checkSupport())) throw new Error("this keyboard can't record motion");
+      if (this.guide !== guide) throw new Error("the guided test ended before recording started");
       const pipeline = await this.#pipelineFor(mode);
       if (!pipeline) throw new Error(`the keyboard has no replayable ${mode} pipeline`);
       await this.start({ pipelineId: pipeline.id, label, guided: guide });
@@ -720,7 +731,9 @@ export class Recorder {
     const picked = new Set([...this.list.querySelectorAll("[data-recording-pick]:checked")].map((box) => box.closest("[data-recording-id]").dataset.recordingId));
     const shown = new Set([...this.list.querySelectorAll("[data-recording-id]")].map((row) => row.dataset.recordingId));
     /* Free recordings start unticked: their truth is a heuristic. */
-    const tick = (recording) => picked.has(recording.id) || (!shown.has(recording.id) && Boolean(recording.guided));
+    /* Neither do guided recordings without labels: nothing to score. */
+    const tick = (recording) => picked.has(recording.id)
+      || (!shown.has(recording.id) && Boolean(recording.guided?.labels.length));
     const truth = (recording) => (recording.guided
       ? `Guided: ${escapeHtml(ACTIVITIES.find(({ id }) => id === recording.guided.test)?.label ?? recording.guided.test)} <small>(${recording.guided.labels.length} labels)</small>`
       : `<span class="warning">Free: ${FREE_TRUTH}</span>`);
@@ -770,7 +783,7 @@ export class Recorder {
         }<td class="muted">${escapeHtml(describeTruth(row.truth))}</td></tr>`).join("")
       }</tbody></table>
       ${unscored.length ? `<p class="muted">Not scored on these recordings: ${escapeHtml(unscored.join(", "))}.</p>` : ""}
-      ${notes.length ? `<p class="muted">* Worse whatever the value: ${escapeHtml(notes.join("; "))}. A metric scored over different strokes can't be compared, and settings mustn't win by making strokes unscorable.</p>` : ""}
+      ${notes.length ? `<p class="muted">* Flagged, and worse whatever the value for a candidate: ${escapeHtml(notes.join("; "))}. A metric scored over different strokes can't be compared, settings mustn't win by making strokes unscorable, and pixel metrics can't be trusted for a gain that would have changed how you aimed.</p>` : ""}
       ${screen.map((fit) => `<p class="${fit.usable ? "muted" : "warning"}">Screen scale for “${escapeHtml(fit.recording)}”: ${fit.pxPerCount ?? "–"} px per count (r² ${fit.r2 ?? "–"}, clocks ${fit.offsetMs ?? "–"} ms apart, pointer acceleration ${escapeHtml(fit.acceleration)}). ${fit.usable ? "Pixel metrics use it." : `Pixel metrics aren't scored: ${escapeHtml(fit.reason)}.`}</p>`).join("")}
       <p class="muted">Replay judges what doesn't depend on your reactions: each trial's first submovement, homing steps and wobble, and how the gain changes as you slow down. Total time, corrections, misses and throughput depend on you correcting what you see, so only live runs judge them.</p>
       <p class="muted">Truth sources: ${Object.entries(TRUTH_SOURCES).map(([source, text]) => `${source === "typing" ? "typing heuristic" : source}, ${escapeHtml(text)}`).join("; ")}.</p>

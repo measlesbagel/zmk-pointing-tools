@@ -189,10 +189,14 @@ It works without agent access too.
   submovement, homing steps and wobble, gain transitions) and leaves total
   time, corrections, misses and throughput to live runs
   ([metrics](trace-benchmark.md#guided-cursor-trials)).
-- **The benchmark doesn't judge curve shape or gain.** The ideal output
-  follows the curve and gain being scored, so a flatter curve or a lower gain
-  can win every metric while feeling worse. Scores narrow the candidates;
-  the keyboard decides.
+- **What scores say about gain.** Free recordings and the benchmark don't
+  judge curve shape or gain: their ideal output follows the curve and gain
+  being scored, so a flatter curve or a lower gain can win while feeling
+  worse. Guided cursor trials judge how consistently and smoothly a gain
+  lands and homes near the gain you recorded with; a candidate whose
+  ballistic bias moves more than 25 points from yours is flagged instead of
+  ranked, since you'd have aimed differently with it. Neither picks the best
+  gain. Scores narrow the candidates; the keyboard decides.
 - **Agent requests.** `start_recording` with a `test` asks you for that
   guided test, as `request_run` does, and its result names the recording.
   Without one, it asks for a free recording, the same way

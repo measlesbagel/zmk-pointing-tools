@@ -70,15 +70,20 @@ and is part of the run's result.
 - **Clocks.** Labels are written in the page's clock and moved to the
   keyboard's when the recording stops: every capture status carries the
   device's uptime, and the status with the shortest round trip during the
-  recording sets the offset, to within half that round trip.
+  recording sets the offset, to within half that round trip. A round trip
+  over 100 ms adds a warning to the recording. Firmware older than capture
+  schema 3 sends no uptime: the test still records, but its labels are
+  dropped and it is saved as a free recording.
 - **Pointer path.** Cursor tests also keep the browser's pointer path, every
   2 ms at most, which the scoring uses to fit the screen scale and to find
   when each trial starts homing. Say whether the computer's own pointer
   acceleration is off in **Computer's pointer acceleration**: with it on,
   pixel metrics aren't scored.
 
-Reset during a test keeps the recording so far as its own recording and
-starts a new one.
+Reset during a test labels the open scroll or text stretch, keeps the
+recording so far as its own recording, and starts a new one. A guided
+recording in which no trial finished has no labels; it is listed but not
+ticked for scoring.
 
 ## Exports
 

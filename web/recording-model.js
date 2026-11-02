@@ -25,11 +25,15 @@ const NO_TRUTH = "no stroke in these recordings has truth for this metric";
  * motion, with no targets. */
 export const FREE_TRUTH = "no targets: heuristic";
 
-/* A pipeline's mode from its last stage, as the converter tells them
- * apart: scroll, text, or cursor. */
-export function pipelineMode(description) {
-  const last = description.stages.at(-1)?.strategy;
-  return last === "scroll-batcher" ? "scroll" : last === "text-nav" ? "text" : "cursor";
+/* The clock offset after a capture status that carries the device's
+ * uptime: the status with the shortest round trip so far places its uptime
+ * halfway between the request (sentAt) and the answer (receivedAt), in
+ * performance.now() time. A status without uptime (schema 2) changes
+ * nothing. */
+export function nextClock(clock, uptimeMs, sentAt, receivedAt) {
+  const roundTripMs = receivedAt - sentAt;
+  if (uptimeMs === null || uptimeMs === undefined || (clock && clock.roundTripMs <= roundTripMs)) return clock;
+  return { roundTripMs, offsetMs: uptimeMs - (sentAt + receivedAt) / 2 };
 }
 
 /* A guided test's labels and pointer path, kept in this page's
@@ -88,7 +92,7 @@ export function describeTruth(counts) {
   return parts.length ? parts.join(", ") : NO_TRUTH;
 }
 
-export const SCORE_CAVEAT = "Replay shortlists; the keyboard decides. Guided cursor trials judge gain against real targets, but only the parts of a trial that don't depend on your corrections. Elsewhere the ideal output follows the curve and gain being scored, so a flatter curve or a lower gain can win while feeling worse. Confirm on the keyboard with a preview and a run.";
+export const SCORE_CAVEAT = "Replay shortlists; the keyboard decides. Guided cursor trials judge how consistently and smoothly a gain lands and homes near the gain you recorded with, and flag one that moves your landing too far, since you'd have aimed differently; they can't say which gain is best. Elsewhere the ideal output follows the curve and gain being scored, so a flatter curve or a lower gain can win while feeling worse. Confirm on the keyboard with a preview and a run.";
 
 /* Counts of a recording's records, kept up to date as batches arrive:
  * dropped records from sequence gaps, and resyncs from entered records
@@ -129,9 +133,12 @@ export function compareScoreSets(sets, metrics, truth = {}) {
     const values = sets.map(({ scores }) => (Number.isFinite(scores[metric]?.value) ? scores[metric] : null));
     const base = values[0];
     const compared = values.map((entry, index) => {
-      if (index === 0 || !base) return { change: null, better: null, note: null };
+      /* A guarded score (quality.js, the gain guard) is worse whatever its
+       * value; on the current values it is only noted. */
+      if (index === 0 || !base) return { change: null, better: null, note: entry?.guard ?? null };
       if (!entry) return { change: null, better: false, note: "missing" };
       const change = round(entry.value - base.value);
+      if (entry.guard) return { change, better: false, note: entry.guard };
       if (entry.strokes !== base.strokes) {
         return { change, better: false, note: `strokes ${base.strokes}→${entry.strokes}` };
       }

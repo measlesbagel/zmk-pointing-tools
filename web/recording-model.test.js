@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { CAPTURE, encodeFrame, parseCaptureBatch, captureDecoder } from "./protocol.js";
+import { CAPTURE, MESSAGE, encodeFrame, parseCaptureBatch, captureDecoder } from "./protocol.js";
 import { buildSimulatorTuningTargets } from "./simulator-model.js";
 import { createTuningProfile } from "./profile.js";
 import { SimulatedCapture } from "./simulated-capture.js";
 import {
   addRecords, compareScoreSets, createRecordingStats, describeTruth, deviceGuide, exportRecording, importRecording,
-  metricTruth, resyncs, streamStats,
+  metricTruth, nextClock, resyncs, streamStats,
 } from "./recording-model.js";
 import { captureToFixtures, decodeCaptureStream } from "../host/replay/capture-convert.js";
 
@@ -155,8 +155,44 @@ test("a guided test's labels and pointer path move to the device's clock and con
   assert.equal(importRecording(JSON.parse(JSON.stringify(exportRecording({ ...recording, guided: null })))).guided, null);
 });
 
+test("a guarded score is worse whatever its value, and noted on the current values", () => {
+  const guard = "ballistic bias moved";
+  const sets = [{ scores: { step: { value: 10, strokes: 6 } } },
+    { scores: { step: { value: 4, strokes: 6, guard } } }];
+  const [row] = compareScoreSets(sets, { step: { higherIsBetter: false, unit: "%" } });
+  assert.deepEqual([row.change[1], row.better[1], row.note[1]], [-6, false, guard]);
+  const [current] = compareScoreSets([sets[1], sets[0]], { step: { higherIsBetter: false, unit: "%" } });
+  assert.deepEqual([current.note[0], current.better[1]], [guard, false]);
+});
+
 test("an unranked metric reports its change but is never better or worse", () => {
   const sets = [{ scores: { bias: { value: -10, strokes: 6 } } }, { scores: { bias: { value: 5, strokes: 6 } } }];
   const [row] = compareScoreSets(sets, { bias: { higherIsBetter: false, unit: "%", ranked: false } });
   assert.deepEqual([row.change[1], row.better[1], row.ranked], [15, null, false]);
+});
+
+test("the clock follows the status with the shortest round trip, placed halfway", () => {
+  /* Sent at 100 ms, answered at 140 ms with uptime 5 020 ms: offset 4 900. */
+  let clock = nextClock(null, 5020, 100, 140);
+  assert.deepEqual(clock, { roundTripMs: 40, offsetMs: 4900 });
+  /* A slower answer doesn't replace it; a faster one does. */
+  assert.equal(nextClock(clock, 9000, 200, 260), clock);
+  clock = nextClock(clock, 5306, 300, 310);
+  assert.deepEqual(clock, { roundTripMs: 10, offsetMs: 5001 });
+  /* A schema 2 status has no uptime. */
+  assert.equal(nextClock(null, null, 0, 1), null);
+});
+
+test("a recording from schema 2 firmware still decodes and converts", async () => {
+  const { frames, profiles } = await simulate(450);
+  /* Firmware before schema 3 sent status without the uptime field. */
+  const old = frames.map(({ type, payload }) => (type === MESSAGE.CAPTURE_STATUS_RESPONSE
+    ? { type, payload: Uint8Array.of(2, ...payload.slice(1, 14), ...payload.slice(18)) }
+    : { type, payload }));
+  const stream = new Uint8Array(old.flatMap(({ type, payload }) => [...encodeFrame(type, payload)]));
+  const capture = decodeCaptureStream(stream);
+  assert.ok(capture.statuses.length > 0 && capture.statuses.every(({ schemaVersion, uptimeMs }) =>
+    schemaVersion === 2 && uptimeMs === null));
+  const { fixtures } = captureToFixtures(capture, profiles, { truth: "derive" });
+  assert.ok(fixtures.length > 0);
 });

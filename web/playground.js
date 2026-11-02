@@ -157,6 +157,9 @@ export class PointingPlayground {
   }
 
   start() {
+    /* Reset during a run: its open stretch is labelled before the test
+     * starts over. */
+    if (this.running) this.closeStretches();
     this.stop();
     const context = this.getContext();
     this.run = createRun(this.activity.value, context);
@@ -188,6 +191,15 @@ export class PointingPlayground {
     });
   }
 
+  /* The open stretch of a scroll or text test ends now. */
+  closeStretches() {
+    const now = performance.now();
+    const axis = GUIDED_TESTS[this.run.activity.id]?.axis;
+    if (axis) this.trial({ activity: "scroll", axis, startPerf: this.runStartedPerf, endPerf: now });
+    if (this.textPhase) this.trial({ activity: "text", axis: this.textPhase.axis, startPerf: this.textPhase.startPerf, endPerf: now });
+    this.textPhase = undefined;
+  }
+
   setCapture(text) {
     this.captureLine.hidden = !text;
     this.captureLine.textContent = text;
@@ -200,11 +212,7 @@ export class PointingPlayground {
 
   finish(completed = true) {
     if (!this.run || !this.running) return;
-    /* The open stretch of a scroll or text test ends here. */
-    const axis = GUIDED_TESTS[this.run.activity.id]?.axis;
-    if (axis) this.trial({ activity: "scroll", axis, startPerf: this.runStartedPerf, endPerf: performance.now() });
-    if (this.textPhase) this.trial({ activity: "text", axis: this.textPhase.axis, startPerf: this.textPhase.startPerf, endPerf: performance.now() });
-    this.textPhase = undefined;
+    this.closeStretches();
     finishRun(this.run, completed);
     this.running = false;
     clearInterval(this.timer);
