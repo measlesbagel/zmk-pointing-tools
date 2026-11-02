@@ -28,7 +28,8 @@ const CHAIN_KINDS = {
 export const isStageChain = (fixture) =>
   fixture.version === 2 && fixture.processor.kind in CHAIN_KINDS;
 const STROKE_ACTIVITIES = ["slow-aim", "tremor", "flick", "aim", "scroll", "text",
-  "post-typing"];
+  "post-typing", "target"];
+const isPoint = (point) => Number.isFinite(point?.x) && Number.isFinite(point?.y);
 
 function requireInteger(value, name, minimum = Number.MIN_SAFE_INTEGER) {
   if (!Number.isSafeInteger(value) || value < minimum) {
@@ -245,8 +246,18 @@ function validateTruth(truth, path) {
         !(typeof stroke.speedMmPerS === "number" && stroke.speedMmPerS > 0)) {
       throw new Error(`${name} speedMmPerS must be positive`);
     }
-    if (stroke.axis !== undefined && !["horizontal", "vertical"].includes(stroke.axis)) {
-      throw new Error(`${name} axis must be horizontal or vertical`);
+    if (stroke.axis !== undefined && !["horizontal", "vertical", "both"].includes(stroke.axis)) {
+      throw new Error(`${name} axis must be horizontal, vertical, or both`);
+    }
+    if (stroke.activity === "target" && !(isPoint(stroke.target) && stroke.target.size > 0 &&
+        isPoint(stroke.start) && stroke.path !== undefined)) {
+      throw new Error(`${name}: a target stroke needs target { x, y, size }, start { x, y }, ` +
+        "and path");
+    }
+    if (stroke.pointer !== undefined && (!Array.isArray(stroke.pointer) ||
+        !stroke.pointer.every((sample) => Array.isArray(sample) && sample.length === 3 &&
+          sample.every(Number.isFinite)))) {
+      throw new Error(`${name} pointer must be [tUs, x, y] samples`);
     }
     if (stroke.path !== undefined) {
       const { intervalUs, points } = stroke.path;

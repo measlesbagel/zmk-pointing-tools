@@ -255,6 +255,40 @@ test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", 
     { labels: [{ startMs: 1, endMs: 1, activity: "scroll", axis: "vertical" }] }), /label 0/);
 });
 
+test("cursor trial labels carry their target and the browser's pointer path", () => {
+  sequence = 0;
+  const records = [entered(), source()];
+  for (let i = 0; i < 40; i += 1) records.push(frame(3000 + i * 5, 0, 2));
+  const labels = [
+    { startMs: 3000, endMs: 3100, activity: "cursor", target: { x: 200, y: 50, size: 16 },
+      start: { x: 20, y: 50 }, test: "cursor-precision", trial: 0 },
+    { startMs: 3100, endMs: 3190, activity: "cursor", target: { x: 300, y: 80, size: 8 },
+      start: { x: 200, y: 50 }, test: "cursor-precision", trial: 1 }];
+  /* Samples from 2700 to 3500 ms; each label keeps those within 150 ms. */
+  const pointer = { acceleration: "off",
+    samples: Array.from({ length: 81 }, (_, i) => [2700 + i * 10, i, 50]) };
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile,
+    { labels, pointer });
+  assert.deepEqual(warnings, []);
+  const { truth } = fixtures[0];
+  assert.equal(truth.pointerAcceleration, "off");
+  assert.equal(truth.derived, undefined);
+  assert.deepEqual(truth.strokes.map(({ source: from, activity, target, start, trial }) =>
+    [from, activity, target.size, start.x, trial]),
+  [["label", "target", 16, 20, 0], ["label", "target", 8, 200, 1]]);
+  /* Times move to the trace's microseconds from 3000 ms. */
+  assert.deepEqual(truth.strokes[0].pointer[0], [-150000, 15, 50]);
+  assert.deepEqual(truth.strokes[0].pointer.at(-1), [240000, 54, 50]);
+  /* Labels win over derived strokes here too. */
+  const derived = captureToFixtures({ description, records }, profile,
+    { labels, pointer, truth: "derive" }).fixtures[0].truth;
+  assert.ok(derived.strokes.every((stroke) => stroke.source === "label"));
+  assert.throws(() => captureToFixtures({ description, records }, profile,
+    { labels: [{ ...labels[0], target: { x: 1, y: 2 } }] }), /target \{ x, y, size \}/);
+  assert.throws(() => captureToFixtures({ description, records }, profile,
+    { labels, pointer: { samples: [[1, 2]], acceleration: "off" } }), /options.pointer/);
+});
+
 test("parses capture batches with consecutive sequences", () => {
   const payload = Uint8Array.of(7, 0, 0, 0, 3,
     CAPTURE.RECORD_SOURCE, 1, 2, 0, 0x20, 0x03,

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { aggregate, idealCursorOutput, scoreFixture } from "./quality.js";
+import { aggregate, fitScreenScale, idealCursorOutput, scoreFixture } from "./quality.js";
 
 const source = { device: "ball", location: "central", cpi: 254, span: "none" };
 
@@ -68,6 +68,20 @@ test("axis metrics count decided frames and sideways steps", () => {
   assert.equal(stroke.metrics.sidewaysLeakPercent, 12.5);
   /* Eight output steps are four ball counts at 2 steps per count. */
   assert.ok(Math.abs(stroke.metrics.unintendedOutput - 4) < 1e-9);
+  /* Against the vertical label: the one sideways step is half a count,
+   * 0.05 mm; vertical locks at the second frame, 8 ms in, and the first
+   * vertical step comes out at 16 ms. */
+  assert.ok(Math.abs(stroke.metrics.wrongAxisOutputMm - 0.05) < 1e-9);
+  assert.equal(stroke.metrics.axisLockDelayMs, 8);
+  assert.equal(stroke.metrics.intendedOutputDelayMs, 16);
+  /* A two-axis label wants free intent, one frame in five, and has no
+   * sideways. */
+  fixture.truth.strokes[0].axis = "both";
+  const [both] = scoreFixture(fixture, output);
+  assert.equal(both.metrics.axisLockPercent, 20);
+  assert.equal(both.metrics.axisLockDelayMs, 24);
+  assert.equal(both.metrics.sidewaysLeakPercent, undefined);
+  assert.equal(both.metrics.wrongAxisOutputMm, undefined);
   assert.deepEqual(aggregate([stroke, { metrics: { axisSwitches: 0 } }]).axisSwitches,
     { value: 1, strokes: 2 });
 });
@@ -140,4 +154,61 @@ test("zero output scores as lost and unintended output reads in ball counts", ()
   const [aimZero, restZero] = scoreFixture(fixture, output, zero);
   assert.equal(aimZero.metrics.outputErrorPercent, 100);
   assert.equal(restZero.metrics.unintendedOutput, undefined);
+});
+
+/* A guided cursor run's output every millisecond for two seconds, and the
+ * browser pointer sampled every 4 ms by a computer that maps output to
+ * pixels with move(t, report): known scale, known clock offset. */
+function guidedRun(move, offsetUs) {
+  const reports = [];
+  let carry = [0, 0];
+  for (let ms = 0; ms < 2000; ms += 1) {
+    /* Speeds from rest to about 6 counts per millisecond. */
+    const speed = 3 + 3 * Math.sin(ms / 140);
+    carry = [carry[0] + speed * Math.cos(ms / 300), carry[1] + speed * Math.sin(ms / 230)];
+    const report = carry.map(Math.trunc);
+    carry = carry.map((value, axis) => value - report[axis]);
+    reports.push([ms * 1000, ...report]);
+  }
+  const pointer = [];
+  let position = [100, 100];
+  let next = 0;
+  for (let tUs = -100000; tUs < 2100000; tUs += 4000) {
+    /* What the device had sent offsetUs later on its clock. */
+    while (next < reports.length && reports[next][0] <= tUs + offsetUs) {
+      position = move(position, reports[next]);
+      next += 1;
+    }
+    pointer.push([tUs, Math.round(position[0]), Math.round(position[1])]);
+  }
+  const fixture = cursorFixture(reports.map(([, x]) => ["motion", 1000, x, 0]), [{ id: "t",
+    activity: "target", intended: true, startUs: 0, endUs: 2000000,
+    target: { x: 0, y: 0, size: 8 }, start: { x: 100, y: 100 },
+    path: { intervalUs: 2000, points: [[0, 0], [1, 0]] }, pointer }]);
+  fixture.truth.pointerAcceleration = "off";
+  const output = reports.map(([tUs, x, y]) => `${D(tUs + 1000, x, 0, 0)}\n${O(tUs + 1000, x, y)}`)
+    .join("\n");
+  return { fixture, output };
+}
+
+test("the screen scale fit recovers a flat scale and flags pointer acceleration", () => {
+  const flat = guidedRun(([x, y], [, rx, ry]) => [x + 1.7 * rx, y + 1.7 * ry], 24000);
+  const fit = fitScreenScale([flat]);
+  assert.equal(fit.usable, true, fit.reason);
+  assert.ok(Math.abs(fit.pxPerCount / 1.7 - 1) < 0.03, `scale ${fit.pxPerCount}`);
+  assert.ok(Math.abs(fit.offsetMs - 24) <= 4, `offset ${fit.offsetMs}`);
+  assert.ok(fit.r2 > 0.99);
+  /* Faster reports move the pointer further per count, as an operating
+   * system's pointer acceleration does. */
+  const accelerated = guidedRun(([x, y], [, rx, ry]) => {
+    const gain = 1 + 0.3 * Math.hypot(rx, ry);
+    return [x + gain * rx, y + gain * ry];
+  }, 24000);
+  const curved = fitScreenScale([accelerated]);
+  assert.equal(curved.usable, false);
+  assert.ok(curved.fastSlowRatio > 1.25, `ratio ${curved.fastSlowRatio}`);
+  assert.match(curved.reason, /pointer acceleration/);
+  /* The user's answer counts even when the mapping looks flat. */
+  flat.fixture.truth.pointerAcceleration = "on";
+  assert.equal(fitScreenScale([flat]).usable, false);
 });

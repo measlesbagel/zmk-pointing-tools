@@ -38,6 +38,18 @@
       "axisSwitches": {
         "value": 0.29,
         "strokes": 17
+      },
+      "wrongAxisOutputMm": {
+        "value": 0.87,
+        "strokes": 18
+      },
+      "axisLockDelayMs": {
+        "value": 43.67,
+        "strokes": 17
+      },
+      "intendedOutputDelayMs": {
+        "value": 38.54,
+        "strokes": 17
       }
     },
     "holdout": {
@@ -75,6 +87,18 @@
       },
       "axisSwitches": {
         "value": 0.75,
+        "strokes": 4
+      },
+      "wrongAxisOutputMm": {
+        "value": 0.07,
+        "strokes": 4
+      },
+      "axisLockDelayMs": {
+        "value": 24.74,
+        "strokes": 4
+      },
+      "intendedOutputDelayMs": {
+        "value": 26.43,
         "strokes": 4
       }
     }

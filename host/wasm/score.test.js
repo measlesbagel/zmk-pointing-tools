@@ -12,8 +12,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { eventTimesUs } from "../replay/fixture.js";
 import { scoreTraces } from "../replay/score.js";
-import { compileWasmRunners } from "../replay/wasm.js";
+import { compileWasmRunners, runFixtureWasm } from "../replay/wasm.js";
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const NATIVE = process.env.ZPT_NATIVE_DIR ?? join(REPOSITORY, "build/host");
@@ -57,4 +58,115 @@ test("invalid traces and runner failures are reported", () => {
     targets: [{ stableId: stage.stableId, parameters: [{ key: "no-such-key", value: 1 }] }] };
   assert.throws(() => scoreTraces([cursor], profile, runners),
     new RegExp(`runner failed: ${stage.stableId}: unknown parameter no-such-key`));
+});
+
+/* A guided precision run with known targets: each trial is a fast first
+ * submovement that lands 10 % short, then slow homing with a 6 Hz wobble
+ * onto the target. The browser pointer follows the recorded settings'
+ * output at one pixel per count, as a computer without pointer
+ * acceleration would, and each target is where that output ends. */
+function guidedPrecisionRun() {
+  const base = tune.find((trace) => trace.id === "slow-aim-precision");
+  const mmPerCount = 25.4 / base.source.cpi;
+  const trials = [30, 12, 45, 20, 8, 35].map((distanceMm, index) => ({ distanceMm,
+    angle: index * 2.1 }));
+  const events = [];
+  const strokes = [];
+  let carry = [0, 0];
+  let ball = [0, 0];
+  let lastUs = 0;
+  let nowUs = 200000;
+  for (const [index, { distanceMm, angle }] of trials.entries()) {
+    const counts = distanceMm / mmPerCount;
+    const startUs = nowUs;
+    const points = [[0, 0]];
+    const origin = [...ball];
+    const along = (ms) => {
+      if (ms <= 300) {
+        const t = ms / 300;
+        return 0.9 * counts * (10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5);
+      }
+      const t = (ms - 300) / 500;
+      return counts * (0.9 + 0.1 * t) + (0.3 / mmPerCount) * Math.sin(2 * Math.PI * 6 * t / 2);
+    };
+    let previous = 0;
+    for (let ms = 1; ms <= 800; ms += 1) {
+      const now = along(ms);
+      carry = [carry[0] + (now - previous) * Math.cos(angle), carry[1] + (now - previous) * Math.sin(angle)];
+      previous = now;
+      const step = carry.map(Math.trunc);
+      carry = carry.map((value, axis) => value - step[axis]);
+      nowUs += 1000;
+      if (step[0] || step[1]) {
+        events.push(["motion", nowUs - lastUs, step[0], step[1], 0]);
+        lastUs = nowUs;
+        ball = [ball[0] + step[0], ball[1] + step[1]];
+      }
+      if (ms % 2 === 0) points.push([ball[0] - origin[0], ball[1] - origin[1]]);
+    }
+    strokes.push({ id: `label-${index + 1}`, source: "label", activity: "target", intended: true,
+      startUs, endUs: nowUs, path: { intervalUs: 2000, points } });
+    nowUs += 200000;
+  }
+  const fixture = { ...structuredClone(base), id: "guided-precision", events,
+    truth: { pointerAcceleration: "off", strokes } };
+  /* The pointer the user saw: the recorded output, a pixel per count. */
+  const reports = runFixtureWasm(fixture, runners).trim().split("\n")
+    .filter((line) => line.startsWith("O")).map((line) => line.split("\t").map(Number));
+  const times = eventTimesUs(fixture);
+  const pointer = [];
+  let position = [400, 300];
+  let next = 0;
+  for (let tUs = 0; tUs <= times.at(-1) + 100000; tUs += 4000) {
+    while (next < reports.length && reports[next][4] <= tUs) {
+      position = [position[0] + reports[next][2], position[1] + reports[next][3]];
+      next += 1;
+    }
+    pointer.push([tUs, ...position]);
+  }
+  const at = (tUs) => pointer.findLast(([time]) => time <= tUs);
+  for (const stroke of strokes) {
+    const [, sx, sy] = at(stroke.startUs);
+    const [, tx, ty] = at(stroke.endUs);
+    Object.assign(stroke, { start: { x: sx, y: sy }, target: { x: tx, y: ty, size: 16 },
+      pointer: pointer.filter(([time]) => time >= stroke.startUs - 150000 &&
+        time < stroke.endUs + 150000) });
+  }
+  return fixture;
+}
+
+test("guided cursor trials score a too-high gain and a gain jump as worse", () => {
+  const fixture = guidedPrecisionRun();
+  const acceleration = fixture.processor.stages.find(({ type }) => type === "acceleration");
+  const transfer = fixture.processor.stages.find(({ type }) => type === "transfer");
+  const profile = (stableId, values) => ({ schema: "zmk-pointing-tools/tuning-profile",
+    version: 1, targets: [{ stableId, parameters: Object.entries(values)
+      .map(([key, value]) => ({ key, value })) }] });
+  const recorded = scoreTraces([fixture], null, runners);
+  const [{ screen }] = recorded.fixtureResults;
+  assert.equal(screen.usable, true, screen.reason);
+  assert.ok(Math.abs(screen.pxPerCount - 1) < 0.03, `scale ${screen.pxPerCount}`);
+  assert.equal(recorded.scores.homingStepPercent.strokes, 6);
+  assert.equal(recorded.scores.ballisticSpreadPercent.strokes, 6);
+  /* Every first submovement was built to land 10 % short. */
+  assert.ok(Math.abs(recorded.scores.ballisticBiasPercent.value + 10) < 2,
+    `bias ${recorded.scores.ballisticBiasPercent.value}`);
+  /* Three times the gain: every homing step and wobble is three times the
+   * size against the same targets. */
+  const high = scoreTraces([fixture], profile(transfer.stableId, { "scale-multiplier": 3 }),
+    runners).scores;
+  for (const name of ["homingStepPercent", "homingJitterPercent"]) {
+    assert.ok(high[name].value > 2 * recorded.scores[name].value,
+      `${name}: ${high[name].value} vs ${recorded.scores[name].value}`);
+  }
+  /* The same sensitivity range, but all of it at 40 mm/s, which every
+   * first submovement slows through. */
+  const jump = {};
+  [0, 10, 20, 40, 41, 100, 250, 400].forEach((speed, i) => { jump[`curve-speed-${i + 1}`] = speed; });
+  [100, 100, 100, 100, 200, 200, 200, 200].forEach((percent, i) => {
+    jump[`curve-sensitivity-${i + 1}`] = percent;
+  });
+  const jumped = scoreTraces([fixture], profile(acceleration.stableId, jump), runners).scores;
+  assert.ok(jumped.transitionStepPercent.value > 1.5 * recorded.scores.transitionStepPercent.value,
+    `${jumped.transitionStepPercent.value} vs ${recorded.scores.transitionStepPercent.value}`);
 });

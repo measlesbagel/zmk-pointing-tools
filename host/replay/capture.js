@@ -7,7 +7,8 @@
  *
  *   node host/replay/capture.js --stream capture.bin --profile a.json \
  *     [--profile b.json …] --out trace.json [--id my-trace] [--device right-ball] \
- *     [--provenance "…"] [--labels labels.json] [--truth labels-only|derive]
+ *     [--provenance "…"] [--labels labels.json] [--pointer pointer.json] \
+ *     [--truth labels-only|derive]
  *
  * The stream is the device's protocol bytes as received: a capture
  * description (0x8d) and the capture batches (0x92) of one recording; other
@@ -17,9 +18,13 @@
  * becomes one trace per stretch the pipeline ran unchanged, each with the
  * profile whose settings hash its entered record carries; see
  * captureToFixtures in capture-convert.js, which the tuner shares.
- * --labels names the intended axis of stretches of a scroll or text
- * recording: a JSON list of { startMs, endMs, activity, axis } in device
- * uptime. --truth derive also derives strokes for the motion outside labels,
+ * --labels names what stretches of a recording meant: a JSON list of
+ * { startMs, endMs, activity, axis } for scroll and text, or { startMs,
+ * endMs, activity: "cursor", target: { x, y, size }, start: { x, y } } for
+ * cursor trials, in device uptime. --pointer adds the browser's pointer
+ * path of a guided cursor test: { samples: [[ms, x, y], …], acceleration }.
+ * A tuner recording export carries both as guided.labels and
+ * guided.pointer. --truth derive also derives strokes for the motion outside labels,
  * with source "derived" or "typing"; the default, labels-only, writes only the labelled ones
  * (docs/trace-benchmark.md, "Recorded traces: ground truth"). */
 
@@ -42,18 +47,21 @@ function main() {
       device: { type: "string" },
       provenance: { type: "string" },
       labels: { type: "string" },
+      pointer: { type: "string" },
       truth: { type: "string", default: "labels-only" },
     },
   });
   if (!values.stream || !values.profile || !values.out) {
     console.error("usage: capture.js --stream <bytes> --profile <profile.json> [--profile …] " +
-      "--out <trace.json> [--labels <labels.json>] [--truth labels-only|derive]");
+      "--out <trace.json> [--labels <labels.json>] [--pointer <pointer.json>] " +
+      "[--truth labels-only|derive]");
     process.exit(2);
   }
   const capture = decodeCaptureStream(new Uint8Array(readFileSync(values.stream)));
   const profiles = values.profile.map((path) => JSON.parse(readFileSync(path, "utf8")));
   const labels = values.labels ? JSON.parse(readFileSync(values.labels, "utf8")) : [];
-  const { fixtures, warnings } = captureToFixtures(capture, profiles, { ...values, labels });
+  const pointer = values.pointer ? JSON.parse(readFileSync(values.pointer, "utf8")) : undefined;
+  const { fixtures, warnings } = captureToFixtures(capture, profiles, { ...values, labels, pointer });
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   fixtures.forEach((fixture, index) => {
     const path = fixtures.length === 1 ? values.out
