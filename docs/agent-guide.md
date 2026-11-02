@@ -64,8 +64,9 @@ preview → confirm on the keyboard.** Replay informs; live runs confirm.
      step and jitter and counts as worse there: the user would have aimed
      differently with that gain. One whose homing output differs from
      the recorded settings' by more than 1.15× in total, or 1.3× in any one
-     trial, gets the same on homing step and jitter. These scores judge consistency and
-     smoothness near the recorded gain, not which gain is best; use live
+     trial (small trials pooled), gets the same on homing step and
+     jitter. These scores judge consistency and smoothness near the
+     recorded gain, not which gain is best; use live
      runs for that.
    - Scroll and text score against the intended axis: `sidewaysLeakPercent`,
      `wrongAxisOutputMm`, `axisLockPercent`, `axisLockDelayMs`, `axisSwitches`

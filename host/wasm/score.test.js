@@ -61,15 +61,15 @@ test("invalid traces and runner failures are reported", () => {
 });
 
 /* A guided precision run with known targets: each trial is a fast first
- * submovement that lands short (10 % unless the trial says otherwise),
- * then slow homing with a 6 Hz wobble (0.3 mm unless it says otherwise)
- * onto the target. The browser pointer follows the recorded settings'
- * output at one pixel per count, as a computer without pointer
- * acceleration would, and each target is where that output ends. */
+ * submovement that lands short, then slow homing with a 6 Hz wobble onto
+ * the target: 10 % short, 0.3 mm and 16 px unless the trial says
+ * otherwise. The browser pointer follows the recorded settings' output at
+ * one pixel per count, as a computer without pointer acceleration would,
+ * and each target is where that output ends. */
 function guidedPrecisionRun(list = [30, 12, 45, 20, 8, 35]) {
   const base = tune.find((trace) => trace.id === "slow-aim-precision");
   const mmPerCount = 25.4 / base.source.cpi;
-  const trials = list.map((trial, index) => ({ landing: 0.9, wobbleMm: 0.3,
+  const trials = list.map((trial, index) => ({ landing: 0.9, wobbleMm: 0.3, sizePx: 16,
     ...(typeof trial === "number" ? { distanceMm: trial } : trial), angle: index * 2.1 }));
   const events = [];
   const strokes = [];
@@ -77,7 +77,7 @@ function guidedPrecisionRun(list = [30, 12, 45, 20, 8, 35]) {
   let ball = [0, 0];
   let lastUs = 0;
   let nowUs = 200000;
-  for (const [index, { distanceMm, angle, landing, wobbleMm }] of trials.entries()) {
+  for (const [index, { distanceMm, angle, landing, wobbleMm, sizePx }] of trials.entries()) {
     const counts = distanceMm / mmPerCount;
     const startUs = nowUs;
     const points = [[0, 0]];
@@ -106,7 +106,7 @@ function guidedPrecisionRun(list = [30, 12, 45, 20, 8, 35]) {
       if (ms % 2 === 0) points.push([ball[0] - origin[0], ball[1] - origin[1]]);
     }
     strokes.push({ id: `label-${index + 1}`, source: "label", activity: "target", intended: true,
-      startUs, endUs: nowUs, path: { intervalUs: 2000, points } });
+      startUs, endUs: nowUs, sizePx, path: { intervalUs: 2000, points } });
     nowUs += 200000;
   }
   const fixture = { ...structuredClone(base), id: "guided-precision", events,
@@ -129,7 +129,9 @@ function guidedPrecisionRun(list = [30, 12, 45, 20, 8, 35]) {
   for (const stroke of strokes) {
     const [, sx, sy] = at(stroke.startUs);
     const [, tx, ty] = at(stroke.endUs);
-    Object.assign(stroke, { start: { x: sx, y: sy }, target: { x: tx, y: ty, size: 16 },
+    const size = stroke.sizePx;
+    delete stroke.sizePx;
+    Object.assign(stroke, { start: { x: sx, y: sy }, target: { x: tx, y: ty, size },
       pointer: pointer.filter(([time]) => time >= stroke.startUs - 150000 &&
         time < stroke.endUs + 150000) });
   }
@@ -238,6 +240,48 @@ test("the homing guard compares each trial, so long trials can't hide short ones
   for (const i of [1, 3]) assert.ok(ratios[i] < 0.6, `short trial ${i}: ${ratios[i]}`);
   const worst = Math.min(...ratios).toFixed(2);
   for (const name of ["homingStepPercent", "homingJitterPercent"]) {
-    assert.match(candidate.scores[name].guard ?? "", new RegExp(`in a trial is ${worst}×`), name);
+    assert.match(candidate.scores[name].guard ?? "", new RegExp(`in some trials is ${worst}×`), name);
+  }
+});
+
+test("trials too small to judge alone are pooled, so small targets can't hide either", () => {
+  /* Large targets, and small ones the pointer barely wobbles on: each
+   * small trial has under 20 counts of homing output. */
+  const large = (distanceMm) => ({ distanceMm, sizePx: 32 });
+  const small = (distanceMm) => ({ distanceMm, sizePx: 4, wobbleMm: 0.05 });
+  const fixture = guidedPrecisionRun([large(20), small(20), large(25), small(15), large(30),
+    small(10)]);
+  const acceleration = fixture.processor.stages.find(({ type }) => type === "acceleration");
+  const counts = (result) => result.fixtureResults[0].strokes
+    .map(({ metrics }) => metrics.homingOutputCounts);
+  const recorded = counts(scoreTraces([fixture], null, runners));
+  const smallTrials = [1, 3, 5];
+  for (const i of smallTrials) assert.ok(recorded[i] < 20, `trial ${i}: ${recorded[i]}`);
+  const run = (sensitivities) => scoreTraces([fixture], {
+    schema: "zmk-pointing-tools/tuning-profile", version: 1,
+    targets: [{ stableId: acceleration.stableId, parameters: Object.entries(sensitivities)
+      .map(([point, value]) => ({ key: `curve-sensitivity-${point}`, value })) }] }, runners);
+  /* Less gain at the slowest speeds, a little more at 25 mm/s (the curve
+   * in effect is 35/35/68/100 % at 0/4/10/25 mm/s): the large trials and
+   * the total stay within their bands, the small trials don't. */
+  const candidate = run({ 1: 15, 2: 15, 4: 115 });
+  const ratios = counts(candidate).map((value, i) => value / recorded[i]);
+  const sum = (items) => items.reduce((total, value) => total + value, 0);
+  const total = sum(counts(candidate)) / sum(recorded);
+  assert.ok(total > 1 / 1.15 && total < 1.15, `total ${total}`);
+  for (const i of [0, 2, 4]) assert.ok(ratios[i] > 1 / 1.3 && ratios[i] < 1.3, `trial ${i}`);
+  const pooled = sum(smallTrials.map((i) => counts(candidate)[i])) /
+    sum(smallTrials.map((i) => recorded[i]));
+  assert.ok(pooled < 0.65, `pooled ${pooled}`);
+  for (const name of ["homingStepPercent", "homingJitterPercent"]) {
+    assert.match(candidate.scores[name].guard ?? "", new RegExp(`is ${pooled.toFixed(2)}×`), name);
+  }
+  /* A tenth more or less gain everywhere stays unflagged. */
+  for (const factor of [1 / 1.1, 1.1]) {
+    const uniform = {};
+    [35, 35, 68, 100, 126, 174, 200, 200].forEach((percent, i) => {
+      uniform[i + 1] = Math.round(percent * factor);
+    });
+    assert.equal(run(uniform).scores.homingJitterPercent.guard, undefined, `×${factor}`);
   }
 });

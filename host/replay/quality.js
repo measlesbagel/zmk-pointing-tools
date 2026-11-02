@@ -58,8 +58,11 @@ const GAIN_GUARD_POINTS = 25;
  * doesn't) or any one trial is outside HOMING_TRIAL_RATIO, so a curve can't
  * cut slow gain for short trials and raise it for long ones with the totals
  * matching. A trial's ratio carries about ±10 % of quantization noise at
- * 50 counts, hence the wider band, and trials with fewer than
- * HOMING_TRIAL_MIN_COUNTS recorded counts count only in the total. */
+ * 50 counts, hence the wider band. Trials with fewer than
+ * HOMING_TRIAL_MIN_COUNTS recorded counts are too noisy alone, so they are
+ * pooled and checked together against the same band once the pool's
+ * recorded total reaches that many: small targets can't hide behind large
+ * ones either. */
 const HOMING_GUARD_RATIO = 1.15;
 const HOMING_TRIAL_RATIO = 1.3;
 const HOMING_TRIAL_MIN_COUNTS = 20;
@@ -760,26 +763,32 @@ export function aggregate(strokes, recorded = null) {
  * or in one trial. recorded holds the same strokes in the same order. */
 function homingGuard(strokes, recorded) {
   const outside = (ratio, band) => ratio > band || ratio < 1 / band;
-  let candidate = 0;
-  let base = 0;
+  const total = { candidate: 0, base: 0 };
+  const small = { candidate: 0, base: 0 };
   let worst = 1;
+  const consider = (ratio) => {
+    if (Math.abs(Math.log(ratio)) > Math.abs(Math.log(worst))) worst = ratio;
+  };
   strokes.forEach((stroke, index) => {
     const counts = stroke.metrics.homingOutputCounts;
     const recordedCounts = recorded[index]?.id === stroke.id
       ? recorded[index].metrics.homingOutputCounts : undefined;
     if (counts === undefined || recordedCounts === undefined) return;
-    candidate += counts;
-    base += recordedCounts;
-    const ratio = counts / recordedCounts;
-    if (recordedCounts >= HOMING_TRIAL_MIN_COUNTS &&
-      Math.abs(Math.log(ratio)) > Math.abs(Math.log(worst))) worst = ratio;
+    total.candidate += counts;
+    total.base += recordedCounts;
+    if (recordedCounts >= HOMING_TRIAL_MIN_COUNTS) consider(counts / recordedCounts);
+    else {
+      small.candidate += counts;
+      small.base += recordedCounts;
+    }
   });
+  if (small.base >= HOMING_TRIAL_MIN_COUNTS) consider(small.candidate / small.base);
   const reason = "steps and wobble shrink or grow with the slow-speed gain whatever its quality";
   if (outside(worst, HOMING_TRIAL_RATIO)) {
-    return `homing output in a trial is ${worst.toFixed(2)}× the recorded settings': ${reason}`;
+    return `homing output in some trials is ${worst.toFixed(2)}× the recorded settings': ${reason}`;
   }
-  if (base > 0 && outside(candidate / base, HOMING_GUARD_RATIO)) {
-    return `homing output is ${(candidate / base).toFixed(2)}× the recorded settings': ${reason}`;
+  if (total.base > 0 && outside(total.candidate / total.base, HOMING_GUARD_RATIO)) {
+    return `homing output is ${(total.candidate / total.base).toFixed(2)}× the recorded settings': ${reason}`;
   }
   return null;
 }

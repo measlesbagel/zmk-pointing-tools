@@ -479,10 +479,13 @@ reason and count as worse when the total over all trials is outside
 1/1.15–1.15× or any one trial is outside 1/1.3–1.3×. The per-trial check
 stops a curve that cuts slow gain for short trials and raises it for long
 ones with the totals matching; its band is wider because a trial's ratio
-carries about ±10 % of quantization noise, and trials with under 20
-recorded counts of homing output count only in the total. Uniform ÷1.25
-(0.80×), the curve's slow points at 25 %, and the mixed long and short
-case trip it; ÷1.1 (0.91×) doesn't (`host/wasm/score.test.js`).
+carries about ±10 % of quantization noise. Trials with under 20 recorded
+counts of homing output, such as small targets, are too noisy alone, so
+they are pooled and the pool is checked against the same 1.3× band once
+its recorded total reaches 20. Uniform ÷1.25 (0.80×), the curve's slow
+points at 25 %, the mixed long and short case, and a slow-gain cut that
+only small targets feel trip it; ÷1.1 and ×1.1 don't
+(`host/wasm/score.test.js`).
 
 #### Homing step size (`homingStepPercent`)
 
