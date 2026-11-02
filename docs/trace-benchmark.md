@@ -469,6 +469,16 @@ missing metric does. Dividing the gain by 3 or 10 trips it
 and smooth a gain is near the one the user recorded with; it can't say which
 gain is best. That stays with live runs.
 
+**Homing guard.** The ballistic phase is mostly fast, so a gain cut only at
+slow speeds, or a uniform cut too small to move the bias 25 points, passes
+the gain guard yet still shrinks homing steps and wobble against fixed
+targets. So the scorer also sums each candidate's output during the homing
+windows, which are the same for every candidate, over all trials, and when
+that is more than 1.15 times the recorded settings' total or less than
+1/1.15 of it, homing step size and homing jitter carry a `guard` reason and
+count as worse. Uniform ÷1.25 (0.80×) and the curve's slow points at 25 %
+trip it; ÷1.1 (0.91×) doesn't (`host/wasm/score.test.js`).
+
 #### Homing step size (`homingStepPercent`)
 
 Applies to target strokes whose pointer came near the target, with a usable
@@ -574,7 +584,9 @@ in CSS pixels, which becomes a `target` stroke scored by phase
 hold whole, such as one cut by a drop or a settings change, is dropped with a
 warning, since its output would be measured against the whole distance; only
 the recording's first trace, with nothing lost before it, may start inside a
-trial, which then began at rest. `test` and `trial`, when
+trial, and only when the pointer path puts the browser's pointer within the
+target's size of the trial's start at the trace's first frame: the reach
+hadn't begun. Without a pointer path such a trial is dropped. `test` and `trial`, when
 given, name the guided test and trial and are kept on the stroke.
 `--pointer pointer.json`, or `options.pointer`, is the browser's pointer path
 during a guided cursor test, `{ "samples": [[ms, x, y], …], "acceleration":

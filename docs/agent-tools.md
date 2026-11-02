@@ -195,7 +195,9 @@ It works without agent access too.
   worse. Guided cursor trials judge how consistently and smoothly a gain
   lands and homes near the gain you recorded with; a candidate whose
   ballistic bias moves more than 25 points from yours is flagged instead of
-  ranked, since you'd have aimed differently with it. Neither picks the best
+  ranked, since you'd have aimed differently with it, and one that moves
+  much more or less while homing is flagged on homing step and jitter.
+  Neither picks the best
   gain. Scores narrow the candidates; the keyboard decides.
 - **Agent requests.** `start_recording` with a `test` asks you for that
   guided test, as `request_run` does, and its result names the recording.

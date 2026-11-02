@@ -477,8 +477,10 @@ function gestures(frames) {
  * scroll and text labels split into a stroke per gesture. A cursor trial
  * the trace doesn't hold whole is dropped: its output would be measured
  * against the whole distance. Only the recording's first trace, which
- * nothing was lost before (fresh), may start inside a trial, since the
- * trial then began at rest. Warnings name labels that don't fit. */
+ * nothing was lost before (fresh), may start inside a trial, and only
+ * while the browser's pointer was still within the target's size of the
+ * trial's start at the trace's first frame: then the reach hadn't begun.
+ * Warnings name labels that don't fit. */
 function labelledStrokes(fixture, startMs, mode, labels, pointer, warnings, fresh) {
   const times = eventTimesUs(fixture);
   const endUs = times.at(-1) + 1;
@@ -499,7 +501,19 @@ function labelledStrokes(fixture, startMs, mode, labels, pointer, warnings, fres
     label.used = true;
     const startUs = Math.max(from, 0);
     const stopUs = Math.min(to, endUs);
-    if (mode === "cursor" && (stopUs !== to || (startUs !== from && !fresh))) {
+    const atRest = () => {
+      if (!pointer) return false;
+      const samples = pointer.samples.map(([ms, x, y]) => [traceUs(ms), x, y]);
+      const tUs = frames[0]?.tUs ?? 0;
+      const after = samples.findIndex(([time]) => time >= tUs);
+      if (after < 0 || (after === 0 && samples[0][0] > tUs)) return false;
+      const [t1, x1, y1] = samples[after];
+      const [t0, x0, y0] = samples[Math.max(after - 1, 0)];
+      const f = t1 > t0 ? (tUs - t0) / (t1 - t0) : 1;
+      return Math.hypot(x0 + (x1 - x0) * f - label.start.x, y0 + (y1 - y0) * f - label.start.y) <=
+        label.target.size;
+    };
+    if (mode === "cursor" && (stopUs !== to || (startUs !== from && !(fresh && atRest())))) {
       warnings.push(`label ${index} (trial ${label.trial ?? "?"}) is dropped: ${fixture.id}, ` +
         `which runs from ${startMs} ms for ${Math.ceil(endUs / 1000)} ms, holds only part of it`);
       continue;

@@ -175,6 +175,24 @@ test("guided cursor trials score a too-high gain and a gain jump as worse", () =
     }
   }
   assert.equal(recorded.scores.homingJitterPercent.guard, undefined);
+  /* A gain cut only at slow speeds, or one too small to move the bias far,
+   * still shrinks homing steps and wobble; the homing output against the
+   * recorded settings gives it away. A tenth off the gain is within it. */
+  const slowCut = {};
+  [25, 25, 25, 25, 165, 190, 200, 200].forEach((percent, i) => {
+    slowCut[`curve-sensitivity-${i + 1}`] = percent;
+  });
+  const candidates = [["slow points at 25 %", profile(acceleration.stableId, slowCut)],
+    ["÷1.25", profile(transfer.stableId, { "scale-multiplier": 4, "scale-divisor": 5 })]];
+  for (const [label, candidate] of candidates) {
+    const scores = scoreTraces([fixture], candidate, runners).scores;
+    for (const name of ["homingStepPercent", "homingJitterPercent"]) {
+      assert.match(scores[name].guard ?? "", /homing output/, `${label} ${name}`);
+    }
+  }
+  const slight = scoreTraces([fixture],
+    profile(transfer.stableId, { "scale-multiplier": 10, "scale-divisor": 11 }), runners).scores;
+  assert.equal(slight.homingJitterPercent.guard, undefined);
   /* The same sensitivity range, but all of it at 40 mm/s, which every
    * first submovement slows through. */
   const jump = {};

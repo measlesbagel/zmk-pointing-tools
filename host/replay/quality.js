@@ -50,6 +50,13 @@ export const PIXEL_METRICS = ["ballisticSpreadPercent", "ballisticBiasPercent",
 export const GAIN_GUARDED = ["ballisticSpreadPercent", "homingStepPercent",
   "homingJitterPercent"];
 const GAIN_GUARD_POINTS = 25;
+/* The ballistic phase is mostly fast, so a gain cut only at slow speeds
+ * passes the bias check. The homing guard compares how much the candidate
+ * moved during homing (output counts over the same windows) with the
+ * recorded settings, and flags homing step size and jitter outside this
+ * ratio: a quarter of the gain change a uniform ÷1.25 makes. */
+const HOMING_GUARD_RATIO = 1.15;
+const HOMING_GUARDED = ["homingStepPercent", "homingJitterPercent"];
 
 const SETTLE_US = 100000;
 const TAIL_US = 100000;
@@ -648,6 +655,10 @@ function targetMetrics(stroke, frames, reports, fixture, screen) {
     reversals += signs.slice(1).filter((sign, i) => sign !== signs[i]).length;
   }
   values.homingReversalsPerS = reversals / ((output.length * PHASE_BIN_US) / 1e6);
+  /* How much the candidate moved in homing, in output counts, for the
+   * homing guard; the window is the same for every candidate. */
+  values.homingOutputCounts = windowReports.reduce((total, report) =>
+    total + Math.hypot(report.x, report.y), 0);
   /* Stair-stepping: how far each bin's output turns from the ball's own
    * direction in it, weighted by the output. */
   const { orientations } = cursorModel(fixture);
@@ -730,7 +741,24 @@ export function aggregate(strokes, recorded = null) {
   if (guard) {
     for (const name of GAIN_GUARDED) if (scores[name]) scores[name].guard = guard;
   }
+  const homing = recorded && homingGuard(strokes, recorded);
+  if (homing) {
+    for (const name of HOMING_GUARDED) if (scores[name]) scores[name].guard ??= homing;
+  }
   return scores;
+}
+
+/* Why a candidate's homing metrics can't be trusted, or null: it moved
+ * much more or less during homing than the recorded settings did. */
+function homingGuard(strokes, recorded) {
+  const total = (items) => items.reduce((sum_, stroke) => sum_ +
+    (stroke.metrics.homingOutputCounts ?? 0), 0);
+  const base = total(recorded);
+  if (base === 0) return null;
+  const ratio = total(strokes) / base;
+  if (ratio <= HOMING_GUARD_RATIO && ratio >= 1 / HOMING_GUARD_RATIO) return null;
+  return `homing output is ${ratio.toFixed(2)}× the recorded settings': ` +
+    "steps and wobble shrink or grow with the slow-speed gain whatever its quality";
 }
 
 /* Why a candidate's pixel metrics can't be trusted, or null. */

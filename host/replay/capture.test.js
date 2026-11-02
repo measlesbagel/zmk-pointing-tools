@@ -292,11 +292,12 @@ test("cursor trial labels carry their target and the browser's pointer path", ()
 test("a cursor trial the trace doesn't hold whole is dropped", () => {
   const trial = (startMs, endMs, index) => ({ startMs, endMs, activity: "cursor",
     target: { x: 100, y: 0, size: 8 }, start: { x: 0, y: 0 }, trial: index });
-  /* The first trace starts the recording, so a trial that began at rest
-   * before its first frame lost nothing and is kept. The second trace
-   * follows dropped records: a trial reaching back before it, or one
-   * running past the first trace's end, would compare part of a reach
-   * with the whole distance. */
+  /* The first trace starts the recording, and the pointer was still at
+   * the trial's start at its first frame, so the trial began at rest
+   * before it and lost nothing: it is kept. The second trace follows
+   * dropped records: a trial reaching back before it, or one running past
+   * the first trace's end, would compare part of a reach with the whole
+   * distance. */
   sequence = 0;
   const records = [entered(), source()];
   for (let i = 0; i < 10; i += 1) records.push(frame(1000 + i * 5, 0, 1));
@@ -304,11 +305,23 @@ test("a cursor trial the trace doesn't hold whole is dropped", () => {
   records.push(entered(), source());
   for (let i = 0; i < 10; i += 1) records.push(frame(2000 + i * 5, 0, 1));
   const labels = [trial(900, 1040, 0), trial(1040, 1100, 1), trial(1950, 2040, 2)];
-  const { fixtures, warnings } = captureToFixtures({ description, records }, profile, { labels });
+  const pointer = (moved) => ({ acceleration: "off",
+    samples: [[880, 0, 0], [1000, moved, 0], [1100, 100, 0], [2100, 100, 0]] });
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile,
+    { labels, pointer: pointer(3) });
   assert.deepEqual(fixtures.map((fixture) => fixture.truth?.strokes.map((stroke) => stroke.trial)),
     [[0], undefined]);
   assert.deepEqual(warnings.filter((warning) => /dropped:/.test(warning)).map((warning) =>
     warning.match(/trial \d/)[0]), ["trial 1", "trial 2"]);
+  /* Capture started mid-reach: the pointer was already 40 px along, more
+   * than the 8 px target, when the first frame came, so trial 0 is cut
+   * and dropped too; and without a pointer path nothing shows it began at
+   * rest. */
+  for (const options of [{ labels, pointer: pointer(40) }, { labels }]) {
+    const cut = captureToFixtures({ description, records }, profile, options);
+    assert.equal(cut.fixtures[0].truth, undefined);
+    assert.ok(cut.warnings.some((warning) => /label 0 \(trial 0\) is dropped/.test(warning)));
+  }
 });
 
 test("a scroll label splits into a stroke per gesture", () => {
