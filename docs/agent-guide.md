@@ -34,27 +34,50 @@ or "scrolling feels jumpy".
 ### Narrow the candidates offline
 
 When the firmware supports input capture (`list_recordings` says
-`captureSupported`), start with recordings of the user's real motion:
+`captureSupported`), the loop is: **guided recording → replay shortlist →
+preview → confirm on the keyboard.** Replay informs; live runs confirm.
 
-1. **Record.** `start_recording` with a label and a note on what to do, such as
-   a minute of normal use or a few slow aims. Poll `get_run_result` until the
-   user has recorded and stopped, or `stop_recording` when you have enough.
-   Check `droppedRecords` and `resyncs`: drops shorten traces but don't spoil
-   them.
-2. **Score candidates offline.** `score_settings` with the recordings and each
+1. **Record a guided test.** `start_recording` with a `label` and the `test`
+   that matches the goal: `cursor-precision` or `cursor-targets` for landing
+   on targets and fine positioning, `scroll-vertical`, `scroll-horizontal` or
+   `scroll-two-axis` for scrolling, `text-selection` for text navigation.
+   Poll `get_run_result` until it finishes; its result's `recording` names
+   the recording. The test labels every trial with what the user meant: the
+   target, or the scroll or text axis. Check `droppedRecords` and `resyncs`:
+   drops shorten traces but don't spoil them. For a cursor test, ask the user
+   to turn the computer's pointer acceleration off first and to say so in the
+   playground.
+2. **Shortlist offline.** `score_settings` with the recordings and each
    candidate as `values` (or a saved `snapshot`). It replays the recordings
    with the current values and the candidate and reports every metric's
-   change. Nothing reaches the keyboard, so try as many as you like. Metrics
-   without a value weren't scored. `truthStrokes` counts where each metric's
-   truth came from: `derived` by the converter, or the `typing` heuristic.
-   Derived truth is a guess from the motion itself. Recordings with no truth
-   at all make `score_settings` fail rather than report no difference. A metric
-   with a `note` counts as worse: the candidate left it unscored or scored
-   other strokes. The benchmark doesn't judge curve shape
-   or gain: a flatter curve or lower gain can win every metric and feel worse,
-   so treat scores as a filter, not a verdict.
-3. **Preview the winner** or the best two, and confirm them on the keyboard
-   with the A/B loop below.
+   change. Nothing reaches the keyboard, so try as many as you like.
+   - Cursor trials score by phase: `ballisticSpreadPercent` (how consistently
+     the first submovement lands, across distances and sizes; the headline),
+     `ballisticBiasPercent` (shown, not ranked: the user adapted to the gain
+     they recorded with), `homingStepPercent`, `homingJitterPercent`,
+     `homingReversalsPerS` and `homingStairDegrees` near the target, and
+     `transitionStepPercent` (gain smoothness as speed falls into homing).
+     Pixel metrics need `screen` to be `usable`; when it isn't, its `reason`
+     says why (pointer acceleration on, or a poor fit) and only the
+     scale-free metrics score.
+   - Scroll and text score against the intended axis: `sidewaysLeakPercent`,
+     `wrongAxisOutputMm`, `axisLockPercent`, `axisLockDelayMs`, `axisSwitches`
+     and `intendedOutputDelayMs`.
+   - Replay **can't** judge total time to target, corrections, misses or
+     throughput. The user corrects what they see, and a replay through other
+     settings is a path they never saw. Don't rank candidates on anything
+     that stands in for those; they are what the live run is for.
+   - `truthStrokes` counts where each metric's truth came from; for guided
+     recordings it is `label`. A metric with a `note` counts as worse: the
+     candidate left it unscored or scored other strokes. Recordings with no
+     truth make `score_settings` fail rather than report no difference.
+   - Free recordings (`start_recording` without `test`) have no targets, so
+     the converter guesses their truth from the motion; `score_settings`
+     scores them only with `free: true`. Use them for custom checks, not to
+     rank settings.
+3. **Preview the best one or two** and confirm them on the keyboard with the
+   loop below. If the live result disagrees with replay, the per-phase numbers
+   show where: replay may favour a gain the user can't control in practice.
 
 ### Confirm on the keyboard
 

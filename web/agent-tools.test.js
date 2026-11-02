@@ -44,8 +44,8 @@ function fakeRecorder() {
     },
     async stop(reason) { this.stops.push(reason); this.onStop?.(); },
     async checkSupport() { return this.supported; },
-    async score(ids, candidates) {
-      this.scored.push({ ids, candidates });
+    async score(ids, candidates, options) {
+      this.scored.push({ ids, candidates, options });
       return { recordings: ids, traces: 2, strokes: 9, columns: ["current values", candidates[0].name],
         warnings: Array.from({ length: 13 }, (_, index) => `warning ${index}`), caveat: "curve shape",
         rows: [{ metric: "flickLagMs", unit: "ms", higherIsBetter: false, truth: { derived: 3 },
@@ -613,8 +613,10 @@ test("score_settings scores a snapshot or checked values against the current val
     values: { "right-cursor-acceleration": { "speed-rise-ms": 500 } } }), /from 1 to 200, not 500/);
   const result = await call(session.tools, "score_settings", { recordings: ["rec-1", "rec-1"],
     values: { "right-cursor-acceleration": { "speed-rise-ms": 50 } } });
-  const [{ ids, candidates: [candidate] }] = fake.recorderFake.scored;
+  const [{ ids, candidates: [candidate], options }] = fake.recorderFake.scored;
   assert.deepEqual(ids, ["rec-1"]);
+  /* Guided recordings only, unless free recordings are asked for. */
+  assert.deepEqual(options, { free: false });
   assert.equal(candidate.profile.targets[0].parameters[0].value, 50);
   assert.equal(result.summary, "Scored candidate values on 2 traces: 1 metrics better, 1 worse");
   assert.deepEqual(result.metrics.map(({ metric, change, better, truthStrokes, note }) => [metric, change, better, truthStrokes, note]),
@@ -627,4 +629,23 @@ test("score_settings scores a snapshot or checked values against the current val
   await call(session.tools, "save_snapshot", { name: "fast" });
   await call(session.tools, "score_settings", { recordings: ["rec-1"], snapshot: "fast" });
   assert.equal(fake.recorderFake.scored[1].candidates[0].profile.targets[0].parameters[0].value, 70);
+  await call(session.tools, "score_settings", { recordings: ["rec-1"], snapshot: "fast", free: true });
+  assert.deepEqual(fake.recorderFake.scored[2].options, { free: true });
+});
+
+test("start_recording asks for a named guided test as a playground run", async () => {
+  const fake = context();
+  const session = new AgentSession(fake);
+  await assert.rejects(call(session.tools, "start_recording", { label: "x", test: "click-drag" }), /test is one of/);
+  await assert.rejects(call(session.tools, "start_recording", { label: "x", test: "scroll-vertical", pipeline: "right-cursor" }),
+    /pipeline is for free recordings/);
+  await assert.rejects(call(session.tools, "start_recording", { label: "x", test: "scroll-vertical", acquire: "click" }),
+    /cursor-precision only/);
+  const { runId } = await call(session.tools, "start_recording", { label: "A", test: "cursor-precision", acquire: "click" });
+  const run = session.runs.runs.get(runId);
+  assert.deepEqual([run.kind, run.activity, run.acquire], ["precision", "cursor-precision", "click"]);
+  /* The test's own run counts, not a recording request. */
+  session.runs.accept(runId);
+  session.runs.started("precision", "cursor-precision");
+  assert.equal(session.runs.runs.get(runId).status, "running");
 });

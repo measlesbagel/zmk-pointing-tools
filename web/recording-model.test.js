@@ -6,8 +6,8 @@ import { buildSimulatorTuningTargets } from "./simulator-model.js";
 import { createTuningProfile } from "./profile.js";
 import { SimulatedCapture } from "./simulated-capture.js";
 import {
-  addRecords, compareScoreSets, createRecordingStats, describeTruth, exportRecording, importRecording, metricTruth,
-  resyncs, streamStats,
+  addRecords, compareScoreSets, createRecordingStats, describeTruth, deviceGuide, exportRecording, importRecording,
+  metricTruth, resyncs, streamStats,
 } from "./recording-model.js";
 import { captureToFixtures, decodeCaptureStream } from "../host/replay/capture-convert.js";
 
@@ -126,4 +126,37 @@ test("an imported recording keeps only checked schema fields, so a hostile file 
   assert.equal(typeof back.stats.frames, "number");
   assert.deepEqual([back.firmwareDropped, back.transport, back.warnings, "extra" in back], [null, null, ["ok"], false]);
   assert.throws(() => importRecording({ ...file, profiles: ["<b>"] }), /tuning profiles/);
+});
+
+test("a guided test's labels and pointer path move to the device's clock and convert", async () => {
+  const { stream, profiles, capture } = await simulate(450);
+  /* The simulated device started at 10 000 ms uptime; this page's clock
+   * read 500 ms then, so device time is page time + 9 500 ms. */
+  const guide = { test: "cursor-precision", acceleration: "off", pointer: [[500, 0, 0], [3700.04, 30, 40]],
+    labels: [{ activity: "cursor", trial: 0, startPerf: 500.4, endPerf: 3700.6,
+      target: { x: 30, y: 40, size: 8 }, start: { x: 0, y: 0 } },
+    { activity: "cursor", trial: 1, startPerf: 3700.6, endPerf: 3700.9,
+      target: { x: 1, y: 1, size: 8 }, start: { x: 0, y: 0 } }] };
+  const guided = deviceGuide(guide, { roundTripMs: 6.04, offsetMs: 9500 });
+  /* The second label rounds to nothing and is dropped. */
+  assert.deepEqual(guided.labels.map(({ startMs, endMs, test }) => [startMs, endMs, test]),
+    [[10000, 13201, "cursor-precision"]]);
+  assert.deepEqual(guided.pointer, { acceleration: "off", samples: [[10000, 0, 0], [13200, 30, 40]] });
+  assert.equal(guided.clockRoundTripMs, 6);
+  const { fixtures } = captureToFixtures(decodeCaptureStream(stream), profiles,
+    { labels: guided.labels, pointer: guided.pointer });
+  const strokes = fixtures.flatMap((fixture) => fixture.truth?.strokes ?? []);
+  assert.ok(strokes.length > 0 && strokes.every((stroke) => stroke.source === "label" && stroke.target.size === 8));
+  assert.ok(capture.nowMs > 13200);
+  /* Exported and imported, the guided test comes back. */
+  const recording = { id: "r", label: "g", pipeline: "cursor", createdAt: new Date().toISOString(), durationMs: 1,
+    transport: "simulator", endReason: "done", firmwareDropped: 0, warnings: [], profiles, stats: {}, stream, guided };
+  assert.deepEqual(importRecording(JSON.parse(JSON.stringify(exportRecording(recording)))).guided, guided);
+  assert.equal(importRecording(JSON.parse(JSON.stringify(exportRecording({ ...recording, guided: null })))).guided, null);
+});
+
+test("an unranked metric reports its change but is never better or worse", () => {
+  const sets = [{ scores: { bias: { value: -10, strokes: 6 } } }, { scores: { bias: { value: 5, strokes: 6 } } }];
+  const [row] = compareScoreSets(sets, { bias: { higherIsBetter: false, unit: "%", ranked: false } });
+  assert.deepEqual([row.change[1], row.better[1], row.ranked], [15, null, false]);
 });

@@ -1,5 +1,6 @@
 import {
   ACTIVITIES,
+  GUIDED_TESTS,
   PRECISION_LAYOUT,
   PRECISION_START,
   createRun,
@@ -53,12 +54,21 @@ function element(tag, className, text) {
 }
 
 export class PointingPlayground {
-  constructor(root, { getContext, onExport, onRunStart = () => {}, onRunEnd = () => {} }) {
+  /* onRunStart(activity, guide) may return a promise of { recording,
+   * pipeline, reason } for a guided test's capture; onTrial(label) and
+   * onPointer(timeMs, x, y) receive the test's labels and pointer path in
+   * performance.now() time. */
+  constructor(root, { getContext, onExport, onRunStart = () => {}, onRunEnd = () => {}, onTrial = () => {}, onPointer = () => {} }) {
     this.root = root;
     this.getContext = getContext;
     this.onExport = onExport;
     this.onRunStart = onRunStart;
     this.onRunEnd = onRunEnd;
+    this.onTrial = onTrial;
+    this.onPointer = onPointer;
+    this.captureLine = root.querySelector("[data-playground-capture]");
+    this.cursorFields = root.querySelectorAll("[data-playground-cursor]");
+    this.osAcceleration = root.querySelector("[data-playground-os-acceleration]");
     this.dialog = root.querySelector("dialog");
     this.activity = root.querySelector("[data-playground-activity]");
     this.surface = root.querySelector("[data-playground-surface]");
@@ -150,6 +160,7 @@ export class PointingPlayground {
     this.stop();
     const context = this.getContext();
     this.run = createRun(this.activity.value, context);
+    this.runStartedPerf = performance.now();
     this.running = true;
     document.body.classList.add("playground-running");
     this.renderActivity();
@@ -162,11 +173,38 @@ export class PointingPlayground {
     this.status.textContent = "Running";
     this.timer = setInterval(() => this.renderMetrics(), 100);
     this.renderMetrics();
-    this.onRunStart(this.activity.value);
+    const run = this.run;
+    const guided = GUIDED_TESTS[this.activity.value];
+    this.osAcceleration.disabled = true;
+    this.setCapture(guided ? "Starting a recording for scoring…" : "");
+    Promise.resolve(this.onRunStart(this.activity.value, guided ? {
+      label: this.label.value.trim() || ACTIVITIES.find(({ id }) => id === this.activity.value).label,
+      acceleration: guided.mode === "cursor" ? this.osAcceleration.value : undefined,
+    } : undefined)).then((capture) => {
+      if (this.run !== run || !guided) return;
+      this.setCapture(capture?.recording
+        ? `Recording pipeline ${capture.pipeline} for scoring. It's saved with this run.`
+        : `Not recording for scoring: ${capture?.reason ?? "unavailable"}.`);
+    });
+  }
+
+  setCapture(text) {
+    this.captureLine.hidden = !text;
+    this.captureLine.textContent = text;
+  }
+
+  /* A guided test's trial or stretch, from startPerf to endPerf. */
+  trial(label) {
+    if (this.running && label.endPerf > label.startPerf) this.onTrial(label);
   }
 
   finish(completed = true) {
     if (!this.run || !this.running) return;
+    /* The open stretch of a scroll or text test ends here. */
+    const axis = GUIDED_TESTS[this.run.activity.id]?.axis;
+    if (axis) this.trial({ activity: "scroll", axis, startPerf: this.runStartedPerf, endPerf: performance.now() });
+    if (this.textPhase) this.trial({ activity: "text", axis: this.textPhase.axis, startPerf: this.textPhase.startPerf, endPerf: performance.now() });
+    this.textPhase = undefined;
     finishRun(this.run, completed);
     this.running = false;
     clearInterval(this.timer);
@@ -174,6 +212,7 @@ export class PointingPlayground {
     this.startButton.disabled = false;
     this.activity.disabled = false;
     this.acquire.disabled = false;
+    this.osAcceleration.disabled = false;
     clearTimeout(this.dwellTimer);
     this.finishButton.disabled = true;
     this.status.textContent = completed ? "Completed" : "Stopped";
@@ -215,6 +254,8 @@ export class PointingPlayground {
     this.exportButton.disabled = !this.run;
     const precision = this.activity.value === "cursor-precision";
     for (const field of this.precisionFields) field.hidden = !precision;
+    for (const field of this.cursorFields) field.hidden = GUIDED_TESTS[this.activity.value]?.mode !== "cursor";
+    if (!this.running) this.setCapture("");
     this.results.hidden = !precision;
 
     switch (this.activity.value) {
@@ -292,7 +333,7 @@ export class PointingPlayground {
   }
 
   renderText() {
-    this.instructions.textContent = "Move from START to TARGET with arrow navigation, then select exactly the word TARGET while holding Shift.";
+    this.instructions.textContent = "Move straight down to the TARGET line first, then right to TARGET, then select exactly the word TARGET while holding Shift.";
     const text = [
       "START — move through this stable text-navigation exercise.",
       "The second line makes vertical movement observable and repeatable.",
@@ -306,7 +347,17 @@ export class PointingPlayground {
     const position = element("div", "playground-text-position", "Caret 0 · no selection");
     position.setAttribute("aria-live", "polite");
     this.surface.append(textarea, position);
+    /* Two stretches with an intended axis each: down to the TARGET line,
+     * then along it. */
+    const targetLine = text.slice(0, targetStart).split("\n").length - 1;
+    if (this.running) this.textPhase = { axis: "vertical", startPerf: performance.now() };
     const updatePosition = () => {
+      const line = text.slice(0, textarea.selectionStart).split("\n").length - 1;
+      if (this.running && this.textPhase?.axis === "vertical" && line === targetLine) {
+        const now = performance.now();
+        this.trial({ activity: "text", axis: "vertical", startPerf: this.textPhase.startPerf, endPerf: now });
+        this.textPhase = { axis: "horizontal", startPerf: now };
+      }
       const selected = textarea.selectionEnd - textarea.selectionStart;
       position.textContent = selected
         ? `Selection ${textarea.selectionStart}–${textarea.selectionEnd} (${selected} characters)`
@@ -329,6 +380,7 @@ export class PointingPlayground {
       this.renderMetrics();
     });
     this.listen(textarea, "keyup", updatePosition);
+    this.listen(textarea, "keydown", () => setTimeout(updatePosition));
     this.listen(textarea, "click", updatePosition);
     queueMicrotask(() => {
       if (!this.dialog.open) return;
@@ -346,6 +398,12 @@ export class PointingPlayground {
     this.surface.append(area);
     let targetIndex = 0;
     let previous;
+    /* Each click on a target ends a trial that started at the last one. */
+    let trialStart = { perf: this.runStartedPerf, point: undefined };
+    const local = (event) => {
+      const bounds = area.getBoundingClientRect();
+      return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+    };
     const placeTarget = () => {
       area.querySelector("button")?.remove();
       if (targetIndex >= TARGET_POSITIONS.length) {
@@ -360,6 +418,13 @@ export class PointingPlayground {
       this.listen(target, "click", (event) => {
         event.stopPropagation();
         if (!this.running) return;
+        const areaBounds = area.getBoundingClientRect();
+        const bounds = target.getBoundingClientRect();
+        const point = local(event);
+        this.trial({ activity: "cursor", trial: targetIndex, startPerf: trialStart.perf, endPerf: event.timeStamp,
+          target: { x: bounds.left + bounds.width / 2 - areaBounds.left, y: bounds.top + bounds.height / 2 - areaBounds.top, size: bounds.width },
+          start: trialStart.point ?? point });
+        trialStart = { perf: event.timeStamp, point };
         recordClick(this.run, true);
         targetIndex += 1;
         placeTarget();
@@ -374,6 +439,11 @@ export class PointingPlayground {
     });
     this.listen(area, "pointermove", (event) => {
       if (!this.running) return;
+      for (const sample of event.getCoalescedEvents?.() ?? [event]) {
+        const point = local(sample);
+        trialStart.point ??= point;
+        this.onPointer(sample.timeStamp, point.x, point.y);
+      }
       previous = recordPointer(this.run, previous, { x: event.clientX, y: event.clientY });
     });
   }
@@ -384,7 +454,7 @@ export class PointingPlayground {
   renderPrecision() {
     const hover = this.acquire.value === "hover";
     this.instructions.textContent = `${hover ? "Hold the pointer still inside" : "Click inside"} START, then each target as it appears; they shrink from 32 to 4 px. ` +
-      "Label each run (say, Sniper held, then a curve) to compare them below. Set the computer's own pointer acceleration to flat first, or it adds its own curve.";
+      "Label each run (say, Sniper held, then a curve) to compare them below. Set the computer's own pointer acceleration to flat first, or it adds its own curve, and say which it is above.";
     this.renderPrecisionResults();
     this.surface.classList.add("precision");
     const area = element("div", "playground-pointer-area precision");
@@ -430,6 +500,9 @@ export class PointingPlayground {
       clearTimeout(this.dwellTimer);
       if (index >= 0) {
         results.push(finishPrecisionTrial(state, now, hover));
+        const { x, y, size } = trials[index];
+        this.trial({ activity: "cursor", trial: index, startPerf: state.startedMs, endPerf: now,
+          target: { x, y, size }, start: state.startPoint });
         recordClick(this.run, true);
       }
       index += 1;
@@ -440,6 +513,8 @@ export class PointingPlayground {
       }
       this.run.precision.current = trials[index].size;
       state = startPrecisionTrial(trials[index], index === 0 ? start : trials[index - 1], now);
+      /* Where the pointer was, which isn't quite the last target's middle. */
+      state.startPoint = previous ?? (index === 0 ? start : trials[index - 1]);
       show();
       this.renderMetrics();
     };
@@ -452,6 +527,7 @@ export class PointingPlayground {
       if (!this.running || index >= trials.length) return;
       for (const sample of event.getCoalescedEvents?.() ?? [event]) {
         const position = point(sample);
+        this.onPointer(sample.timeStamp, position.x, position.y);
         previous = recordPointer(this.run, previous, position);
         const wasInside = state.inside;
         const inside = observePrecisionPointer(state, position, sample.timeStamp);

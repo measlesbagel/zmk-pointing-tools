@@ -45,6 +45,41 @@ and listed side by side, newest first, until **Clear runs**. Set the host's
 own pointer acceleration to flat while testing, or it adds its own curve on
 top of the keyboard's.
 
+## Guided tests record capture
+
+Cursor target acquisition, Small-target precision, the three scroll
+activities, and text movement and selection are guided tests. When the
+keyboard supports input capture ([protocol](protocol.md#input-capture)),
+starting one starts a recording of the pipeline it exercises, and finishing
+or closing it stops it; the line under the controls says which pipeline
+records, or why nothing does. The recording appears in **Record and score**
+and is part of the run's result.
+
+- **Which pipeline.** Pipelines are your configuration, so the tuner tells
+  them apart by their last stage: a scroll batcher makes a scroll pipeline, a
+  text navigation stage a text pipeline, anything else a cursor pipeline.
+  With several of a kind, it takes the one picked in **Record and score**,
+  else the one active when the test starts, else the first.
+- **Labels.** Each trial or stretch becomes a label for the converter
+  ([ground truth](trace-benchmark.md#recorded-traces-ground-truth)): cursor
+  trials with their target's position and size and where the pointer was
+  when the trial started, scroll tests with their axis (`both` for two-axis),
+  and the text test with two stretches: straight down to the TARGET line
+  (vertical), then along it (horizontal). A trial runs from the previous
+  acquisition to this one.
+- **Clocks.** Labels are written in the page's clock and moved to the
+  keyboard's when the recording stops: every capture status carries the
+  device's uptime, and the status with the shortest round trip during the
+  recording sets the offset, to within half that round trip.
+- **Pointer path.** Cursor tests also keep the browser's pointer path, every
+  2 ms at most, which the scoring uses to fit the screen scale and to find
+  when each trial starts homing. Say whether the computer's own pointer
+  acceleration is off in **Computer's pointer acceleration**: with it on,
+  pixel metrics aren't scored.
+
+Reset during a test keeps the recording so far as its own recording and
+starts a new one.
+
 ## Exports
 
 **Export run** creates a `zmk-pointing-tools/playground-run` JSON document. It

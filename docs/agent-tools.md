@@ -142,8 +142,17 @@ against other settings on those recordings by replaying them through the
 firmware's own stage code in the browser ([trace replay](trace-replay.md#replay-in-the-browser)).
 It works without agent access too.
 
-- **Recording.** Pick a pipeline, give it a label, and select **Record**. The
-  tuner reads every tuning value right before it starts, so each trace replays
+- **Guided recordings.** The playground's guided tests (cursor targets,
+  small-target precision, the scroll tests, and text selection) record the
+  matching pipeline while they run, with a label per trial: the target for
+  cursor tests, the intended axis for scroll and text
+  ([playground](playground.md#guided-tests-record-capture)). These are the
+  recordings scoring is for. The list shows each recording's truth: the
+  guided test, or **Free: no targets: heuristic**.
+- **Free recording** is an advanced option, under **Free recording (no
+  targets: heuristic)**, for custom recordings. Pick a pipeline, give it a
+  label, and select **Record**. The tuner reads every tuning value right
+  before it starts, so each trace replays
   with the settings it ran with, and keeps a profile for every setting the
   pipeline runs while recording. While it records, the panel shows how full
   the keyboard's capture buffer is, and the dropped records and resyncs.
@@ -159,22 +168,34 @@ It works without agent access too.
   reads it back.
 - **Scoring.** Tick recordings and candidates (the current values always
   count; agent snapshots and imported profiles are candidates), then
-  **Score**. Each metric shows its mean over the strokes it applies to, the
+  **Score**. Guided recordings start ticked; free ones don't, and ticking one
+  asks for its heuristic truth. Each metric shows its mean over the strokes it
+  applies to (or for ballistic landing spread, the spread across them), the
   stroke count, and the change from the current values. A metric that a
   candidate leaves unscored, or scores over different strokes, counts as
   worse, as in the benchmark: settings mustn't win by making strokes
-  unscorable. Ground truth comes from the converter
-  (`host/replay/capture-convert.js` with `truth: "derive"`); its rules are in
-  [the benchmark](trace-benchmark.md#recorded-traces-ground-truth). For each
-  metric, the table shows how many of its strokes were derived and how many
-  came from the typing heuristic. Metrics with no truth in the selected
-  recordings show no value, and recordings with no truth at all give an
-  error instead of a table.
+  unscorable. Ballistic landing bias is shown but not ranked. Ground truth
+  comes from the converter (`host/replay/capture-convert.js`): a guided
+  recording's labels only, or for a free recording `truth: "derive"`; the
+  rules are in [the benchmark](trace-benchmark.md#recorded-traces-ground-truth).
+  For each metric, the table shows how many of its strokes came from labels,
+  were derived, or came from the typing heuristic. Cursor recordings also
+  show the fitted screen scale and whether pixel metrics use it. Metrics with
+  no truth in the selected recordings show no value, and recordings with no
+  truth at all give an error instead of a table.
+- **What replay can't judge.** Pointing is closed-loop: you watch the cursor
+  and correct. Replay through other settings gives a path you never saw, so it
+  scores the parts of a trial that don't depend on your reactions (the first
+  submovement, homing steps and wobble, gain transitions) and leaves total
+  time, corrections, misses and throughput to live runs
+  ([metrics](trace-benchmark.md#guided-cursor-trials)).
 - **The benchmark doesn't judge curve shape or gain.** The ideal output
   follows the curve and gain being scored, so a flatter curve or a lower gain
   can win every metric while feeling worse. Scores narrow the candidates;
   the keyboard decides.
-- **Agent requests.** `start_recording` asks you to record, the same way
+- **Agent requests.** `start_recording` with a `test` asks you for that
+  guided test, as `request_run` does, and its result names the recording.
+  Without one, it asks for a free recording, the same way
   `request_run` asks for a run: a card with the agent's note, **Go to
   recording** and **Decline**. You start the recording yourself, and
   **Stop recording** on the card, the panel's **Stop**, or the agent's
@@ -201,17 +222,17 @@ It works without agent access too.
 | `save_snapshot`, `apply_snapshot`, `list_snapshots` | Saves every target value and device resolution under a name, previews a saved snapshot (only what differs), and lists snapshots with whether each matches the current values |
 | `ask_user` | Shows a question in the tuner and returns a question id at once |
 | `get_user_answer` | Waits up to 45 seconds (20 by default) for the answer, then returns it or `pending` |
-| `request_run` | Asks you for a labelled precision, playground or calibration run and returns a run id at once |
+| `request_run` | Asks you for a labelled precision, playground or calibration run and returns a run id at once; a guided test's result names its recording |
 | `cancel_run` | Withdraws an open run request |
 | `get_run_result` | Waits up to 45 seconds (20 by default) while the run is open, then returns its status (`requested`, `accepted`, `running`, `finished`, `stopped`, `declined` or `cancelled`), the values it started with, and its result. Without an id, lists runs |
 | `compare_runs` | Two to six runs of the same activity side by side, with each metric's change from the first |
 | `start_telemetry_window` | Starts recording stage telemetry under a label and returns a window id at once |
 | `stop_telemetry_window` | Stops a window and returns its summary, with dropped samples |
 | `get_telemetry_window` | A window's summary while recording or after, optionally with pages of raw samples. Without an id, lists windows |
-| `start_recording` | Asks you to record motion from a pipeline (optionally a given one) and returns a run id at once; `get_run_result` returns the recording when it ends |
+| `start_recording` | Asks you for a guided test (`test`) that records the matching pipeline with a label per trial, or for a free recording of a pipeline, and returns a run id at once; `get_run_result` returns the recording when it ends |
 | `stop_recording` | Stops a recording it requested and returns its run with the recording, or withdraws the request if it hasn't started |
 | `list_recordings` | Saved recordings with frames, dropped records and resyncs, the keyboard's recordable pipelines, and whether it supports capture |
-| `score_settings` | Scores the current values and a candidate (a snapshot, or values by target stable id and parameter key) on recordings, with each metric's change, whether it's better, and where its truth comes from. Sends nothing to the keyboard |
+| `score_settings` | Scores the current values and a candidate (a snapshot, or values by target stable id and parameter key) on guided recordings (free ones only with `free`), with each per-phase and per-axis metric's change, whether it's better, where its truth comes from, and the fitted screen scale. Sends nothing to the keyboard |
 
 Every result is a JSON object. A tool that fails returns an MCP error result
 with the reason, such as a value outside the parameter's range.

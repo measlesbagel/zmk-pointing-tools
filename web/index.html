@@ -84,6 +84,14 @@
               Run label
               <input type="text" data-playground-label placeholder="Sniper, Precision curve…" maxlength="40">
             </label>
+            <label data-playground-cursor hidden>
+              Computer's pointer acceleration
+              <select data-playground-os-acceleration>
+                <option value="unknown">Not sure</option>
+                <option value="off">Off (flat)</option>
+                <option value="on">On</option>
+              </select>
+            </label>
             <label data-playground-precision hidden>
               Acquire by
               <select data-playground-acquire>
@@ -97,6 +105,7 @@
             <button type="button" data-playground-export disabled>Export run</button>
             <strong data-playground-status role="status">Ready</strong>
           </div>
+          <p class="muted playground-capture" data-playground-capture hidden></p>
 
           <p class="playground-instructions" data-playground-instructions></p>
           <div class="playground-metrics" data-playground-metrics aria-live="polite">
@@ -209,17 +218,30 @@
           press the pipeline's keypress guard sees, so it shows your typing rhythm, though not which keys.
           Exporting one writes the same to a file.
         </div>
+        <p class="muted">
+          Guided tests in the playground record here by themselves: each trial is labelled with its target, or
+          its scroll or text axis, so scores say how settings do against what you meant.
+        </p>
+        <details class="recording-free" data-recording-free>
+          <summary>Free recording (no targets: heuristic)</summary>
+          <p class="muted">
+            For custom recordings. Without targets, the converter guesses what each stroke meant from the motion
+            itself, so its scores are a heuristic.
+          </p>
+          <div class="calibration-controls">
+            <label>
+              Pipeline
+              <select data-recording-pipeline></select>
+            </label>
+            <label>
+              Label
+              <input type="text" data-recording-label maxlength="40" placeholder="Everyday use, slow aims…">
+            </label>
+            <button type="button" class="primary" data-recording-start disabled>Record</button>
+            <button type="button" data-recording-stop disabled>Stop</button>
+          </div>
+        </details>
         <div class="calibration-controls">
-          <label>
-            Pipeline
-            <select data-recording-pipeline></select>
-          </label>
-          <label>
-            Label
-            <input type="text" data-recording-label maxlength="40" placeholder="Everyday use, slow aims…">
-          </label>
-          <button type="button" class="primary" data-recording-start disabled>Record</button>
-          <button type="button" data-recording-stop disabled>Stop</button>
           <button type="button" data-recording-import>Import recording</button>
           <input type="file" data-recording-file accept="application/json,.json" hidden>
         </div>

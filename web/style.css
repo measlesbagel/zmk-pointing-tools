@@ -78,6 +78,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .playground-dialog-heading h2 { font-size: 22px; }
 .playground-controls { justify-content: flex-start; flex-wrap: wrap; margin-top: 18px; }
 .playground-controls label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
+.playground-controls label[hidden] { display: none; }
 .playground-controls strong { margin-left: auto; color: var(--accent); }
 .playground-instructions { margin: 16px 0 8px; color: var(--text); }
 .playground-metrics { min-height: 28px; margin-bottom: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
