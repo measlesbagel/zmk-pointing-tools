@@ -61,22 +61,23 @@ test("invalid traces and runner failures are reported", () => {
 });
 
 /* A guided precision run with known targets: each trial is a fast first
- * submovement that lands 10 % short, then slow homing with a 6 Hz wobble
+ * submovement that lands short (10 % unless the trial says otherwise),
+ * then slow homing with a 6 Hz wobble (0.3 mm unless it says otherwise)
  * onto the target. The browser pointer follows the recorded settings'
  * output at one pixel per count, as a computer without pointer
  * acceleration would, and each target is where that output ends. */
-function guidedPrecisionRun() {
+function guidedPrecisionRun(list = [30, 12, 45, 20, 8, 35]) {
   const base = tune.find((trace) => trace.id === "slow-aim-precision");
   const mmPerCount = 25.4 / base.source.cpi;
-  const trials = [30, 12, 45, 20, 8, 35].map((distanceMm, index) => ({ distanceMm,
-    angle: index * 2.1 }));
+  const trials = list.map((trial, index) => ({ landing: 0.9, wobbleMm: 0.3,
+    ...(typeof trial === "number" ? { distanceMm: trial } : trial), angle: index * 2.1 }));
   const events = [];
   const strokes = [];
   let carry = [0, 0];
   let ball = [0, 0];
   let lastUs = 0;
   let nowUs = 200000;
-  for (const [index, { distanceMm, angle }] of trials.entries()) {
+  for (const [index, { distanceMm, angle, landing, wobbleMm }] of trials.entries()) {
     const counts = distanceMm / mmPerCount;
     const startUs = nowUs;
     const points = [[0, 0]];
@@ -84,10 +85,10 @@ function guidedPrecisionRun() {
     const along = (ms) => {
       if (ms <= 300) {
         const t = ms / 300;
-        return 0.9 * counts * (10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5);
+        return landing * counts * (10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5);
       }
       const t = (ms - 300) / 500;
-      return counts * (0.9 + 0.1 * t) + (0.3 / mmPerCount) * Math.sin(2 * Math.PI * 6 * t / 2);
+      return counts * (landing + (1 - landing) * t) + (wobbleMm / mmPerCount) * Math.sin(2 * Math.PI * 6 * t / 2);
     };
     let previous = 0;
     for (let ms = 1; ms <= 800; ms += 1) {
@@ -211,4 +212,32 @@ test("guided cursor trials score a too-high gain and a gain jump as worse", () =
   assert.ok(ramped.transitionStepPercent.value > recorded.scores.transitionStepPercent.value &&
     ramped.transitionStepPercent.value < jumped.transitionStepPercent.value,
   `ramp ${ramped.transitionStepPercent.value}`);
+});
+
+test("the homing guard compares each trial, so long trials can't hide short ones", () => {
+  /* Long reaches land 20 % short and creep in fast; short ones barely
+   * move while homing. */
+  const long = (distanceMm) => ({ distanceMm, landing: 0.8 });
+  const short = (distanceMm) => ({ distanceMm, wobbleMm: 0.1 });
+  const fixture = guidedPrecisionRun([long(30), short(2), long(45), short(3), long(35), short(4)]);
+  const acceleration = fixture.processor.stages.find(({ type }) => type === "acceleration");
+  /* Less gain below 10 mm/s for the short trials, more at 25-54 mm/s for
+   * the long ones (the curve in effect is 35/35/68/100/126 % there). */
+  const parameters = [20, 20, 20, 150, 150].map((value, i) =>
+    ({ key: `curve-sensitivity-${i + 1}`, value }));
+  const candidate = scoreTraces([fixture], { schema: "zmk-pointing-tools/tuning-profile",
+    version: 1, targets: [{ stableId: acceleration.stableId, parameters }] }, runners);
+  const counts = (result) => result.fixtureResults[0].strokes
+    .map(({ metrics }) => metrics.homingOutputCounts);
+  const recorded = counts(scoreTraces([fixture], null, runners));
+  const ratios = counts(candidate).map((value, i) => value / recorded[i]);
+  const total = ratios.reduce((sum, ratio, i) => sum + ratio * recorded[i], 0) /
+    recorded.reduce((sum, value) => sum + value, 0);
+  /* The totals match within the band; the short trials don't. */
+  assert.ok(total > 1 / 1.15 && total < 1.15, `total ${total}`);
+  for (const i of [1, 3]) assert.ok(ratios[i] < 0.6, `short trial ${i}: ${ratios[i]}`);
+  const worst = Math.min(...ratios).toFixed(2);
+  for (const name of ["homingStepPercent", "homingJitterPercent"]) {
+    assert.match(candidate.scores[name].guard ?? "", new RegExp(`in a trial is ${worst}×`), name);
+  }
 });

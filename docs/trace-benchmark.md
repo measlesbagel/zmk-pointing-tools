@@ -472,12 +472,17 @@ gain is best. That stays with live runs.
 **Homing guard.** The ballistic phase is mostly fast, so a gain cut only at
 slow speeds, or a uniform cut too small to move the bias 25 points, passes
 the gain guard yet still shrinks homing steps and wobble against fixed
-targets. So the scorer also sums each candidate's output during the homing
-windows, which are the same for every candidate, over all trials, and when
-that is more than 1.15 times the recorded settings' total or less than
-1/1.15 of it, homing step size and homing jitter carry a `guard` reason and
-count as worse. Uniform ÷1.25 (0.80×) and the curve's slow points at 25 %
-trip it; ÷1.1 (0.91×) doesn't (`host/wasm/score.test.js`).
+targets. So the scorer also measures each candidate's output during the
+homing windows, which are the same for every candidate, against the
+recorded settings', and homing step size and homing jitter carry a `guard`
+reason and count as worse when the total over all trials is outside
+1/1.15–1.15× or any one trial is outside 1/1.3–1.3×. The per-trial check
+stops a curve that cuts slow gain for short trials and raises it for long
+ones with the totals matching; its band is wider because a trial's ratio
+carries about ±10 % of quantization noise, and trials with under 20
+recorded counts of homing output count only in the total. Uniform ÷1.25
+(0.80×), the curve's slow points at 25 %, and the mixed long and short
+case trip it; ÷1.1 (0.91×) doesn't (`host/wasm/score.test.js`).
 
 #### Homing step size (`homingStepPercent`)
 

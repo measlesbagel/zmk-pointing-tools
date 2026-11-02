@@ -53,9 +53,16 @@ const GAIN_GUARD_POINTS = 25;
 /* The ballistic phase is mostly fast, so a gain cut only at slow speeds
  * passes the bias check. The homing guard compares how much the candidate
  * moved during homing (output counts over the same windows) with the
- * recorded settings, and flags homing step size and jitter outside this
- * ratio: a quarter of the gain change a uniform ÷1.25 makes. */
+ * recorded settings, and flags homing step size and jitter when the total
+ * over all trials is outside HOMING_GUARD_RATIO (÷1.25 trips it, ÷1.1
+ * doesn't) or any one trial is outside HOMING_TRIAL_RATIO, so a curve can't
+ * cut slow gain for short trials and raise it for long ones with the totals
+ * matching. A trial's ratio carries about ±10 % of quantization noise at
+ * 50 counts, hence the wider band, and trials with fewer than
+ * HOMING_TRIAL_MIN_COUNTS recorded counts count only in the total. */
 const HOMING_GUARD_RATIO = 1.15;
+const HOMING_TRIAL_RATIO = 1.3;
+const HOMING_TRIAL_MIN_COUNTS = 20;
 const HOMING_GUARDED = ["homingStepPercent", "homingJitterPercent"];
 
 const SETTLE_US = 100000;
@@ -749,16 +756,32 @@ export function aggregate(strokes, recorded = null) {
 }
 
 /* Why a candidate's homing metrics can't be trusted, or null: it moved
- * much more or less during homing than the recorded settings did. */
+ * much more or less during homing than the recorded settings did, in total
+ * or in one trial. recorded holds the same strokes in the same order. */
 function homingGuard(strokes, recorded) {
-  const total = (items) => items.reduce((sum_, stroke) => sum_ +
-    (stroke.metrics.homingOutputCounts ?? 0), 0);
-  const base = total(recorded);
-  if (base === 0) return null;
-  const ratio = total(strokes) / base;
-  if (ratio <= HOMING_GUARD_RATIO && ratio >= 1 / HOMING_GUARD_RATIO) return null;
-  return `homing output is ${ratio.toFixed(2)}× the recorded settings': ` +
-    "steps and wobble shrink or grow with the slow-speed gain whatever its quality";
+  const outside = (ratio, band) => ratio > band || ratio < 1 / band;
+  let candidate = 0;
+  let base = 0;
+  let worst = 1;
+  strokes.forEach((stroke, index) => {
+    const counts = stroke.metrics.homingOutputCounts;
+    const recordedCounts = recorded[index]?.id === stroke.id
+      ? recorded[index].metrics.homingOutputCounts : undefined;
+    if (counts === undefined || recordedCounts === undefined) return;
+    candidate += counts;
+    base += recordedCounts;
+    const ratio = counts / recordedCounts;
+    if (recordedCounts >= HOMING_TRIAL_MIN_COUNTS &&
+      Math.abs(Math.log(ratio)) > Math.abs(Math.log(worst))) worst = ratio;
+  });
+  const reason = "steps and wobble shrink or grow with the slow-speed gain whatever its quality";
+  if (outside(worst, HOMING_TRIAL_RATIO)) {
+    return `homing output in a trial is ${worst.toFixed(2)}× the recorded settings': ${reason}`;
+  }
+  if (base > 0 && outside(candidate / base, HOMING_GUARD_RATIO)) {
+    return `homing output is ${(candidate / base).toFixed(2)}× the recorded settings': ${reason}`;
+  }
+  return null;
 }
 
 /* Why a candidate's pixel metrics can't be trusted, or null. */
