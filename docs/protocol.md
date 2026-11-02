@@ -537,11 +537,12 @@ cursor stages, `axis-intent`, `axis-constraint`, `scroll-batcher`, and
 capture can freeze. Every request receives:
 
 ```text
-capture-schema-version:u8      /* 2 */
+capture-schema-version:u8      /* 3 */
 recording:u8                   /* pipeline id, or 0xff when none */
 capture-dropped:u32
 buffer-used:u32                /* bytes of records waiting to be sent */
 buffer-size:u32                /* the burst buffer's capacity */
+uptime-ms:u32                  /* device uptime as the status is sent */
 pipeline-count:u8
 repeat pipeline-count times:
   pipeline-id:u8
@@ -552,6 +553,12 @@ repeat pipeline-count times:
   label-length:u8
   label:utf8[label-length]     /* the pipeline's stable id, at most 27 bytes */
 ```
+
+`uptime-ms` is the clock record times count in. A host lines its own clock
+up with it: the tuner takes the status with the shortest round trip during a
+recording and places `uptime-ms` halfway between sending the request and
+receiving the status, so labels it writes in its own time (a playground
+trial's start and end) land on the records to within half that round trip.
 
 ### Capture pipeline description
 

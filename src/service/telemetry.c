@@ -631,7 +631,7 @@ static void zpt_handle_tuning_set_many(const uint8_t *payload, uint16_t length) 
 
 #define ZPT_CAPTURE_NONE UINT8_MAX
 #define ZPT_CAPTURE_LABEL_MAX_LENGTH 27
-#define ZPT_CAPTURE_STATUS_HEADER_SIZE 15
+#define ZPT_CAPTURE_STATUS_HEADER_SIZE 19
 /* id, active, stage count, flags, settings hash, label length. */
 #define ZPT_CAPTURE_STATUS_ENTRY_SIZE (9 + ZPT_CAPTURE_LABEL_MAX_LENGTH)
 #define ZPT_CAPTURE_FLAG_REPLAYABLE 0x01
@@ -841,6 +841,9 @@ static void zpt_send_capture_status(void) {
     sys_put_le32(used, &zpt_large_payload[offset]);
     offset += 4;
     sys_put_le32(zpt_capture_buffer.capacity, &zpt_large_payload[offset]);
+    offset += 4;
+    /* The clock record times count in, read as the status is sent. */
+    sys_put_le32(k_uptime_get_32(), &zpt_large_payload[offset]);
     offset += 4;
     zpt_large_payload[offset++] = (uint8_t)zpt_capture_count;
     for (size_t i = 0; i < zpt_capture_count; i++) {

@@ -397,7 +397,7 @@ export function encodeDevicePreview(deviceId, cpi) {
 /* --- Input capture (protocol v8) ------------------------------------- */
 
 export const CAPTURE = Object.freeze({
-  SCHEMA_VERSION: 2,
+  SCHEMA_VERSION: 3,
   NONE: 0xff,
   RECORD_FRAME: 1,
   RECORD_SOURCE: 2,
@@ -432,17 +432,17 @@ export function encodeCaptureDescribe(pipelineId) {
 
 export function parseCaptureStatus(payload) {
   requireBytes(payload, 0, 1, "capture status");
-  /* Schema 1 streams (no burst buffer) aren't read: record again with
+  /* Older schemas (schema 2 has no uptime) aren't read: record again with
    * current firmware. */
   if (payload[0] !== CAPTURE.SCHEMA_VERSION) {
     throw new Error(`Unsupported capture schema ${payload[0]}; expected ${CAPTURE.SCHEMA_VERSION}`);
   }
-  requireBytes(payload, 0, 15, "capture status");
+  requireBytes(payload, 0, 19, "capture status");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const decoder = new TextDecoder();
   const pipelines = [];
-  let offset = 15;
-  for (let index = 0; index < payload[14]; index += 1) {
+  let offset = 19;
+  for (let index = 0; index < payload[18]; index += 1) {
     requireBytes(payload, offset, 9, "capture pipeline entry");
     const [id, active, stageCount, flags] = payload.slice(offset, offset + 4);
     const settingsHash = view.getUint32(offset + 4, true);
@@ -461,6 +461,9 @@ export function parseCaptureStatus(payload) {
     /* Bytes of encoded records waiting in the burst buffer, and its size. */
     bufferUsed: view.getUint32(6, true),
     bufferSize: view.getUint32(10, true),
+    /* Device uptime in milliseconds when the status was sent: the clock
+     * of record times. */
+    uptimeMs: view.getUint32(14, true),
     pipelines,
   };
 }
