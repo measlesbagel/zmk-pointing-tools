@@ -21,6 +21,39 @@ export const TRUTH_SOURCES = {
 
 const NO_TRUTH = "no stroke in these recordings has truth for this metric";
 
+/* What a free recording's truth is: the converter's guess from the
+ * motion, with no targets. */
+export const FREE_TRUTH = "no targets: heuristic";
+
+/* The clock offset after a capture status that carries the device's
+ * uptime: the status with the shortest round trip so far places its uptime
+ * halfway between the request (sentAt) and the answer (receivedAt), in
+ * performance.now() time. A status without uptime (schema 2) changes
+ * nothing. */
+export function nextClock(clock, uptimeMs, sentAt, receivedAt) {
+  const roundTripMs = receivedAt - sentAt;
+  if (uptimeMs === null || uptimeMs === undefined || (clock && clock.roundTripMs <= roundTripMs)) return clock;
+  return { roundTripMs, offsetMs: uptimeMs - (sentAt + receivedAt) / 2 };
+}
+
+/* A guided test's labels and pointer path, kept in this page's
+ * performance.now() time while it runs, moved to device uptime with the
+ * clock offset for the converter's options.labels and options.pointer. */
+export function deviceGuide(guide, clock) {
+  const device = (timeMs) => timeMs + clock.offsetMs;
+  const labels = guide.labels.map(({ startPerf, endPerf, ...label }) =>
+    ({ ...label, test: guide.test, startMs: Math.round(device(startPerf)), endMs: Math.round(device(endPerf)) }))
+    .filter(({ startMs, endMs }) => endMs > startMs);
+  return {
+    test: guide.test,
+    clockRoundTripMs: Math.round(clock.roundTripMs * 10) / 10,
+    labels,
+    ...(guide.pointer ? { pointer: { acceleration: guide.acceleration,
+      samples: guide.pointer.map(([timeMs, x, y]) => [Math.round(device(timeMs) * 10) / 10,
+        Math.round(x * 10) / 10, Math.round(y * 10) / 10]) } } : {}),
+  };
+}
+
 /* Source of one truth stroke: a TRUTH_SOURCES key. The converter tags
  * each stroke; anything else counts as derived, never as labelled. */
 export function truthSource(stroke) {
@@ -59,7 +92,7 @@ export function describeTruth(counts) {
   return parts.length ? parts.join(", ") : NO_TRUTH;
 }
 
-export const SCORE_CAVEAT = "The benchmark doesn't judge curve shape or gain: the ideal output follows the curve and gain being scored, so a flatter curve or a lower gain can win every metric while feeling worse. Check curve and gain changes on the keyboard.";
+export const SCORE_CAVEAT = "Replay shortlists; the keyboard decides. Guided cursor trials judge how consistently and smoothly a gain lands and homes near the gain you recorded with, and flag one that moves your landing too far, since you'd have aimed differently; they can't say which gain is best. Elsewhere the ideal output follows the curve and gain being scored, so a flatter curve or a lower gain can win while feeling worse. Confirm on the keyboard with a preview and a run.";
 
 /* Counts of a recording's records, kept up to date as batches arrive:
  * dropped records from sequence gaps, and resyncs from entered records
@@ -96,20 +129,24 @@ export const resyncs = (stats) => Math.max(0, stats.entered - 1);
  * METRICS; truth is metricTruth's counts. */
 export function compareScoreSets(sets, metrics, truth = {}) {
   const round = (value) => Math.round(value * 1000) / 1000;
-  return Object.entries(metrics).map(([metric, { higherIsBetter, unit }]) => {
+  return Object.entries(metrics).map(([metric, { higherIsBetter, unit, ranked = true }]) => {
     const values = sets.map(({ scores }) => (Number.isFinite(scores[metric]?.value) ? scores[metric] : null));
     const base = values[0];
     const compared = values.map((entry, index) => {
-      if (index === 0 || !base) return { change: null, better: null, note: null };
+      /* A guarded score (quality.js, the gain guard) is worse whatever its
+       * value; on the current values it is only noted. */
+      if (index === 0 || !base) return { change: null, better: null, note: entry?.guard ?? null };
       if (!entry) return { change: null, better: false, note: "missing" };
       const change = round(entry.value - base.value);
+      if (entry.guard) return { change, better: false, note: entry.guard };
       if (entry.strokes !== base.strokes) {
         return { change, better: false, note: `strokes ${base.strokes}→${entry.strokes}` };
       }
-      return { change, better: change === 0 ? null : (change > 0) === higherIsBetter, note: null };
+      /* An unranked metric is reported, never better or worse. */
+      return { change, better: change === 0 || !ranked ? null : (change > 0) === higherIsBetter, note: null };
     });
     return {
-      metric, unit, higherIsBetter,
+      metric, unit, higherIsBetter, ranked,
       truth: truth[metric] ?? null,
       values: values.map((entry) => (entry ? { value: round(entry.value), strokes: entry.strokes } : null)),
       change: compared.map(({ change }) => change),
@@ -188,7 +225,24 @@ export function importRecording(data) {
     warnings: (Array.isArray(data.warnings) ? data.warnings : []).filter((warning) => typeof warning === "string")
       .slice(0, 20).map((warning) => warning.slice(0, 300)),
     profiles: data.profiles,
+    guided: importGuide(data.guided),
     stats,
     stream,
+  };
+}
+
+/* A guided recording's labels and pointer path; the converter checks
+ * every label when it scores. */
+function importGuide(guided) {
+  if (guided === null || guided === undefined) return null;
+  if (typeof guided?.test !== "string" || !Array.isArray(guided.labels) ||
+      (guided.pointer !== undefined && !Array.isArray(guided.pointer?.samples))) {
+    throw new Error("the recording's guided test has no labels");
+  }
+  return {
+    test: guided.test.slice(0, 40),
+    clockRoundTripMs: Number.isFinite(guided.clockRoundTripMs) ? guided.clockRoundTripMs : null,
+    labels: guided.labels.filter((label) => label && typeof label === "object" && !Array.isArray(label)),
+    ...(guided.pointer ? { pointer: { acceleration: guided.pointer.acceleration, samples: guided.pointer.samples } } : {}),
   };
 }

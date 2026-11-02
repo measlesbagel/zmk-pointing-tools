@@ -938,8 +938,19 @@ function playgroundContext() {
 
 const playground = new PointingPlayground(document.getElementById("playground"), {
   getContext: playgroundContext,
-  onRunStart: (activity) => agentBridge?.runStarted("playground", activity),
-  onRunEnd: (activity, outcome) => agentBridge?.runEnded("playground", activity, outcome),
+  /* A guided test records the pipeline it exercises; its recording is
+   * part of the run's result. */
+  onRunStart: (activity, guide) => {
+    agentBridge?.runStarted("playground", activity);
+    return guide ? recorder.guidedStart(activity, guide) : undefined;
+  },
+  onTrial: (label) => recorder.guidedLabel(label),
+  onPointer: (timeMs, x, y) => recorder.guidedPointer(timeMs, x, y),
+  onRunEnd: async (activity, outcome) => {
+    const recording = await recorder.guidedFinish();
+    if (recording) outcome.result.recording = recorder.describe(recording);
+    agentBridge?.runEnded("playground", activity, outcome);
+  },
   onExport: (result) => {
     downloadJson(
       result,
@@ -1005,13 +1016,15 @@ recorder = new Recorder(document.getElementById("recording"), {
   transport: () => (simulator ? "simulator" : transport?.label ?? null),
   notice,
   candidates: () => agentBridge?.session.snapshotProfiles() ?? [],
-  onStart: (pipeline) => {
+  /* A guided test's recording belongs to its playground run, not to a
+   * recording request. */
+  onStart: (pipeline, { guided }) => {
     updateHeartbeat();
-    agentBridge?.runStarted("recording", pipeline);
+    if (!guided) agentBridge?.runStarted("recording", pipeline);
   },
-  onEnd: (pipeline, outcome) => {
+  onEnd: (pipeline, outcome, { guided }) => {
     updateHeartbeat();
-    agentBridge?.runEnded("recording", pipeline, outcome);
+    if (!guided) agentBridge?.runEnded("recording", pipeline, outcome);
   },
 });
 

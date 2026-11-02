@@ -12,6 +12,20 @@ export const ACTIVITIES = Object.freeze([
   { id: "click-drag", label: "Click and drag", category: "Buttons" },
 ]);
 
+/* Guided tests: playground activities that record capture of the
+ * pipeline they exercise, with what the test means as labels
+ * (host/replay/capture-convert.js, options.labels). Scroll tests name
+ * their axis; the text test labels its vertical and horizontal stretches;
+ * cursor tests label each trial with its target. */
+export const GUIDED_TESTS = Object.freeze({
+  "cursor-targets": { mode: "cursor" },
+  "cursor-precision": { mode: "cursor" },
+  "scroll-vertical": { mode: "scroll", axis: "vertical" },
+  "scroll-horizontal": { mode: "scroll", axis: "horizontal" },
+  "scroll-two-axis": { mode: "scroll", axis: "both" },
+  "text-selection": { mode: "text" },
+});
+
 export function createRun(activityId, context = {}, now = Date.now()) {
   const activity = ACTIVITIES.find(({ id }) => id === activityId);
   if (!activity) throw new Error(`Unknown playground activity ${activityId}`);

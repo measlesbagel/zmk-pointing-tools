@@ -41,7 +41,21 @@ const CHAIN_MODES = {
   "text-nav": { kind: "text-pipeline", mode: "text" },
 };
 const CURSOR_MODE = { kind: "cursor-pipeline", mode: "cursor" };
-const LABEL_AXES = ["horizontal", "vertical"];
+
+/* A pipeline's mode, cursor, scroll, or text, from its description. The
+ * tuner picks a guided test's pipeline with it. */
+export const pipelineMode = (description) =>
+  (CHAIN_MODES[description.stages.at(-1)?.strategy] ?? CURSOR_MODE).mode;
+/* Intended axes of scroll and text labels; "both" (a two-axis scroll) means
+ * the user meant to move on both axes at once. */
+const LABEL_AXES = { scroll: ["horizontal", "vertical", "both"], text: ["horizontal", "vertical"] };
+const POINTER_ACCELERATION = ["off", "on", "unknown"];
+/* Browser pointer samples kept on either side of a cursor label, so the
+ * screen scale fit can slide the two clocks against each other. */
+const POINTER_MARGIN_US = 150000;
+/* A rest this long inside a scroll or text label splits it into one
+ * stroke per gesture, so each gesture's lock and output delays count. */
+const LABEL_REST_US = 100000;
 const TRUTH_MODES = ["labels-only", "derive"];
 /* Derived truth (docs/trace-benchmark.md, "Recorded traces: ground
  * truth"). A rest this long ends a stroke: the acceleration stage's
@@ -218,18 +232,47 @@ function fixtureEvents(segment, windowMs) {
   return { events: out, spans, startMs: baseMs };
 }
 
+const isPoint = (point) => Number.isFinite(point?.x) && Number.isFinite(point?.y);
+
+/* Labels say what the user meant in a stretch: for scroll and text, the
+ * intended axis; for a cursor trial, its target and where it started, in
+ * the screen's CSS pixels. test and trial name the guided test and trial
+ * the label came from. */
 function validateLabels(labels) {
   for (const [index, label] of labels.entries()) {
     if (!Number.isSafeInteger(label?.startMs) || !Number.isSafeInteger(label.endMs) ||
-        label.endMs <= label.startMs || !["scroll", "text"].includes(label.activity) ||
-        !LABEL_AXES.includes(label.axis)) {
-      throw new Error(`label ${index} needs startMs < endMs (device uptime), activity scroll ` +
-        "or text, and axis horizontal or vertical");
+        label.endMs <= label.startMs || !["cursor", "scroll", "text"].includes(label.activity)) {
+      throw new Error(`label ${index} needs startMs < endMs (device uptime) and activity ` +
+        "cursor, scroll, or text");
+    }
+    if (label.activity === "cursor" ? !(isPoint(label.target) && label.target.size > 0 &&
+        isPoint(label.start) && label.axis === undefined)
+      : !LABEL_AXES[label.activity].includes(label.axis)) {
+      throw new Error(`label ${index}: a cursor label needs target { x, y, size } and start ` +
+        "{ x, y }; a scroll label needs axis horizontal, vertical, or both; a text label " +
+        "horizontal or vertical");
+    }
+    if ((label.test !== undefined && typeof label.test !== "string") ||
+        (label.trial !== undefined && !Number.isSafeInteger(label.trial))) {
+      throw new Error(`label ${index}: test is a name and trial an integer`);
     }
   }
   const sorted = [...labels].sort((a, b) => a.startMs - b.startMs);
   if (sorted.some((label, index) => index > 0 && label.startMs < sorted[index - 1].endMs)) {
     throw new Error("labels overlap");
+  }
+}
+
+/* The browser's pointer path during a guided test: samples [ms, x, y] in
+ * device uptime and the labels' CSS pixels, and whether the computer's own
+ * pointer acceleration was off, as the user answered. */
+function validatePointer(pointer) {
+  if (pointer === undefined) return;
+  if (!Array.isArray(pointer?.samples) || !pointer.samples.every((sample) =>
+    Array.isArray(sample) && sample.length === 3 && sample.every(Number.isFinite)) ||
+      !POINTER_ACCELERATION.includes(pointer.acceleration)) {
+    throw new Error("options.pointer needs samples [ms, x, y] and acceleration " +
+      `${POINTER_ACCELERATION.join(", ")}`);
   }
 }
 
@@ -418,12 +461,32 @@ function traceTruth(fixture, labelled, derive) {
     ...stroke })), ...(derived ? { derived: true } : {}) };
 }
 
+/* Frames split where they rest for LABEL_REST_US or longer. */
+function gestures(frames) {
+  const groups = [];
+  for (const frame of frames) {
+    const last = groups.at(-1);
+    if (last && frame.tUs - last.at(-1).tUs < LABEL_REST_US) last.push(frame);
+    else groups.push([frame]);
+  }
+  return groups;
+}
+
 /* Labelled strokes of one trace, clamped to it, with the ball path inside
- * them; warnings name labels that don't fit. */
-function labelledStrokes(fixture, startMs, mode, labels, warnings) {
+ * them and, for cursor trials, the browser's pointer path around them;
+ * scroll and text labels split into a stroke per gesture. A cursor trial
+ * the trace doesn't hold whole is dropped: its output would be measured
+ * against the whole distance. Only the recording's first trace, which
+ * nothing was lost before (fresh), may start inside a trial, and only
+ * while the browser's pointer was still within the target's size of the
+ * trial's start at the trace's first frame: then the reach hadn't begun.
+ * Warnings name labels that don't fit. */
+function labelledStrokes(fixture, startMs, mode, labels, pointer, warnings, fresh) {
   const times = eventTimesUs(fixture);
   const endUs = times.at(-1) + 1;
   const frames = motionFrames(fixture);
+  /* Device milliseconds to trace microseconds, across a uptime wrap. */
+  const traceUs = (ms) => (((Math.floor(ms) - startMs) | 0) + (ms - Math.floor(ms))) * 1000;
   const result = [];
   for (const [index, label] of labels.entries()) {
     const from = ((label.startMs - startMs) | 0) * 1000;
@@ -438,7 +501,20 @@ function labelledStrokes(fixture, startMs, mode, labels, warnings) {
     label.used = true;
     const startUs = Math.max(from, 0);
     const stopUs = Math.min(to, endUs);
-    if (startUs !== from || stopUs !== to) {
+    /* The browser sends no pointer samples while the pointer is still, so
+     * it was where the last sample at or before the first frame put it. */
+    const atRest = () => {
+      const tUs = frames[0]?.tUs ?? 0;
+      const last = pointer?.samples.findLast(([ms]) => traceUs(ms) <= tUs);
+      return last !== undefined &&
+        Math.hypot(last[1] - label.start.x, last[2] - label.start.y) <= label.target.size;
+    };
+    if (mode === "cursor" && (stopUs !== to || (startUs !== from && !(fresh && atRest())))) {
+      warnings.push(`label ${index} (trial ${label.trial ?? "?"}) is dropped: ${fixture.id}, ` +
+        `which runs from ${startMs} ms for ${Math.ceil(endUs / 1000)} ms, holds only part of it`);
+      continue;
+    }
+    if (mode !== "cursor" && (startUs !== from || stopUs !== to)) {
       warnings.push(`label ${index} is clamped to ${fixture.id}, which runs from ` +
         `${startMs} ms for ${Math.ceil(endUs / 1000)} ms`);
     }
@@ -447,9 +523,31 @@ function labelledStrokes(fixture, startMs, mode, labels, warnings) {
       warnings.push(`label ${index} covers no motion in ${fixture.id}`);
       continue;
     }
-    result.push({ startUs, endUs: stopUs, source: "label", activity: mode, intended: true,
-      axis: label.axis,
-      path: { intervalUs: PATH_INTERVAL_US, points: strokePath(inside, startUs, stopUs) } });
+    if (mode !== "cursor") {
+      const groups = gestures(inside);
+      groups.forEach((group, part) => {
+        const from_ = part === 0 ? startUs : group[0].tUs;
+        const to_ = part === groups.length - 1 ? stopUs : groups[part + 1][0].tUs;
+        result.push({ startUs: from_, endUs: to_, source: "label", activity: mode, intended: true,
+          ...(label.test !== undefined ? { test: label.test } : {}), axis: label.axis,
+          path: { intervalUs: PATH_INTERVAL_US, points: strokePath(group, from_, to_) } });
+      });
+      continue;
+    }
+    const stroke = { startUs, endUs: stopUs, source: "label",
+      activity: mode === "cursor" ? "target" : mode, intended: true,
+      ...(label.test !== undefined ? { test: label.test } : {}),
+      ...(label.trial !== undefined ? { trial: label.trial } : {}),
+      target: { x: label.target.x, y: label.target.y, size: label.target.size },
+      start: { x: label.start.x, y: label.start.y },
+      path: { intervalUs: PATH_INTERVAL_US, points: strokePath(inside, startUs, stopUs) } };
+    if (mode === "cursor" && pointer) {
+      const samples = pointer.samples.map(([ms, x, y]) => [Math.round(traceUs(ms)), x, y])
+        .filter(([tUs]) => tUs >= startUs - POINTER_MARGIN_US && tUs < stopUs + POINTER_MARGIN_US);
+      if (samples.length) stroke.pointer = samples;
+      else warnings.push(`label ${index} has no browser pointer samples`);
+    }
+    result.push(stroke);
   }
   return result;
 }
@@ -457,9 +555,15 @@ function labelledStrokes(fixture, startMs, mode, labels, warnings) {
 /* Fixture v2 traces from a decoded capture and the settings it ran with:
  * one profile, or several when settings changed while recording. A trace
  * whose settings hash no profile matches is skipped with a warning.
- * options.labels, for scroll and text pipelines, lists stretches whose
- * intended axis the user or an agent named: { startMs, endMs, activity:
- * "scroll" | "text", axis: "horizontal" | "vertical" } in device uptime.
+ * options.labels lists stretches whose intent a guided test, the user, or
+ * an agent named, in device uptime: { startMs, endMs, activity: "scroll" |
+ * "text", axis: "horizontal" | "vertical" | "both" (scroll only) }, or for
+ * a cursor trial { startMs, endMs, activity: "cursor", target: { x, y,
+ * size }, start: { x, y } } in CSS pixels, each optionally with test and
+ * trial. options.pointer is the browser's pointer path during a guided
+ * cursor test: { samples: [[ms, x, y], ...], acceleration: "off" | "on" |
+ * "unknown" }, in device uptime and the labels' pixels; cursor strokes keep
+ * the samples around them, and truth.pointerAcceleration the answer.
  * options.truth is "labels-only" (the default: truth only from labels) or
  * "derive" (labels where they apply, and strokes derived from the motion
  * elsewhere). Every stroke's source is "label", "derived", or "typing"
@@ -474,11 +578,13 @@ export function captureToFixtures(capture, profiles, options = {}) {
   }
   const labels = (options.labels ?? []).map((label) => ({ ...label }));
   validateLabels(labels);
+  validatePointer(options.pointer);
   const truthMode = options.truth ?? "labels-only";
   if (!TRUTH_MODES.includes(truthMode)) {
     throw new Error(`options.truth must be ${TRUTH_MODES.join(" or ")}`);
   }
-  const { kind, mode } = CHAIN_MODES[description.stages.at(-1)?.strategy] ?? CURSOR_MODE;
+  const { kind } = CHAIN_MODES[description.stages.at(-1)?.strategy] ?? CURSOR_MODE;
+  const mode = pipelineMode(description);
   /* The stages that take a keypress guard share one window. */
   const windowMs = Math.max(0, ...description.stages.map((stage) =>
     stage.fixed["suppress-after-keypress-ms"] ?? 0));
@@ -487,7 +593,9 @@ export function captureToFixtures(capture, profiles, options = {}) {
     warnings.push(`${capture.skipped} delta frames had no frame to follow and were skipped`);
   }
   /* A stretch without frames (only flushes or key presses) replays nothing. */
-  const parts = segments(records, warnings).filter((segment) => segment.source !== null)
+  const allSegments = segments(records, warnings);
+  const [firstSegment] = allSegments;
+  const parts = allSegments.filter((segment) => segment.source !== null)
     .map((segment) => ({ segment, converted: fixtureEvents(segment, windowMs),
       profile: matchingProfile(description, profiles, segment.settingsHash) }))
     .filter(({ converted }) => converted !== null)
@@ -516,6 +624,8 @@ export function captureToFixtures(capture, profiles, options = {}) {
         synthetic: false,
         provenance: options.provenance ?? "firmware input capture (host/replay/capture.js)",
         capture: {
+          /* The recording every trace of this capture shares. */
+          recording: id,
           pipeline: description.stableId,
           sourceId: segment.source.sourceId,
           firstSequence: segment.events[0].sequence ?? null,
@@ -541,7 +651,12 @@ export function captureToFixtures(capture, profiles, options = {}) {
       events,
     };
     const truth = traceTruth(fixture,
-      labelledStrokes(fixture, startMs, mode, labels, warnings), truthMode === "derive");
+      labelledStrokes(fixture, startMs, mode, labels, options.pointer, warnings,
+        index === 0 && records[0]?.sequence === 0 && parts[0].segment === firstSegment),
+      truthMode === "derive");
+    if (truth && mode === "cursor" && options.pointer) {
+      truth.pointerAcceleration = options.pointer.acceleration;
+    }
     if (truth) fixture.truth = truth;
     return validateFixture(fixture, fixture.id);
   });

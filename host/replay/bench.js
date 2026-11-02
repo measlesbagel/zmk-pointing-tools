@@ -48,7 +48,7 @@ function loadSet(directory, sensorSpans) {
 
 function scoreSet(loaded, native, profile) {
   const result = scoreFixtures(loaded.map(({ fixture }) => fixture),
-    (fixture) => runFixture(fixture, native, profile), profile);
+    (fixture, replayed) => runFixture(fixture, native, replayed), profile);
   result.fixtureResults = result.fixtureResults.map(({ id, ...scores }, index) =>
     ({ id, path: relative(REPOSITORY, loaded[index].path), ...scores }));
   return result;
@@ -103,15 +103,17 @@ function checkProfile(profile, fixtures, path) {
 /* Baselines hold { value, strokes } per metric. A metric that lost
  * strokes or vanished is worse: a setting must not improve a score by
  * making strokes unscorable. */
-function compare(name, score, baseline) {
+export function compare(name, score, baseline) {
   if (baseline === undefined) return { change: "new" };
   if (score.value === undefined) return { change: "worse", note: "missing" };
+  if (score.guard) return { change: "worse", note: score.guard };
   if (baseline.strokes !== undefined && score.strokes !== baseline.strokes) {
     return { delta: round(round(score.value) - baseline.value), change: "worse",
       note: `strokes ${baseline.strokes}→${score.strokes}` };
   }
   const delta = round(round(score.value) - baseline.value);
   if (delta === 0) return { delta: 0, change: "same" };
+  if (METRICS[name].ranked === false) return { delta, change: "unranked" };
   const better = METRICS[name].higherIsBetter ? delta > 0 : delta < 0;
   return { delta, change: better ? "better" : "worse" };
 }
@@ -135,7 +137,7 @@ function withBaseline(sets, baseline) {
 
 function rows(result) {
   return Object.entries(result.scores).map(([name, score]) => {
-    const arrow = METRICS[name].higherIsBetter ? "↑" : "↓";
+    const arrow = METRICS[name].ranked === false ? "·" : METRICS[name].higherIsBetter ? "↑" : "↓";
     const change = score.change === "same" ? "=" : score.change === "new" ? "new"
       : [score.delta === undefined ? null
         : `${score.delta > 0 ? "+" : ""}${score.delta.toFixed(DIGITS)}`,
@@ -226,9 +228,11 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 2;
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 2;
+  }
 }

@@ -19,7 +19,54 @@ export const METRICS = {
   axisLockPercent: { higherIsBetter: true, unit: "%" },
   sidewaysLeakPercent: { higherIsBetter: false, unit: "%" },
   axisSwitches: { higherIsBetter: false, unit: "" },
+  /* Scroll and text strokes with a labelled axis: output on the other axis
+   * in ball millimetres, so a lower gain can't hide it, and how long the
+   * intended axis takes to lock and to give output. */
+  wrongAxisOutputMm: { higherIsBetter: false, unit: "mm" },
+  axisLockDelayMs: { higherIsBetter: false, unit: "ms" },
+  intendedOutputDelayMs: { higherIsBetter: false, unit: "ms" },
+  /* Guided cursor trials, by phase. Pixel metrics need a usable screen
+   * scale (fitScreenScale). A trial's ballistic landing, as a share of its
+   * distance, aggregates as its coefficient of variation across trials,
+   * the headline, which a uniform gain change leaves alone; and as its
+   * mean error, which partly reflects how the user adapted to the recorded
+   * gain, so it isn't ranked. */
+  ballisticSpreadPercent: { higherIsBetter: false, unit: "%", spread: true },
+  ballisticBiasPercent: { higherIsBetter: false, unit: "%", ranked: false },
+  homingStepPercent: { higherIsBetter: false, unit: "%" },
+  homingJitterPercent: { higherIsBetter: false, unit: "%" },
+  homingReversalsPerS: { higherIsBetter: false, unit: "/s" },
+  homingStairDegrees: { higherIsBetter: false, unit: "°" },
+  transitionStepPercent: { higherIsBetter: false, unit: "%" },
 };
+
+/* Metrics that need the screen scale: they read in screen pixels. */
+export const PIXEL_METRICS = ["ballisticSpreadPercent", "ballisticBiasPercent",
+  "homingStepPercent", "homingJitterPercent"];
+/* Lowering the gain shrinks homing steps and wobble against fixed targets,
+ * so these count as worse when the candidate's ballistic bias moves further
+ * than GAIN_GUARD_POINTS from the recorded settings' bias: the user would
+ * have aimed differently with that gain, and replay can't say how. */
+export const GAIN_GUARDED = ["ballisticSpreadPercent", "homingStepPercent",
+  "homingJitterPercent"];
+const GAIN_GUARD_POINTS = 25;
+/* The ballistic phase is mostly fast, so a gain cut only at slow speeds
+ * passes the bias check. The homing guard compares how much the candidate
+ * moved during homing (output counts over the same windows) with the
+ * recorded settings, and flags homing step size and jitter when the total
+ * over all trials is outside HOMING_GUARD_RATIO (÷1.25 trips it, ÷1.1
+ * doesn't) or any one trial is outside HOMING_TRIAL_RATIO, so a curve can't
+ * cut slow gain for short trials and raise it for long ones with the totals
+ * matching. A trial's ratio carries about ±10 % of quantization noise at
+ * 50 counts, hence the wider band. Trials with fewer than
+ * HOMING_TRIAL_MIN_COUNTS recorded counts are too noisy alone, so they are
+ * pooled and checked together against the same band once the pool's
+ * recorded total reaches that many: small targets can't hide behind large
+ * ones either. */
+const HOMING_GUARD_RATIO = 1.15;
+const HOMING_TRIAL_RATIO = 1.3;
+const HOMING_TRIAL_MIN_COUNTS = 20;
+const HOMING_GUARDED = ["homingStepPercent", "homingJitterPercent"];
 
 const SETTLE_US = 100000;
 const TAIL_US = 100000;
@@ -28,7 +75,34 @@ const JITTER_HALF_WINDOW = 3;
 const SLOW_SPEED_MM_PER_S = 50;
 const LAG_PROGRESS = [0.1, 0.5, 0.9];
 const INTENT_UNDECIDED = 0;
-const INTENT_AXIS = { horizontal: 2, vertical: 3 };
+/* A two-axis label means free intent: scrolling on both axes at once. */
+const INTENT_AXIS = { horizontal: 2, vertical: 3, both: 1 };
+/* Screen scale fit: output and pointer compared every SCALE_GRID_US, with
+ * the browser's clock slid against the device's by up to SCALE_OFFSET_US. */
+const SCALE_GRID_US = 8000;
+const SCALE_OFFSET_US = 80000;
+const SCALE_OFFSET_STEP_US = 2000;
+const SCALE_MIN_R2 = 0.9;
+/* Fast output moving the pointer this much more (or less) per count than
+ * slow output is a non-linear mapping, such as the computer's own pointer
+ * acceleration. */
+const SCALE_NONLINEAR = 1.25;
+const SCALE_MIN_STEPS = 20;
+/* Phases of a cursor trial: the first submovement ends at the first speed
+ * minimum below half the peak, or where speed falls under a tenth of it;
+ * homing starts when the pointer first comes within three target widths. */
+const SUBMOVEMENT_MINIMUM = 0.5;
+const SUBMOVEMENT_STOP = 0.1;
+const HOMING_WIDTHS = 3;
+const PHASE_BIN_US = 16000;
+const PHASE_MIN_BINS = 4;
+/* Gains are averaged over this long before the largest change between
+ * neighbouring windows counts, so speed-estimate noise frame to frame
+ * doesn't read as a curve's slope. */
+const TRANSITION_WINDOW_US = 12000;
+/* A submovement's end is a speed minimum the speed then rises from by at
+ * least this share of the peak, not a plateau between sparse frames. */
+const SUBMOVEMENT_RISE = 0.05;
 const TEXT_DIRECTIONS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -287,31 +361,47 @@ function flickLag(frames, reports) {
 /* Axis metrics against the stroke's intended axis. Without one, as for an
  * unlabelled or derived recording stroke, only axis switches apply: they
  * need no truth. */
-function axisMetrics(stroke, frames, reports) {
+function axisMetrics(stroke, frames, reports, fixture, profile) {
   const decided = frames.filter((frame) => frame.intent !== null &&
     frame.intent !== INTENT_UNDECIDED);
   if (stroke.axis === undefined) {
     return decided.length ? { axisSwitches: decided.slice(1)
       .filter((frame, index) => frame.intent !== decided[index].intent).length } : {};
   }
+  const intent = INTENT_AXIS[stroke.axis];
+  const firstUs = frames[0]?.tUs;
+  const locked = decided.find((frame) => frame.intent === intent);
+  const both = stroke.axis === "both";
   const along = stroke.axis === "horizontal" ? "x" : "y";
   const across = stroke.axis === "horizontal" ? "y" : "x";
-  const alongSteps = reports.reduce((total, report) => total + Math.abs(report[along]), 0);
-  const acrossSteps = reports.reduce((total, report) => total + Math.abs(report[across]), 0);
-  return {
+  const intendedReport = reports.find((report) =>
+    (both ? report.x !== 0 || report.y !== 0 : report[along] !== 0));
+  const values = {
     ...(decided.length ? {
-      axisLockPercent: (100 * decided.filter((frame) =>
-        frame.intent === INTENT_AXIS[stroke.axis]).length) / decided.length,
+      axisLockPercent: (100 * decided.filter((frame) => frame.intent === intent).length) /
+        decided.length,
       axisSwitches: decided.slice(1)
         .filter((frame, index) => frame.intent !== decided[index].intent).length,
     } : {}),
-    ...(alongSteps + acrossSteps ? {
-      sidewaysLeakPercent: (100 * acrossSteps) / (alongSteps + acrossSteps),
-    } : {}),
+    ...(locked ? { axisLockDelayMs: (locked.tUs - firstUs) / 1000 } : {}),
+    ...(intendedReport && firstUs !== undefined
+      ? { intendedOutputDelayMs: Math.max(0, intendedReport.tUs - firstUs) / 1000 } : {}),
   };
+  if (both) return values;
+  const alongSteps = reports.reduce((total, report) => total + Math.abs(report[along]), 0);
+  const acrossSteps = reports.reduce((total, report) => total + Math.abs(report[across]), 0);
+  if (alongSteps + acrossSteps) {
+    values.sidewaysLeakPercent = (100 * acrossSteps) / (alongSteps + acrossSteps);
+  }
+  const [gx, gy] = axisGains(fixture, profile);
+  const mmPerCount = 25.4 / (fixture.version === 1 ? fixture.processor.settings.cpi
+    : fixture.source.cpi);
+  const gain = across === "x" ? gx : gy;
+  if (gain > 0) values.wrongAxisOutputMm = (acrossSteps / gain) * mmPerCount;
+  return values;
 }
 
-function strokeMetrics(stroke, frames, reports, fixture, profile) {
+function strokeMetrics(stroke, frames, reports, fixture, profile, screen) {
   const cursor = fixture.processor.kind === "cursor-pipeline";
   const values = {};
   const set = (name, value) => {
@@ -325,6 +415,13 @@ function strokeMetrics(stroke, frames, reports, fixture, profile) {
     }
   }
   if (stroke.activity === "flick") set("flickLagMs", flickLag(frames, reports));
+  if (stroke.activity === "target") {
+    /* Where a trial ends depends on the user's corrections, so replay
+     * judges its phases, not its outcome. */
+    for (const [name, value] of Object.entries(targetMetrics(stroke, frames, reports, fixture,
+      screen))) set(name, value);
+    return values;
+  }
   const intended = stroke.intended ? intendedOutput(stroke, fixture, profile) : undefined;
   if (intended) {
     /* Net output against the intended vector, so direction counts too. */
@@ -352,15 +449,267 @@ function strokeMetrics(stroke, frames, reports, fixture, profile) {
     }
   }
   if (!cursor && (stroke.axis || ["scroll", "text"].includes(stroke.activity))) {
-    for (const [name, value] of Object.entries(axisMetrics(stroke, frames, reports))) {
+    for (const [name, value] of Object.entries(axisMetrics(stroke, frames, reports, fixture,
+      profile))) {
       set(name, value);
     }
   }
   return values;
 }
 
-/* Metric values of every ground-truth stroke in a fixture. */
-export function scoreFixture(fixture, output, profile = null) {
+/* --- Guided cursor trials ------------------------------------------- */
+
+/* Cumulative output at device time tUs: reports up to and including it. */
+function outputTrack(reports) {
+  const times = reports.map((report) => report.tUs);
+  const positions = [[0, 0]];
+  for (const report of reports) {
+    const [x, y] = positions.at(-1);
+    positions.push([x + report.x, y + report.y]);
+  }
+  return (tUs) => {
+    let low = 0;
+    let high = times.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (times[middle] <= tUs) low = middle + 1;
+      else high = middle;
+    }
+    return positions[low];
+  };
+}
+
+/* The browser pointer's position at a time, between its [tUs, x, y]
+ * samples, held at both ends. */
+function pointerAt(samples, tUs) {
+  if (tUs <= samples[0][0]) return [samples[0][1], samples[0][2]];
+  if (tUs >= samples.at(-1)[0]) return [samples.at(-1)[1], samples.at(-1)[2]];
+  let low = 0;
+  let high = samples.length - 1;
+  while (high - low > 1) {
+    const middle = (low + high) >> 1;
+    if (samples[middle][0] <= tUs) low = middle;
+    else high = middle;
+  }
+  const [t0, x0, y0] = samples[low];
+  const [t1, x1, y1] = samples[high];
+  const f = t1 > t0 ? (tUs - t0) / (t1 - t0) : 0;
+  return [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f];
+}
+
+/* Least squares pointer step = scale × output step over [dPx, dPy, dOx,
+ * dOy] pairs, with the share of pointer motion it explains. */
+function fitSteps(pairs) {
+  let cross = 0;
+  let output = 0;
+  let pointer = 0;
+  for (const [px, py, ox, oy] of pairs) {
+    cross += px * ox + py * oy;
+    output += ox * ox + oy * oy;
+    pointer += px * px + py * py;
+  }
+  if (output === 0 || pointer === 0) return null;
+  return { scale: cross / output, r2: 1 - (pointer - (cross * cross) / output) / pointer };
+}
+
+/* Screen pixels per output count, fitted from a guided cursor recording
+ * itself: the recorded settings' replayed output (which is what the device
+ * sent) against the browser's pointer path, with the clocks slid against
+ * each other. traces are { fixture, output } for every trace of one
+ * recording, output being the runner output with the recorded settings, so
+ * one fit covers the session. The scale is usable when it explains the
+ * pointer's motion (r² ≥ 0.9), fast and slow output move the pointer alike,
+ * and the user didn't say the computer's pointer acceleration was on. Null
+ * without pointer paths. */
+export function fitScreenScale(traces) {
+  const trials = traces.flatMap(({ fixture, output }) => {
+    const strokes = (fixture.truth?.strokes ?? []).filter((stroke) => stroke.pointer?.length >= 2);
+    if (!strokes.length) return [];
+    const track = outputTrack(parseTrace(fixture, output).reports);
+    return strokes.map((stroke) => ({ stroke, track }));
+  });
+  if (!trials.length) return null;
+  const acceleration = traces[0].fixture.truth.pointerAcceleration ?? "unknown";
+  let best = null;
+  for (let offsetUs = -SCALE_OFFSET_US; offsetUs <= SCALE_OFFSET_US;
+    offsetUs += SCALE_OFFSET_STEP_US) {
+    const pairs = [];
+    for (const { stroke, track } of trials) {
+      let previous = null;
+      for (let tUs = stroke.startUs; tUs <= stroke.endUs; tUs += SCALE_GRID_US) {
+        const current = [...pointerAt(stroke.pointer, tUs - offsetUs), ...track(tUs)];
+        if (previous) pairs.push(current.map((value, axis) => value - previous[axis]));
+        previous = current;
+      }
+    }
+    const fit = fitSteps(pairs);
+    if (fit && (best === null || fit.r2 > best.r2)) best = { ...fit, offsetUs, pairs };
+  }
+  if (best === null) {
+    return { usable: false, acceleration, reason: "the output or the pointer didn't move" };
+  }
+  const moving = best.pairs.filter(([, , ox, oy]) => ox !== 0 || oy !== 0)
+    .sort((a, b) => Math.hypot(a[2], a[3]) - Math.hypot(b[2], b[3]));
+  const third = Math.floor(moving.length / 3);
+  const slow = fitSteps(moving.slice(0, third));
+  const fast = fitSteps(moving.slice(moving.length - third));
+  const ratio = slow && fast && slow.scale > 0 ? fast.scale / slow.scale : null;
+  const nonlinear = ratio !== null && (ratio > SCALE_NONLINEAR || ratio < 1 / SCALE_NONLINEAR);
+  /* Non-linearity means something only for a fit that holds. */
+  const reason = acceleration === "on" ? "the computer's pointer acceleration is on"
+    : moving.length < SCALE_MIN_STEPS ? "too little motion to fit"
+      : best.r2 < SCALE_MIN_R2 || best.scale <= 0
+        ? `the output explains too little of the pointer's motion (r² ${best.r2.toFixed(2)})`
+        : nonlinear ? `fast output moved the pointer ${ratio.toFixed(2)}× as far per count as ` +
+          "slow output, as the computer's pointer acceleration does"
+          : null;
+  const round = (value, digits) => Math.round(value * 10 ** digits) / 10 ** digits;
+  return { usable: reason === null, pxPerCount: round(best.scale, 4), r2: round(best.r2, 4),
+    offsetMs: best.offsetUs / 1000, fastSlowRatio: ratio === null ? null : round(ratio, 3),
+    acceleration, ...(reason ? { reason } : {}) };
+}
+
+/* When the first submovement peaks and ends, from the ball's own path:
+ * the user's input, the same whatever the settings. frameTimes are the
+ * stroke's input frame times: the speed is smoothed over a window at least
+ * one and a half median frame gaps wide either side, so sparse frames,
+ * which the path interpolates into plateaus, don't make false minima. */
+export function trialPhases(stroke, frameTimes = []) {
+  const { intervalUs, points } = stroke.path;
+  const steps = points.slice(1).map((point, i) =>
+    Math.hypot(point[0] - points[i][0], point[1] - points[i][1]));
+  const gaps = frameTimes.slice(1).map((time, i) => time - frameTimes[i]).sort((a, b) => a - b);
+  const gapUs = gaps.length ? gaps[gaps.length >> 1] : 0;
+  const half = Math.max(2, Math.round((1.5 * gapUs) / intervalUs));
+  const speeds = steps.map((_, i) => mean(steps.slice(Math.max(0, i - half), i + half + 1)));
+  const peak = speeds.indexOf(Math.max(...speeds));
+  const top = speeds[peak];
+  if (!(top > 0)) return null;
+  let end = speeds.length;
+  for (let i = peak + 1; i < speeds.length; i += 1) {
+    const later = speeds.slice(i + 1, i + 2 * half + 2);
+    const minimum = speeds[i] < speeds[i - 1] &&
+      speeds[i] <= Math.min(...speeds.slice(Math.max(0, i - half), i + half + 1)) &&
+      Math.max(...later, -Infinity) >= speeds[i] + SUBMOVEMENT_RISE * top;
+    if (speeds[i] < SUBMOVEMENT_STOP * top || (minimum && speeds[i] < SUBMOVEMENT_MINIMUM * top)) {
+      end = i + 1;
+      break;
+    }
+  }
+  return { peakUs: stroke.startUs + (peak + 1) * intervalUs,
+    ballisticEndUs: stroke.startUs + end * intervalUs };
+}
+
+/* Sums of items' x and y in PHASE_BIN_US bins from fromUs to toUs. */
+function phaseBins(items, fromUs, toUs) {
+  const count = Math.floor((toUs - fromUs) / PHASE_BIN_US);
+  const bins = Array.from({ length: Math.max(count, 0) }, () => [0, 0]);
+  for (const item of items) {
+    const index = Math.floor((item.tUs - fromUs) / PHASE_BIN_US);
+    if (index < 0 || index >= count) continue;
+    bins[index][0] += item.x;
+    bins[index][1] += item.y;
+  }
+  return bins;
+}
+
+/* Per-phase metrics of one guided cursor trial; see docs/trace-benchmark.md,
+ * "Guided cursor trials". */
+function targetMetrics(stroke, frames, reports, fixture, screen) {
+  const values = {};
+  const phases = trialPhases(stroke, frames.map((frame) => frame.tUs));
+  if (!phases) return values;
+  const { target, start } = stroke;
+  const scale = screen?.usable ? screen.pxPerCount : null;
+  const distance = Math.hypot(target.x - start.x, target.y - start.y);
+  if (scale !== null && distance > target.size) {
+    /* Where the candidate's output would have put the pointer when the
+     * first submovement ended, along the line to the target. */
+    const [ox, oy] = sum(reports.filter((report) => report.tUs < phases.ballisticEndUs));
+    const along = (scale * (ox * (target.x - start.x) + oy * (target.y - start.y))) / distance;
+    /* Per trial: where it landed, in percent of the distance; the set's
+     * spread is the coefficient of variation of these (aggregate). */
+    values.ballisticSpreadPercent = (100 * along) / distance;
+    values.ballisticBiasPercent = (100 * (along - distance)) / distance;
+  }
+  /* The gain as the speed falls out of the first submovement, averaged
+   * over short windows. */
+  const fromUs = phases.peakUs;
+  const windows = new Map();
+  for (const frame of frames) {
+    if (frame.gain === null || frame.tUs < fromUs ||
+      frame.tUs >= phases.ballisticEndUs) continue;
+    const index = Math.floor((frame.tUs - fromUs) / TRANSITION_WINDOW_US);
+    if (!windows.has(index)) windows.set(index, []);
+    windows.get(index).push(frame.gain);
+  }
+  const gains = [...windows].sort(([a], [b]) => a - b).map(([, values_]) => mean(values_));
+  if (gains.length >= 3 && mean(gains) > 0) {
+    values.transitionStepPercent =
+      (100 * Math.max(...gains.slice(1).map((gain, i) => Math.abs(gain - gains[i])))) / mean(gains);
+  }
+  /* Homing starts where the pointer the user saw came near the target. */
+  const offsetUs = (screen?.offsetMs ?? 0) * 1000;
+  const near = stroke.pointer?.find(([tUs, x, y]) => tUs + offsetUs >= stroke.startUs &&
+    Math.hypot(x - target.x, y - target.y) <= HOMING_WIDTHS * target.size);
+  if (!near) return values;
+  const homeUs = near[0] + offsetUs;
+  const output = phaseBins(reports, homeUs, stroke.endUs);
+  if (output.length < PHASE_MIN_BINS) return values;
+  const windowReports = reports.filter((report) => report.tUs >= homeUs &&
+    report.tUs < stroke.endUs);
+  /* Reversals: sign changes of either axis between bins with output. */
+  let reversals = 0;
+  for (const axis of [0, 1]) {
+    const signs = output.map((bin) => Math.sign(bin[axis])).filter(Boolean);
+    reversals += signs.slice(1).filter((sign, i) => sign !== signs[i]).length;
+  }
+  values.homingReversalsPerS = reversals / ((output.length * PHASE_BIN_US) / 1e6);
+  /* How much the candidate moved in homing, in output counts, for the
+   * homing guard; the window is the same for every candidate. */
+  values.homingOutputCounts = windowReports.reduce((total, report) =>
+    total + Math.hypot(report.x, report.y), 0);
+  /* Stair-stepping: how far each bin's output turns from the ball's own
+   * direction in it, weighted by the output. */
+  const { orientations } = cursorModel(fixture);
+  const input = phaseBins(frames.map((frame) => {
+    const [x, y] = orient(orientations, frame.x, frame.y);
+    return { tUs: frame.tUs, x, y };
+  }), homeUs, stroke.endUs);
+  let turned = 0;
+  let weight = 0;
+  for (const [i, [ox, oy]] of output.entries()) {
+    const [ix, iy] = input[i];
+    const size = Math.hypot(ox, oy);
+    const inputSize = Math.hypot(ix, iy);
+    if (size === 0 || inputSize === 0) continue;
+    const cosine = Math.min(1, Math.max(-1, (ox * ix + oy * iy) / (size * inputSize)));
+    turned += size * Math.acos(cosine) * (180 / Math.PI);
+    weight += size;
+  }
+  if (weight > 0) values.homingStairDegrees = turned / weight;
+  if (scale === null) return values;
+  const steps = windowReports.map((report) => Math.hypot(report.x, report.y)).filter(Boolean);
+  if (steps.length) values.homingStepPercent = (100 * scale * mean(steps)) / target.size;
+  /* Wobble: the pointer's path, bin by bin, against its own moving
+   * average. */
+  const path = [];
+  for (const [x, y] of output) {
+    const [px, py] = path.at(-1) ?? [0, 0];
+    path.push([px + x, py + y]);
+  }
+  const residuals = path.map(([x, y], i) => {
+    const window = path.slice(Math.max(0, i - JITTER_HALF_WINDOW), i + JITTER_HALF_WINDOW + 1);
+    return Math.hypot(x - mean(window.map((point) => point[0])),
+      y - mean(window.map((point) => point[1])));
+  });
+  values.homingJitterPercent = (100 * scale * rms(residuals)) / target.size;
+  return values;
+}
+
+/* Metric values of every ground-truth stroke in a fixture. screen is the
+ * fixture's fitScreenScale, for guided cursor trials. */
+export function scoreFixture(fixture, output, profile = null, screen = null) {
   const { frames, reports } = parseTrace(fixture, output);
   const strokes = [...(fixture.truth?.strokes ?? [])].sort((a, b) => a.startUs - b.startUs);
   return strokes.map((stroke, index) => {
@@ -373,17 +722,86 @@ export function scoreFixture(fixture, output, profile = null) {
       metrics: strokeMetrics(stroke,
         frames.filter((frame) => frame.tUs >= stroke.startUs && frame.tUs < stroke.endUs),
         reports.filter((report) => report.tUs >= outputStart && report.tUs < outputEnd),
-        fixture, profile),
+        fixture, profile, screen),
     };
   });
 }
 
-/* Mean of each metric over the strokes it applies to. */
-export function aggregate(strokes) {
+/* Mean of each metric over the strokes it applies to, or for a spread
+ * metric the coefficient of variation (sample standard deviation over the
+ * absolute mean, in percent) over at least two strokes. recorded, the same
+ * strokes scored with the recorded settings, arms the gain guard: when the
+ * candidate's mean ballistic bias is more than GAIN_GUARD_POINTS from the
+ * recorded one, or its trials land on average at or behind their start,
+ * the GAIN_GUARDED scores carry a guard reason and count as worse. */
+export function aggregate(strokes, recorded = null) {
   const scores = {};
-  for (const name of Object.keys(METRICS)) {
+  for (const [name, { spread }] of Object.entries(METRICS)) {
     const values = strokes.map((stroke) => stroke.metrics[name]).filter((v) => v !== undefined);
-    if (values.length) scores[name] = { value: mean(values), strokes: values.length };
+    if (spread) {
+      if (values.length < 2) continue;
+      const average = mean(values);
+      const sd = Math.sqrt(values.reduce((total, value) =>
+        total + (value - average) ** 2, 0) / (values.length - 1));
+      scores[name] = { value: average === 0 ? Infinity : (100 * sd) / Math.abs(average),
+        strokes: values.length };
+    } else if (values.length) scores[name] = { value: mean(values), strokes: values.length };
+  }
+  const guard = gainGuard(scores, recorded && aggregate(recorded));
+  if (guard) {
+    for (const name of GAIN_GUARDED) if (scores[name]) scores[name].guard = guard;
+  }
+  const homing = recorded && homingGuard(strokes, recorded);
+  if (homing) {
+    for (const name of HOMING_GUARDED) if (scores[name]) scores[name].guard ??= homing;
   }
   return scores;
+}
+
+/* Why a candidate's homing metrics can't be trusted, or null: it moved
+ * much more or less during homing than the recorded settings did, in total
+ * or in one trial. recorded holds the same strokes in the same order. */
+function homingGuard(strokes, recorded) {
+  const outside = (ratio, band) => ratio > band || ratio < 1 / band;
+  const total = { candidate: 0, base: 0 };
+  const small = { candidate: 0, base: 0 };
+  let worst = 1;
+  const consider = (ratio) => {
+    if (Math.abs(Math.log(ratio)) > Math.abs(Math.log(worst))) worst = ratio;
+  };
+  strokes.forEach((stroke, index) => {
+    const counts = stroke.metrics.homingOutputCounts;
+    const recordedCounts = recorded[index]?.id === stroke.id
+      ? recorded[index].metrics.homingOutputCounts : undefined;
+    if (counts === undefined || recordedCounts === undefined) return;
+    total.candidate += counts;
+    total.base += recordedCounts;
+    if (recordedCounts >= HOMING_TRIAL_MIN_COUNTS) consider(counts / recordedCounts);
+    else {
+      small.candidate += counts;
+      small.base += recordedCounts;
+    }
+  });
+  if (small.base >= HOMING_TRIAL_MIN_COUNTS) consider(small.candidate / small.base);
+  const reason = "steps and wobble shrink or grow with the slow-speed gain whatever its quality";
+  if (outside(worst, HOMING_TRIAL_RATIO)) {
+    return `homing output in some trials is ${worst.toFixed(2)}× the recorded settings': ${reason}`;
+  }
+  if (total.base > 0 && outside(total.candidate / total.base, HOMING_GUARD_RATIO)) {
+    return `homing output is ${(total.candidate / total.base).toFixed(2)}× the recorded settings': ${reason}`;
+  }
+  return null;
+}
+
+/* Why a candidate's pixel metrics can't be trusted, or null. */
+function gainGuard(scores, recorded) {
+  const bias = scores.ballisticBiasPercent?.value;
+  if (bias === undefined) return null;
+  if (bias <= -100) return "trials land at or behind their start on average";
+  const base = recorded?.ballisticBiasPercent?.value;
+  if (base !== undefined && Math.abs(bias - base) > GAIN_GUARD_POINTS) {
+    return `ballistic bias ${bias.toFixed(0)} % is more than ${GAIN_GUARD_POINTS} points from ` +
+      `the recorded ${base.toFixed(0)} %: the user would have aimed differently with this gain`;
+  }
+  return null;
 }

@@ -1097,19 +1097,23 @@ static uint32_t capture_control(const uint8_t *payload, uint16_t length, uint8_t
     tx_frame(ZPT_TEST_REQ_CAPTURE_CONTROL, payload, length);
     zassert_ok(rx_frame(&frame_type, response, &response_length, ZPT_RX_TIMEOUT_MS));
     zassert_equal(frame_type, ZPT_TEST_RESP_CAPTURE_STATUS);
-    zassert_equal(response[0], 2, "capture schema");
+    zassert_equal(response[0], 3, "capture schema");
     zassert_equal(response[1], recording);
     zassert_true(sys_get_le32(&response[6]) <= CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE,
                  "buffer fill");
     zassert_equal(sys_get_le32(&response[10]), CONFIG_ZMK_POINTING_TOOLS_INPUT_CAPTURE_BUFFER_SIZE);
-    zassert_equal(response[14], 1, "one recordable pipeline");
+    /* The uptime the status was sent at, the clock of record times. */
+    const uint32_t uptime_ms = sys_get_le32(&response[14]);
+    zassert_true(uptime_ms <= k_uptime_get_32() && k_uptime_get_32() - uptime_ms < 1000U,
+                 "device uptime");
+    zassert_equal(response[18], 1, "one recordable pipeline");
     /* id, active, three stages, replayable; then the hash and the label. */
     static const uint8_t entry[] = {0, 1, 3, 1};
     static const uint8_t label[] = {12, 't', 'e', 's', 't', '-', 'c', 'a', 'p', 't', 'u', 'r', 'e'};
-    zassert_equal(response_length, 15 + sizeof(entry) + 4 + sizeof(label));
-    zassert_mem_equal(&response[15], entry, sizeof(entry));
-    zassert_mem_equal(&response[23], label, sizeof(label));
-    return sys_get_le32(&response[19]);
+    zassert_equal(response_length, 19 + sizeof(entry) + 4 + sizeof(label));
+    zassert_mem_equal(&response[19], entry, sizeof(entry));
+    zassert_mem_equal(&response[27], label, sizeof(label));
+    return sys_get_le32(&response[23]);
 }
 
 /* Collects capture batches until count records arrived; returns the

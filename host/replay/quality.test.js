@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { aggregate, idealCursorOutput, scoreFixture } from "./quality.js";
+import { eventTimesUs } from "./fixture.js";
+import { aggregate, fitScreenScale, idealCursorOutput, scoreFixture, trialPhases } from "./quality.js";
 
 const source = { device: "ball", location: "central", cpi: 254, span: "none" };
 
@@ -68,6 +69,20 @@ test("axis metrics count decided frames and sideways steps", () => {
   assert.equal(stroke.metrics.sidewaysLeakPercent, 12.5);
   /* Eight output steps are four ball counts at 2 steps per count. */
   assert.ok(Math.abs(stroke.metrics.unintendedOutput - 4) < 1e-9);
+  /* Against the vertical label: the one sideways step is half a count,
+   * 0.05 mm; vertical locks at the second frame, 8 ms in, and the first
+   * vertical step comes out at 16 ms. */
+  assert.ok(Math.abs(stroke.metrics.wrongAxisOutputMm - 0.05) < 1e-9);
+  assert.equal(stroke.metrics.axisLockDelayMs, 8);
+  assert.equal(stroke.metrics.intendedOutputDelayMs, 16);
+  /* A two-axis label wants free intent, one frame in five, and has no
+   * sideways. */
+  fixture.truth.strokes[0].axis = "both";
+  const [both] = scoreFixture(fixture, output);
+  assert.equal(both.metrics.axisLockPercent, 20);
+  assert.equal(both.metrics.axisLockDelayMs, 24);
+  assert.equal(both.metrics.sidewaysLeakPercent, undefined);
+  assert.equal(both.metrics.wrongAxisOutputMm, undefined);
   assert.deepEqual(aggregate([stroke, { metrics: { axisSwitches: 0 } }]).axisSwitches,
     { value: 1, strokes: 2 });
 });
@@ -140,4 +155,186 @@ test("zero output scores as lost and unintended output reads in ball counts", ()
   const [aimZero, restZero] = scoreFixture(fixture, output, zero);
   assert.equal(aimZero.metrics.outputErrorPercent, 100);
   assert.equal(restZero.metrics.unintendedOutput, undefined);
+});
+
+/* A guided cursor run's output every millisecond for two seconds, and the
+ * browser pointer sampled every 4 ms by a computer that maps output to
+ * pixels with move(t, report): known scale, known clock offset. */
+function guidedRun(move, offsetUs) {
+  const reports = [];
+  let carry = [0, 0];
+  for (let ms = 0; ms < 2000; ms += 1) {
+    /* Speeds from rest to about 6 counts per millisecond. */
+    const speed = 3 + 3 * Math.sin(ms / 140);
+    carry = [carry[0] + speed * Math.cos(ms / 300), carry[1] + speed * Math.sin(ms / 230)];
+    const report = carry.map(Math.trunc);
+    carry = carry.map((value, axis) => value - report[axis]);
+    reports.push([ms * 1000, ...report]);
+  }
+  const pointer = [];
+  let position = [100, 100];
+  let next = 0;
+  for (let tUs = -100000; tUs < 2100000; tUs += 4000) {
+    /* What the device had sent offsetUs later on its clock. */
+    while (next < reports.length && reports[next][0] <= tUs + offsetUs) {
+      position = move(position, reports[next]);
+      next += 1;
+    }
+    pointer.push([tUs, Math.round(position[0]), Math.round(position[1])]);
+  }
+  const fixture = cursorFixture(reports.map(([, x]) => ["motion", 1000, x, 0]), [{ id: "t",
+    activity: "target", intended: true, startUs: 0, endUs: 2000000,
+    target: { x: 0, y: 0, size: 8 }, start: { x: 100, y: 100 },
+    path: { intervalUs: 2000, points: [[0, 0], [1, 0]] }, pointer }]);
+  fixture.truth.pointerAcceleration = "off";
+  const output = reports.map(([tUs, x, y]) => `${D(tUs + 1000, x, 0, 0)}\n${O(tUs + 1000, x, y)}`)
+    .join("\n");
+  return { fixture, output };
+}
+
+test("the screen scale fit recovers a flat scale and flags pointer acceleration", () => {
+  const flat = guidedRun(([x, y], [, rx, ry]) => [x + 1.7 * rx, y + 1.7 * ry], 24000);
+  const fit = fitScreenScale([flat]);
+  assert.equal(fit.usable, true, fit.reason);
+  assert.ok(Math.abs(fit.pxPerCount / 1.7 - 1) < 0.03, `scale ${fit.pxPerCount}`);
+  assert.ok(Math.abs(fit.offsetMs - 24) <= 4, `offset ${fit.offsetMs}`);
+  assert.ok(fit.r2 > 0.99);
+  /* Faster reports move the pointer further per count, as an operating
+   * system's pointer acceleration does. */
+  const accelerated = guidedRun(([x, y], [, rx, ry]) => {
+    const gain = 1 + 0.3 * Math.hypot(rx, ry);
+    return [x + gain * rx, y + gain * ry];
+  }, 24000);
+  const curved = fitScreenScale([accelerated]);
+  assert.equal(curved.usable, false);
+  assert.ok(curved.fastSlowRatio > 1.25, `ratio ${curved.fastSlowRatio}`);
+  assert.match(curved.reason, /pointer acceleration/);
+  /* The user's answer counts even when the mapping looks flat. */
+  flat.fixture.truth.pointerAcceleration = "on";
+  assert.equal(fitScreenScale([flat]).usable, false);
+});
+
+test("ballistic spread is the landing's coefficient of variation, and the gain guard trips", () => {
+  /* Landings at 80, 90, 100 % of the distance: mean 90, sample SD 10, so
+   * a coefficient of variation of 11.11 %; the same landings at a third of
+   * the gain spread the same. */
+  const strokes = (landings) => landings.map((landing) => ({ metrics: {
+    ballisticSpreadPercent: landing, ballisticBiasPercent: landing - 100,
+    homingStepPercent: landing / 10, homingJitterPercent: landing / 5 } }));
+  const recorded = aggregate(strokes([80, 90, 100]));
+  assert.ok(Math.abs(recorded.ballisticSpreadPercent.value - 100 / 9) < 1e-9);
+  assert.ok(Math.abs(recorded.ballisticBiasPercent.value + 10) < 1e-9);
+  const third = aggregate(strokes([80 / 3, 30, 100 / 3]), strokes([80, 90, 100]));
+  assert.ok(Math.abs(third.ballisticSpreadPercent.value - 100 / 9) < 1e-9);
+  /* Bias -70 % against the recorded -10 %: the pixel metrics can't be
+   * trusted, whatever their values. */
+  for (const name of ["ballisticSpreadPercent", "homingStepPercent", "homingJitterPercent"]) {
+    assert.match(third[name].guard, /more than 25 points from the recorded -10 %/);
+  }
+  assert.equal(third.ballisticBiasPercent.guard, undefined);
+  /* Within 25 points, nothing is flagged. */
+  assert.equal(aggregate(strokes([70, 80, 90]), strokes([80, 90, 100]))
+    .ballisticSpreadPercent.guard, undefined);
+  /* Landing behind the start is flagged without a recording to compare. */
+  assert.match(aggregate(strokes([-10, -20])).homingStepPercent.guard, /behind their start/);
+});
+
+test("homing starts where the pointer the user saw came near, on the device's clock", () => {
+  /* The pointer reaches the target at 200 ms on the browser's clock, which
+   * runs 60 ms behind the device's, so homing starts at 260 ms. The output
+   * wobbles back and forth from 200 to 260 ms and moves steadily after. */
+  const reports = [];
+  for (let ms = 100; ms < 600; ms += 4) {
+    const wobble = ms >= 200 && ms < 260;
+    reports.push([ms * 1000, wobble ? (Math.floor((ms - 200) / 16) % 2 ? -3 : 3) : 1]);
+  }
+  const fixture = cursorFixture(reports.map(([tUs]) => ["motion", 4000, 1, 0]),
+    [{ id: "t", activity: "target", intended: true, startUs: 0, endUs: 600000,
+      target: { x: 100, y: 0, size: 10 }, start: { x: 0, y: 0 },
+      path: { intervalUs: 2000, points: Array.from({ length: 301 }, (_, i) =>
+        [i < 100 ? i : 100 + (i - 100) * 0.05, 0]) },
+      pointer: [[0, 0, 0], [199000, 50, 0], [200000, 95, 0], [600000, 100, 0]] }]);
+  fixture.processor.stages = [];
+  const output = reports.map(([tUs, x]) => `${D(tUs, 1, 0, 0)}\n${O(tUs, x, 0)}`).join("\n");
+  const screen = { usable: true, pxPerCount: 1, offsetMs: 60 };
+  const [stroke] = scoreFixture(fixture, output, null, screen);
+  /* From 260 ms the output never turns back. */
+  assert.equal(stroke.metrics.homingReversalsPerS, 0);
+  const [early] = scoreFixture(fixture, output, null, { ...screen, offsetMs: 0 });
+  /* Read from 200 ms instead, the 16 ms bins go +, −, +, − and back to +
+   * at 264 ms: four turns in 0.4 s. */
+  assert.equal(early.metrics.homingReversalsPerS, 10);
+});
+
+test("the first submovement's end holds on sparse frames through the converter's path", async () => {
+  const { captureToFixtures } = await import("./capture-convert.js");
+  const { CAPTURE, captureSettingsHash } = await import("../../web/protocol.js");
+  const stages = [{ strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
+    { strategy: "cursor-quantizer", stableId: "q", fixed: {} }];
+  const profile = { schema: "zmk-pointing-tools/tuning-profile", version: 1, targets: [] };
+  const description = { pipelineId: 0, stableId: "c", stages,
+    settingsHash: captureSettingsHash(profile, ["n", "q"]) };
+  /* A 300 ms minimum-jerk reach to 90 % of the distance, then homing at a
+   * constant 0.2 distances per second, at 684 CPI in 8 ms frames. The
+   * reach's speed falls under a tenth of its peak where
+   * 0.9·30t²(1−t)² = 0.1·0.9·1.875·… solves t(1−t) = 0.0791, at 274.2 ms. */
+  const expectedUs = 300000 * (1 + Math.sqrt(1 - 4 * Math.sqrt(0.1 * 1.875 / 30))) / 2;
+  for (const distanceMm of [2, 3, 5]) {
+    const counts = (distanceMm * 684) / 25.4;
+    const at = (ms) => (ms <= 300 ? 0.9 * counts * (10 * (ms / 300) ** 3 - 15 * (ms / 300) ** 4 +
+      6 * (ms / 300) ** 5) : 0.9 * counts + 0.2 * counts * ((ms - 300) / 1000));
+    let sequence = 0;
+    const records = [{ sequence: sequence++, kind: CAPTURE.RECORD_ENTERED,
+      settingsHash: description.settingsHash },
+    { sequence: sequence++, kind: CAPTURE.RECORD_SOURCE, link: CAPTURE.LINK_USB, sourceId: 1, cpi: 684 }];
+    /* The sensor reports every 8 ms what it counted since, often one
+     * count and none at all as the reach slows. */
+    let sent = 0;
+    for (let us = 8000; us <= 800000; us += 8000) {
+      const step = Math.floor(at(us / 1000)) - sent;
+      if (step > 0) {
+        sent += step;
+        records.push({ sequence: sequence++, kind: CAPTURE.RECORD_FRAME, flags: 0,
+          timeMs: 1000 + us / 1000, timeUs: 0, x: step, y: 0, spanUs: 8000 });
+      }
+    }
+    const firstMs = records[2].timeMs;
+    const { fixtures: [fixture] } = captureToFixtures({ description, records }, profile, {
+      labels: [{ startMs: firstMs, endMs: records.at(-1).timeMs, activity: "cursor", target: { x: 100, y: 0, size: 8 },
+        start: { x: 0, y: 0 } }] });
+    const [stroke] = fixture.truth.strokes;
+    const frameTimes = eventTimesUs(fixture);
+    const phases = trialPhases(stroke, frameTimes);
+    const trueEndUs = expectedUs - (firstMs - 1000) * 1000;
+    assert.ok(Math.abs(phases.ballisticEndUs - trueEndUs) <= 20000,
+      `${distanceMm} mm: ended at ${phases.ballisticEndUs / 1000} ms, expected ${trueEndUs / 1000}`);
+  }
+});
+
+test("transitions average the gain in 12 ms windows and take the largest step", () => {
+  /* A reach that slows steadily over 300 ms, one frame a millisecond:
+   * the peak is at the start, so windows run from 2 ms, and the reach ends
+   * before 300 ms. */
+  const steps = Array.from({ length: 150 }, (_, i) => 10 * (1 - i / 150));
+  const points = [[0, 0]];
+  for (const step of steps) points.push([points.at(-1)[0] + step, 0]);
+  const run = (gainAt) => {
+    const fixture = cursorFixture(Array.from({ length: 300 }, () => ["motion", 1000, 1, 0]),
+      [{ id: "t", activity: "target", intended: true, startUs: 0, endUs: 300000,
+        target: { x: 1000, y: 0, size: 8 }, start: { x: 0, y: 0 },
+        path: { intervalUs: 2000, points } }]);
+    fixture.processor.stages = [];
+    const output = Array.from({ length: 300 }, (_, i) =>
+      D((i + 1) * 1000, 1, 0, 10, gainAt((i + 1) * 1000))).join("\n");
+    return scoreFixture(fixture, output)[0].metrics.transitionStepPercent;
+  };
+  /* A step from 1 to 1.25 on a window boundary (2 + 6·12 = 74 ms) is one
+   * change of 0.25 between windows, over a mean gain between 1 and 1.25.
+   * A root mean square over the windows would read far less. */
+  const step = run((tUs) => (tUs < 74000 ? 1 : 1.25));
+  assert.ok(step > 20 && step < 25, `step ${step}`);
+  /* Frame-to-frame noise of ±0.15 around a flat gain cancels within each
+   * window. Without windows it would read 30 %, worse than the step. */
+  const noise = run((tUs) => (Math.round(tUs / 1000) % 2 ? 1.15 : 0.85));
+  assert.ok(noise < 2, `noise ${noise}`);
 });

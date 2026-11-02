@@ -133,7 +133,7 @@ export class SimulatedCapture {
     const label = encoder.encode(PIPELINE);
     const used = this.queue?.reduce((total, record) => total + STORED[record.kind], 0) ?? 0;
     return bytes([[CAPTURE.SCHEMA_VERSION, this.recording === null ? CAPTURE.NONE : 0],
-      u32(this.dropped), u32(used), u32(BUFFER_SIZE), [1, 0, 1, STAGES.length,
+      u32(this.dropped), u32(used), u32(BUFFER_SIZE), u32(this.nowMs), [1, 0, 1, STAGES.length,
         CAPTURE.FLAG_REPLAYABLE], u32(this.settingsHash()), [label.length], label]);
   }
 

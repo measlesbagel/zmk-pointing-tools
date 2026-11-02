@@ -5,7 +5,7 @@
  * turned on in Stage decisions; they never change detail levels. Every call
  * returns at once, so results are polled. */
 
-import { ACTIVITIES } from "./playground-model.js";
+import { ACTIVITIES, GUIDED_TESTS } from "./playground-model.js";
 import { SIGNAL_KIND, parseStageFrame } from "./calibration-model.js";
 import { TRUTH_SOURCES } from "./recording-model.js";
 
@@ -27,6 +27,7 @@ const LEVELS = ["off", "decisions", "every-frame"];
 const SIGNAL_KINDS = Object.fromEntries(Object.entries(SIGNAL_KIND).map(([name, value]) => [value, name.toLowerCase().replaceAll("_", "-")]));
 const OPEN = new Set(["requested", "accepted", "running"]);
 const PLAYGROUND = ACTIVITIES.filter(({ id }) => id !== PRECISION).map(({ id }) => id);
+const TESTS = Object.keys(GUIDED_TESTS);
 
 const clampInt = (value, fallback, minimum, maximum) =>
   Math.min(Math.max(Math.trunc(Number(value ?? fallback)) || 0, minimum), maximum);
@@ -508,7 +509,7 @@ export function createExperimentTools(context, session) {
   return [
     {
       name: "request_run",
-      description: `Ask the user to do a labelled run: a Small-target precision test ("precision"), another playground activity ("playground", with activity), or a gain calibration ("calibration"). Returns at once with a run id; poll get_run_result. The user performs the run and may decline it. One run can be open at a time, so for "run A, then run B" apply snapshot A, request run A and wait for it, then do the same for B, and compare_runs. Each result records the values in effect when the run started. While the run is running, your preview, reset and snapshot changes are refused. cancel_run withdraws a request.`,
+      description: `Ask the user to do a labelled run: a Small-target precision test ("precision"), another playground activity ("playground", with activity), or a gain calibration ("calibration"). Returns at once with a run id; poll get_run_result. Guided tests (${TESTS.join(", ")}) also record the matching pipeline when the keyboard supports capture, and the result's recording names it for score_settings. The user performs the run and may decline it. One run can be open at a time, so for "run A, then run B" apply snapshot A, request run A and wait for it, then do the same for B, and compare_runs. Each result records the values in effect when the run started. While the run is running, your preview, reset and snapshot changes are refused. cancel_run withdraws a request.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -652,20 +653,32 @@ export function createExperimentTools(context, session) {
     },
     {
       name: "start_recording",
-      description: `Ask the user to record real motion from one of the keyboard's pipelines (firmware input capture), for score_settings to replay later. Returns at once with a run id; poll get_run_result, whose result names the recording, or stop it with stop_recording. The user starts the recording in the tuner's Record and score panel and may decline. One recording request can be open at a time, next to one run, so you can record during a precision run. Your preview changes are refused while it records, so every trace replays with known settings. Recordings hold the user's typing rhythm and stay in their browser.`,
+      description: `Ask the user to record real motion for score_settings to replay later. With test, it asks for that guided playground test (${TESTS.join(", ")}), which records the matching pipeline with a label per trial: the target for cursor tests, the intended axis for scroll and text. That is what score_settings scores by default. Without test, it asks for a free recording of one pipeline, which has no targets: its truth is a heuristic and score_settings scores it only with free. Returns at once with a run id; poll get_run_result, whose result names the recording. A free recording stops with stop_recording; a guided test ends when the user finishes it. The user may decline. Your preview changes are refused while it records, so every trace replays with known settings. Recordings hold the user's typing rhythm and stay in their browser.`,
       inputSchema: {
         type: "object",
         properties: {
           label: { type: "string", minLength: 1, maxLength: 40, description: "Shown to the user and saved with the recording. Quotation marks are removed." },
-          pipeline: { type: "string", description: "Pipeline stable id from list_recordings; default: whichever the user picks." },
+          test: { type: "string", enum: TESTS, description: "A guided test to record. Default: a free recording." },
+          acquire: { type: "string", enum: ["hover", "click"], description: "cursor-precision only: acquire targets by holding still or by clicking." },
+          pipeline: { type: "string", description: "Free recordings only: pipeline stable id from list_recordings; default: whichever the user picks." },
           note: { type: "string", maxLength: 300, description: "What to do while recording, such as \"use the computer normally for a minute\"." },
         },
         required: ["label"],
       },
       annotations: { readOnlyHint: false, consequentialHint: false },
-      execute: async ({ label, pipeline, note } = {}) => {
+      execute: async ({ label, test, acquire, pipeline, note } = {}) => {
         const recorder = context.recorder();
         if ((await recorder.checkSupport()) === false) throw new Error("This keyboard can't record motion: its firmware has no input capture.");
+        if (test !== undefined) {
+          if (!TESTS.includes(test)) throw new Error(`test is one of ${TESTS.join(", ")}.`);
+          if (pipeline !== undefined) throw new Error("A guided test records the pipeline that matches it; pipeline is for free recordings.");
+          if (acquire !== undefined && (test !== PRECISION || !["hover", "click"].includes(acquire))) {
+            throw new Error("acquire is hover or click, for cursor-precision only.");
+          }
+          const run = runs.request({ kind: test === PRECISION ? "precision" : "playground", activity: test,
+            label: cleanLabel(label, "label"), acquire: acquire ?? null, note: text(note, "note", 300, false) || null });
+          return json({ summary: `Requested ${describeRun(run)}, recorded for scoring`, runId: run.id, status: run.status });
+        }
         if (pipeline !== undefined && !recorder.pipelines().some((candidate) => candidate.label === pipeline)) {
           throw new Error(`No pipeline "${pipeline}". list_recordings lists them.`);
         }
@@ -713,7 +726,7 @@ export function createExperimentTools(context, session) {
     },
     {
       name: "score_settings",
-      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each benchmark metric for both, the change, whether it's better, and where the metric's ground truth comes from. Nothing is sent to the keyboard. The converter derives ground truth where no label gives it; each metric reports how many of its strokes were derived or came from the typing heuristic. Recordings without any truth fail with an error rather than scoring nothing, and a metric missing or scored over different strokes with the candidate counts as worse. The benchmark doesn't judge curve shape or gain: confirm such changes on the keyboard with a preview and an A/B run.",
+      description: "Score settings offline on saved recordings: replays them through the firmware's own stage code with the current values and with a candidate (a snapshot by name, or values keyed by target stable id and parameter key), and returns each metric for both, the change, whether it's better, and where its ground truth comes from. Nothing is sent to the keyboard. Guided recordings (start_recording with test) score against their labels: cursor trials by phase (ballistic landing spread and bias, homing step size, jitter, reversals and stair-stepping, and how smoothly the gain falls into homing), scroll and text against the intended axis (sideways leak, wrong-axis output, axis lock, its delay and switches, and the delay before intended output). Pixel metrics need the screen scale fitted from the recording (screen); without a usable one only the scale-free metrics score. Spread is scale-free, so a uniform gain change can't improve it, and a candidate whose ballistic bias moves more than 25 points from the recorded bias has its pixel metrics noted and counted as worse: the user would have aimed differently with that gain. Likewise, a candidate whose homing output is outside 1/1.15–1.15× the recorded settings' in total, or 1/1.3–1.3× in any one trial (trials with little homing output pooled), has homing step and jitter noted and counted as worse, which catches gain changes at slow speeds only. Guided scores judge consistency and smoothness near the recorded gain, not which gain is best. Replay can't judge total time to target, corrections, misses or throughput: the user corrects what they see, so those stay with live runs. Free recordings have no targets, so they score only with free: true, on truth the converter guesses. Recordings without any truth fail with an error, and a metric missing or scored over different strokes with the candidate counts as worse. Shortlist with it, then confirm on the keyboard with a preview and a run.",
       inputSchema: {
         type: "object",
         properties: {
@@ -721,11 +734,12 @@ export function createExperimentTools(context, session) {
           snapshot: { type: "string" },
           values: { type: "object", description: "{ \"<target stable id>\": { \"<parameter key>\": value } }, on top of the current values.",
             additionalProperties: { type: "object", additionalProperties: { type: "integer" } } },
+          free: { type: "boolean", description: "Also score free recordings, on heuristic truth. Default: guided recordings only." },
         },
         required: ["recordings"],
       },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
-      execute: async ({ recordings, snapshot, values } = {}) => {
+      execute: async ({ recordings, snapshot, values, free } = {}) => {
         if (!Array.isArray(recordings) || !recordings.length) throw new Error("recordings needs at least one recording id.");
         const ids = [...new Set(recordings.map(String))];
         if ((snapshot === undefined) === (values === undefined)) throw new Error("Give either snapshot or values.");
@@ -733,12 +747,14 @@ export function createExperimentTools(context, session) {
         for (const id of ids) recorder.find(id);
         const profile = session.candidateProfile({ snapshot: snapshot === undefined ? undefined : String(snapshot), values });
         const name = snapshot !== undefined ? `snapshot ${snapshot}` : "candidate values";
-        const result = await recorder.score(ids, [{ name, profile }]);
-        const metrics = result.rows.map(({ metric, unit, higherIsBetter, truth, values: scored, change, better, note }) => ({
-          metric, unit, higherIsBetter,
+        const result = await recorder.score(ids, [{ name, profile }], { free: free === true });
+        const metrics = result.rows.map(({ metric, unit, higherIsBetter, ranked, truth, values: scored, change, better, note }) => ({
+          metric, unit, higherIsBetter, ...(ranked ? {} : { ranked: false }),
           current: scored[0], candidate: scored[1], change: change[1], better: better[1],
           ...(note[1] ? { note: note[1] === "missing" ? "not scored with the candidate: counts as worse"
-            : `${note[1]}: scored over different strokes, counts as worse` } : {}),
+            : note[1].startsWith("strokes ") ? `${note[1]}: scored over different strokes, counts as worse`
+              : `${note[1]}: counts as worse` } : {}),
+          ...(note[0] ? { currentNote: note[0] } : {}),
           truthStrokes: truth,
         }));
         const wins = metrics.filter(({ better: b }) => b === true).length;
@@ -746,7 +762,7 @@ export function createExperimentTools(context, session) {
         return json({
           summary: `Scored ${name} on ${result.traces} traces: ${wins} metrics better, ${losses} worse`,
           recordings: result.recordings, traces: result.traces, strokes: result.strokes,
-          metrics, truthSources: TRUTH_SOURCES,
+          metrics, truthSources: TRUTH_SOURCES, screen: result.screen,
           warnings: result.warnings.slice(0, WARNING_LIMIT),
           ...(result.warnings.length > WARNING_LIMIT ? { moreWarnings: result.warnings.length - WARNING_LIMIT } : {}),
           caveat: result.caveat,

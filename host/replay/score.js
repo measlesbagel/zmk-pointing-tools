@@ -9,20 +9,44 @@
  */
 
 import { validateFixture, validateProfile } from "./fixture.js";
-import { aggregate, scoreFixture } from "./quality.js";
+import { aggregate, fitScreenScale, scoreFixture } from "./quality.js";
 import { runFixtureWasm } from "./wasm.js";
 
 /* Score fixtures replayed by run(fixture, profile), which returns the raw
  * runner output. Returns one benchmark set: the fixture count, the scores
- * over every stroke, and each fixture's scores and strokes. */
+ * over every stroke, and each fixture's scores and strokes. A guided cursor
+ * recording also replays with its recorded settings, whatever the profile,
+ * to fit one screen scale over all its traces (fitScreenScale), which each
+ * of their results carries. */
 export function scoreFixtures(fixtures, run, profile = null) {
-  const fixtureResults = fixtures.map((fixture) => {
-    const strokes = scoreFixture(fixture, run(fixture, profile), profile);
-    return { id: fixture.id, synthetic: fixture.metadata?.synthetic === true,
-      scores: aggregate(strokes), strokes };
+  const outputs = fixtures.map((fixture) => run(fixture, profile));
+  const recordings = new Map();
+  fixtures.forEach((fixture, index) => {
+    if (!fixture.truth?.strokes?.some((stroke) => stroke.pointer)) return;
+    const key = fixture.metadata?.capture?.recording ?? fixture.id;
+    if (!recordings.has(key)) recordings.set(key, []);
+    recordings.get(key).push({ fixture,
+      output: profile === null ? outputs[index] : run(fixture, null) });
   });
+  const screens = new Map([...recordings].map(([key, traces]) => [key, fitScreenScale(traces)]));
+  const recordedOutputs = new Map([...recordings.values()].flat()
+    .map(({ fixture, output }) => [fixture, output]));
+  const scored = fixtures.map((fixture, index) => {
+    const screen = screens.get(fixture.metadata?.capture?.recording ?? fixture.id) ?? null;
+    const strokes = scoreFixture(fixture, outputs[index], profile, screen);
+    /* The same trials with the recorded settings arm the gain guard. */
+    const recorded = !recordedOutputs.has(fixture) ? null : profile === null ? strokes
+      : scoreFixture(fixture, recordedOutputs.get(fixture), null, screen);
+    return { fixture, screen, strokes, recorded };
+  });
+  const fixtureResults = scored.map(({ fixture, screen, strokes, recorded }) => ({
+    id: fixture.id, synthetic: fixture.metadata?.synthetic === true,
+    scores: aggregate(strokes, recorded), strokes, ...(screen ? { screen } : {}) }));
+  const recordedAll = scored.some(({ recorded }) => recorded)
+    ? scored.flatMap(({ recorded }) => recorded ?? []) : null;
   return { fixtures: fixtureResults.length,
-    scores: aggregate(fixtureResults.flatMap((result) => result.strokes)), fixtureResults };
+    scores: aggregate(fixtureResults.flatMap((result) => result.strokes), recordedAll),
+    fixtureResults };
 }
 
 /* Score fixture v1 or v2 traces, such as tuner recordings, through the
@@ -39,6 +63,6 @@ export function scoreTraces(traces, profile, runners) {
   const fixtures = traces.map((trace, index) =>
     validateFixture(trace, `trace ${trace?.id ?? index}`));
   if (override !== null) validateProfile(override);
-  return scoreFixtures(fixtures, (fixture) => runFixtureWasm(fixture, runners, override),
+  return scoreFixtures(fixtures, (fixture, replayed) => runFixtureWasm(fixture, runners, replayed),
     override);
 }

@@ -18,8 +18,10 @@
  * and pipeline descriptions are the payloads of the protocol messages.
  */
 
-/* 2: compact delta frames and the burst buffer fill in capture status. */
-#define ZPT_CAPTURE_SCHEMA_VERSION 2
+/* 2: compact delta frames and the burst buffer fill in capture status.
+ * 3: device uptime in capture status, so a host can line its own clock up
+ * with record times. */
+#define ZPT_CAPTURE_SCHEMA_VERSION 3
 /* A batch starts with the first record's sequence (u32) and a count (u8). */
 #define ZPT_CAPTURE_BATCH_HEADER_SIZE 5
 /* Two notifications at the 65-byte ATT MTU ZMK negotiates, less the frame

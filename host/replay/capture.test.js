@@ -255,6 +255,104 @@ test("a scroll pipeline converts, with labelled, typing, and unlabelled truth", 
     { labels: [{ startMs: 1, endMs: 1, activity: "scroll", axis: "vertical" }] }), /label 0/);
 });
 
+test("cursor trial labels carry their target and the browser's pointer path", () => {
+  sequence = 0;
+  const records = [entered(), source()];
+  for (let i = 0; i < 40; i += 1) records.push(frame(3000 + i * 5, 0, 2));
+  const labels = [
+    { startMs: 3000, endMs: 3100, activity: "cursor", target: { x: 200, y: 50, size: 16 },
+      start: { x: 20, y: 50 }, test: "cursor-precision", trial: 0 },
+    { startMs: 3100, endMs: 3190, activity: "cursor", target: { x: 300, y: 80, size: 8 },
+      start: { x: 200, y: 50 }, test: "cursor-precision", trial: 1 }];
+  /* Samples from 2700 to 3500 ms; each label keeps those within 150 ms. */
+  const pointer = { acceleration: "off",
+    samples: Array.from({ length: 81 }, (_, i) => [2700 + i * 10, i, 50]) };
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile,
+    { labels, pointer });
+  assert.deepEqual(warnings, []);
+  const { truth } = fixtures[0];
+  assert.equal(truth.pointerAcceleration, "off");
+  assert.equal(truth.derived, undefined);
+  assert.deepEqual(truth.strokes.map(({ source: from, activity, target, start, trial }) =>
+    [from, activity, target.size, start.x, trial]),
+  [["label", "target", 16, 20, 0], ["label", "target", 8, 200, 1]]);
+  /* Times move to the trace's microseconds from 3000 ms. */
+  assert.deepEqual(truth.strokes[0].pointer[0], [-150000, 15, 50]);
+  assert.deepEqual(truth.strokes[0].pointer.at(-1), [240000, 54, 50]);
+  /* Labels win over derived strokes here too. */
+  const derived = captureToFixtures({ description, records }, profile,
+    { labels, pointer, truth: "derive" }).fixtures[0].truth;
+  assert.ok(derived.strokes.every((stroke) => stroke.source === "label"));
+  assert.throws(() => captureToFixtures({ description, records }, profile,
+    { labels: [{ ...labels[0], target: { x: 1, y: 2 } }] }), /target \{ x, y, size \}/);
+  assert.throws(() => captureToFixtures({ description, records }, profile,
+    { labels, pointer: { samples: [[1, 2]], acceleration: "off" } }), /options.pointer/);
+});
+
+test("a cursor trial the trace doesn't hold whole is dropped", () => {
+  const trial = (startMs, endMs, index) => ({ startMs, endMs, activity: "cursor",
+    target: { x: 100, y: 0, size: 8 }, start: { x: 0, y: 0 }, trial: index });
+  /* The first trace starts the recording, and the pointer was still at
+   * the trial's start at its first frame, so the trial began at rest
+   * before it and lost nothing: it is kept. The second trace follows
+   * dropped records: a trial reaching back before it, or one running past
+   * the first trace's end, would compare part of a reach with the whole
+   * distance. */
+  sequence = 0;
+  const records = [entered(), source()];
+  for (let i = 0; i < 10; i += 1) records.push(frame(1000 + i * 5, 0, 1));
+  sequence += 4;
+  records.push(entered(), source());
+  for (let i = 0; i < 10; i += 1) records.push(frame(2000 + i * 5, 0, 1));
+  const labels = [trial(900, 1040, 0), trial(1040, 1100, 1), trial(1950, 2040, 2)];
+  const pointer = (moved) => ({ acceleration: "off",
+    samples: [[880, 0, 0], [1000, moved, 0], [1100, 100, 0], [2100, 100, 0]] });
+  const { fixtures, warnings } = captureToFixtures({ description, records }, profile,
+    { labels, pointer: pointer(3) });
+  assert.deepEqual(fixtures.map((fixture) => fixture.truth?.strokes.map((stroke) => stroke.trial)),
+    [[0], undefined]);
+  assert.deepEqual(warnings.filter((warning) => /dropped:/.test(warning)).map((warning) =>
+    warning.match(/trial \d/)[0]), ["trial 1", "trial 2"]);
+  /* The user kept still until after the first frame: the only sample
+   * before it is the one the playground records as the trial starts, and
+   * the pointer is far along 12 ms later. It was still at rest. */
+  const still = { acceleration: "off", samples: [[900, 0, 0], [1012, 60, 0], [1100, 100, 0]] };
+  assert.deepEqual(captureToFixtures({ description, records }, profile,
+    { labels, pointer: still }).fixtures[0].truth?.strokes.map((stroke) => stroke.trial), [0]);
+  /* Capture started mid-reach: the pointer was already 40 px along, more
+   * than the 8 px target, when the first frame came, so trial 0 is cut
+   * and dropped too; and without a pointer path nothing shows it began at
+   * rest. */
+  for (const options of [{ labels, pointer: pointer(40) }, { labels }]) {
+    const cut = captureToFixtures({ description, records }, profile, options);
+    assert.equal(cut.fixtures[0].truth, undefined);
+    assert.ok(cut.warnings.some((warning) => /label 0 \(trial 0\) is dropped/.test(warning)));
+  }
+});
+
+test("a scroll label splits into a stroke per gesture", () => {
+  const scrollStages = [{ strategy: "resolution-normalize-mm", stableId: "n", fixed: {} },
+    { strategy: "scroll-batcher", stableId: "b", fixed: {} }];
+  const scrollProfile = { schema: "zmk-pointing-tools/tuning-profile", version: 1, targets: [
+    { stableId: "b", parameters: [{ key: "steps-per-meter", value: 3000 },
+      { key: "report-interval", value: 20 }] }] };
+  const scroll = { pipelineId: 1, stableId: "s", stages: scrollStages,
+    settingsHash: captureSettingsHash(scrollProfile, ["n", "b"]) };
+  /* Two flicks of the finger 150 ms apart, then a third 60 ms after. */
+  sequence = 0;
+  const records = [entered(scroll.settingsHash), source(800, CAPTURE.LINK_NONE)];
+  for (const startMs of [5000, 5200, 5290]) {
+    for (let i = 0; i < 5; i += 1) records.push(frame(startMs + i * 10, 0, 1));
+  }
+  const { fixtures: [fixture] } = captureToFixtures({ description: scroll, records }, scrollProfile,
+    { labels: [{ startMs: 4990, endMs: 5400, activity: "scroll", axis: "vertical" }] });
+  /* The first starts with the trace (the label began before it), each
+   * later one at its first frame; the last ends after its last frame, at
+   * 5330 ms. */
+  assert.deepEqual(fixture.truth.strokes.map(({ startUs, endUs, axis }) => [startUs, endUs, axis]),
+    [[0, 200000, "vertical"], [200000, 330001, "vertical"]]);
+});
+
 test("parses capture batches with consecutive sequences", () => {
   const payload = Uint8Array.of(7, 0, 0, 0, 3,
     CAPTURE.RECORD_SOURCE, 1, 2, 0, 0x20, 0x03,
