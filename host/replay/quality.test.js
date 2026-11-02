@@ -310,3 +310,31 @@ test("the first submovement's end holds on sparse frames through the converter's
       `${distanceMm} mm: ended at ${phases.ballisticEndUs / 1000} ms, expected ${trueEndUs / 1000}`);
   }
 });
+
+test("transitions average the gain in 12 ms windows and take the largest step", () => {
+  /* A reach that slows steadily over 300 ms, one frame a millisecond:
+   * the peak is at the start, so windows run from 2 ms, and the reach ends
+   * before 300 ms. */
+  const steps = Array.from({ length: 150 }, (_, i) => 10 * (1 - i / 150));
+  const points = [[0, 0]];
+  for (const step of steps) points.push([points.at(-1)[0] + step, 0]);
+  const run = (gainAt) => {
+    const fixture = cursorFixture(Array.from({ length: 300 }, () => ["motion", 1000, 1, 0]),
+      [{ id: "t", activity: "target", intended: true, startUs: 0, endUs: 300000,
+        target: { x: 1000, y: 0, size: 8 }, start: { x: 0, y: 0 },
+        path: { intervalUs: 2000, points } }]);
+    fixture.processor.stages = [];
+    const output = Array.from({ length: 300 }, (_, i) =>
+      D((i + 1) * 1000, 1, 0, 10, gainAt((i + 1) * 1000))).join("\n");
+    return scoreFixture(fixture, output)[0].metrics.transitionStepPercent;
+  };
+  /* A step from 1 to 1.25 on a window boundary (2 + 6·12 = 74 ms) is one
+   * change of 0.25 between windows, over a mean gain between 1 and 1.25.
+   * A root mean square over the windows would read far less. */
+  const step = run((tUs) => (tUs < 74000 ? 1 : 1.25));
+  assert.ok(step > 20 && step < 25, `step ${step}`);
+  /* Frame-to-frame noise of ±0.15 around a flat gain cancels within each
+   * window. Without windows it would read 30 %, worse than the step. */
+  const noise = run((tUs) => (Math.round(tUs / 1000) % 2 ? 1.15 : 0.85));
+  assert.ok(noise < 2, `noise ${noise}`);
+});
