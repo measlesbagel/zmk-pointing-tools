@@ -66,7 +66,8 @@ and is part of the run's result.
   when the trial started, scroll tests with their axis (`both` for two-axis),
   and the text test with two stretches: straight down to the TARGET line
   (vertical), then along it (horizontal). A trial runs from the previous
-  acquisition to this one.
+  acquisition to this one. The first cursor or precision target appears only
+  once the recording has started, so the first trial isn't cut off.
 - **Clocks.** Labels are written in the page's clock and moved to the
   keyboard's when the recording stops: every capture status carries the
   device's uptime, and the status with the shortest round trip during the

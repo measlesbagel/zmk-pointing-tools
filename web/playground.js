@@ -165,6 +165,9 @@ export class PointingPlayground {
     this.run = createRun(this.activity.value, context);
     this.runStartedPerf = performance.now();
     this.running = true;
+    /* Cursor tests show their first target once the recording runs, so the
+     * first trial's reach is recorded whole. */
+    this.captureReady = new Promise((resolve) => { this.markCaptureReady = resolve; });
     document.body.classList.add("playground-running");
     this.renderActivity();
     this.startButton.disabled = true;
@@ -188,7 +191,18 @@ export class PointingPlayground {
       this.setCapture(capture?.recording
         ? `Recording pipeline ${capture.pipeline} for scoring. It's saved with this run.`
         : `Not recording for scoring: ${capture?.reason ?? "unavailable"}.`);
-    });
+    }, () => {}).finally(() => this.markCaptureReady());
+  }
+
+  /* Runs fn now outside a run, or once the run's recording has started
+   * (or failed to), if the run is still going. */
+  whenCaptureReady(fn) {
+    if (!this.running) {
+      fn();
+      return;
+    }
+    const run = this.run;
+    this.captureReady.then(() => { if (this.run === run && this.running) fn(); });
   }
 
   /* The open stretch of a scroll or text test ends now. */
@@ -440,7 +454,10 @@ export class PointingPlayground {
       });
       area.append(target);
     };
-    placeTarget();
+    this.whenCaptureReady(() => {
+      trialStart = { perf: performance.now(), point: undefined };
+      placeTarget();
+    });
     this.listen(area, "click", () => {
       if (this.running) recordClick(this.run, false);
       this.renderMetrics();
@@ -493,6 +510,12 @@ export class PointingPlayground {
       marker.classList.remove("inside");
     };
     show();
+    let ready = false;
+    marker.hidden = Boolean(this.running);
+    this.whenCaptureReady(() => {
+      marker.hidden = false;
+      ready = true;
+    });
     if (this.run && this.running) {
       this.run.precision = {
         label: this.label.value.trim() || `Run ${loadPrecisionHistory().length + 1}`,
@@ -532,7 +555,7 @@ export class PointingPlayground {
     };
 
     this.listen(area, "pointermove", (event) => {
-      if (!this.running || index >= trials.length) return;
+      if (!this.running || !ready || index >= trials.length) return;
       for (const sample of event.getCoalescedEvents?.() ?? [event]) {
         const position = point(sample);
         this.onPointer(sample.timeStamp, position.x, position.y);
@@ -549,7 +572,7 @@ export class PointingPlayground {
       }
     });
     this.listen(area, "click", (event) => {
-      if (!this.running || hover || index >= trials.length) return;
+      if (!this.running || !ready || hover || index >= trials.length) return;
       const position = point(event);
       observePrecisionPointer(state, position, event.timeStamp);
       if (state.inside) {

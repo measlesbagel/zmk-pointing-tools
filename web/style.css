@@ -103,6 +103,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .playground-precision-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); outline: 1px dashed #202731; }
 .playground-precision-target { position: absolute; display: grid; place-items: center; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1px #07120e, 0 0 0 3px var(--warning); color: #07120e; font-size: 9px; font-weight: 800; transform: translate(-50%, -50%); pointer-events: none; }
 .playground-precision-target.inside { background: var(--warning); }
+.playground-precision-target[hidden] { display: none; }
 .playground-results { margin-top: 10px; overflow-x: auto; }
 .playground-results table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .playground-results th, .playground-results td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
