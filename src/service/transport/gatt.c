@@ -169,8 +169,6 @@ static void zpt_gatt_sent(struct bt_conn *conn, void *user_data) {
     ARG_UNUSED(conn);
     ARG_UNUSED(user_data);
     k_sem_give(&zpt_gatt_credits);
-    /* A capture batch the link had no room for is waiting to retry. */
-    zpt_host_protocol_wake();
 }
 
 /* Copies bytes [offset, offset + length) of header followed by payload. */
@@ -238,15 +236,11 @@ static int zpt_gatt_send(const uint8_t *header, size_t header_length, const uint
     return ret;
 }
 
-/* A droppable frame needs at least one free credit. */
-static bool zpt_gatt_has_room(void) { return k_sem_count_get(&zpt_gatt_credits) > 0U; }
-
 const struct zpt_host_transport zpt_gatt_transport = {
     .name = "bluetooth",
     .rx = &zpt_gatt_rx_ring,
     .rx_reset = &zpt_gatt_rx_reset,
     .send = zpt_gatt_send,
-    .has_room = zpt_gatt_has_room,
 };
 
 static void zpt_gatt_disconnected(struct bt_conn *conn, uint8_t reason) {

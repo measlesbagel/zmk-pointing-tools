@@ -41,15 +41,9 @@ git diff -- host/tests/fixtures
 Never update expectations only to make CI pass. The metrics are the review surface for behavior
 changes.
 
-To score whether a change is better rather than only whether it changed, use the trace benchmark
-in [`trace-benchmark.md`](trace-benchmark.md). It also defines fixture format version 2.
-
 ## Fixture format
 
-Regression fixtures use `zmk-pointing-tools/trace-fixture` version 1, described here. Version 2
-adds microsecond timing, sensor sample spans, the source, the full cursor pipeline, and ground
-truth; see [`trace-benchmark.md`](trace-benchmark.md#fixture-format-v2). Both versions replay
-through the same runners and regression checks. Each version 1 fixture records:
+Fixtures use `zmk-pointing-tools/trace-fixture` version 1. Each fixture records:
 
 - an ID and human description;
 - device, CPI, nominal cadence, mode, and provenance metadata;
@@ -70,26 +64,8 @@ Supported pipeline kinds are currently:
 - `composed-text`, backed by resolution normalization, the shared
   axis-intent estimator, the axis-constraint, and the text-navigation
   threshold mapper;
-- `cursor-pipeline`, backed by any ordered list of the cursor stages:
-  orientation, resolution normalization, the coherent-displacement gate, cursor
-  acceleration, the cursor transfer, the sub-pixel cursor quantizer, and the
-  report coalescer. Version 1 fixtures run normalization, transfer, and
-  quantizer; version 2 fixtures list their stages and settings;
-- `scroll-pipeline` and `text-pipeline` (version 2 only), recorded scroll and
-  text-navigation pipelines: an ordered list of orientation, resolution
-  normalization, the motion gate, `axis-intent`, `axis-constraint`, and a last
-  `scroll-batcher` or `text-nav` stage, with their settings, as firmware input
-  capture describes them (`policy` and `suppress-after-keypress-ms` beside the
-  tuning keys). Unlike the composed kinds, they replay with microsecond event
-  times, recorded flushes, and late events (#123), and `--profile` applies to
-  them by stage stable id.
-
-`cursor-pipeline`, `scroll-pipeline`, and `text-pipeline` all replay through
-`zpt_cursor_pipeline_replay`, the stage-chain runner; it tells them apart by the
-kind of signal the last stage sends. Its scroll and text output is one
-`D <t_ms> <x> <y> <intent> <suppressed> <t_us>` line per frame, then
-`O <t_ms> <x> <y> <t_us>` per scroll report or `O <t_ms> <direction> <t_us>` per
-text step. The composed kinds and their fixtures are unchanged.
+- `cursor-pipeline`, backed by resolution normalization, the cursor transfer,
+  and the sub-pixel cursor quantizer.
 
 Reports include input/output frame counts, signed and absolute distance, cadence, direction
 changes, HID clipping, intent occupancy/transitions, idle resets, and suppressed frames as

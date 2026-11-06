@@ -314,9 +314,6 @@ int zpt_pipeline_activate(struct zpt_pipeline *pipeline, enum zpt_reset_reason r
         }
     }
     pipeline->active = true;
-    if (pipeline->observer.lifecycle != NULL) {
-        pipeline->observer.lifecycle(pipeline, true, pipeline->observer.user_data);
-    }
     return 0;
 }
 
@@ -329,12 +326,6 @@ static struct zpt_pipeline_operation begin_operation(struct zpt_pipeline *pipeli
         .now_ms = now_ms,
         .remaining_dispatches = pipeline->dispatch_budget,
     };
-}
-
-static void observed_flush_done(const struct zpt_pipeline *pipeline) {
-    if (pipeline->observer.flush_done != NULL) {
-        pipeline->observer.flush_done(pipeline, pipeline->observer.user_data);
-    }
 }
 
 int zpt_pipeline_push(struct zpt_pipeline *pipeline, const struct zpt_signal *signal,
@@ -350,16 +341,9 @@ int zpt_pipeline_push(struct zpt_pipeline *pipeline, const struct zpt_signal *si
         return -EPROTOTYPE;
     }
 
-    if (pipeline->observer.input != NULL) {
-        pipeline->observer.input(pipeline, signal, pipeline->observer.user_data);
-    }
     struct zpt_pipeline_operation operation =
         begin_operation(pipeline, signal->metadata.observed_at_ms, result);
-    const int ret = drain(&operation, dispatch_at(&operation, 0U, signal));
-    if (pipeline->observer.input_done != NULL) {
-        pipeline->observer.input_done(pipeline, pipeline->observer.user_data);
-    }
-    return ret;
+    return drain(&operation, dispatch_at(&operation, 0U, signal));
 }
 
 int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
@@ -373,16 +357,11 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
     }
 
     struct zpt_pipeline_operation operation = begin_operation(pipeline, now_ms, result);
-    bool observed = false;
     for (size_t index = 0; index < pipeline->stage_count; index++) {
         struct zpt_stage *stage = pipeline->stages[index];
         if (!stage->deadline_pending || !time_reached(now_ms, stage->deadline_ms)) {
             continue;
         }
-        if (!observed && pipeline->observer.flush != NULL) {
-            pipeline->observer.flush(pipeline, now_ms, pipeline->observer.user_data);
-        }
-        observed = true;
 
         stage->deadline_pending = false;
         struct zpt_stage_context context = {
@@ -391,12 +370,8 @@ int zpt_pipeline_flush(struct zpt_pipeline *pipeline, uint32_t now_ms,
         };
         int ret = drain(&operation, stage->api->flush(stage, now_ms, &context));
         if (ret < 0) {
-            observed_flush_done(pipeline);
             return ret;
         }
-    }
-    if (observed) {
-        observed_flush_done(pipeline);
     }
     return 0;
 }
@@ -465,8 +440,5 @@ int zpt_pipeline_deactivate(struct zpt_pipeline *pipeline, uint32_t now_ms,
 
     pipeline->active = false;
     zpt_pipeline_reset(pipeline, reason);
-    if (pipeline->observer.lifecycle != NULL) {
-        pipeline->observer.lifecycle(pipeline, false, pipeline->observer.user_data);
-    }
     return first_error;
 }

@@ -1,7 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 
-import { durationMs } from "./fixture.js";
-
 const INTENTS = ["undecided", "free", "horizontal", "vertical"];
 
 function axisMetrics(outputs, index) {
@@ -29,7 +27,7 @@ function outputCadence(outputs) {
   };
 }
 
-export function parseLines(output, fixture, decisionLength, outputLength) {
+function parseLines(output, fixture, decisionLength, outputLength) {
   const decisions = [];
   const outputs = [];
   for (const line of output.trim().split("\n")) {
@@ -53,7 +51,7 @@ export function parseScrollMetrics(output, fixture) {
   }
   return {
     inputFrames: decisions.length,
-    durationMs: durationMs(fixture),
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),
@@ -75,7 +73,7 @@ export function parseTextMetrics(output, fixture) {
   steps.total = outputs.length;
   return {
     inputFrames: decisions.length,
-    durationMs: durationMs(fixture),
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     steps,
@@ -85,47 +83,11 @@ export function parseTextMetrics(output, fixture) {
   };
 }
 
-/* Runner output line lengths of a scroll or text stage chain: decisions
- * (t_ms, x, y, intent, suppressed, t_us), then reports. */
-export const chainLineLengths = (fixture) =>
-  [6, fixture.processor.kind === "text-pipeline" ? 3 : 4];
-
-/* Metrics of a recorded scroll or text pipeline from the chain runner. */
-export function parseChainMetrics(output, fixture) {
-  const { decisions, outputs } = parseLines(output, fixture, ...chainLineLengths(fixture));
-  const intents = decisions.filter((decision) => decision[3] >= 0).map((decision) => decision[3]);
-  const intentFrames = Object.fromEntries(INTENTS.map((intent) => [intent, 0]));
-  for (const intent of intents) intentFrames[INTENTS[intent]] += 1;
-  const metrics = {
-    inputFrames: decisions.length,
-    durationMs: durationMs(fixture),
-    outputFrames: outputs.length,
-    outputCadence: outputCadence(outputs),
-  };
-  if (fixture.processor.kind === "text-pipeline") {
-    const stepNames = ["left", "right", "up", "down"];
-    const steps = Object.fromEntries(stepNames.map((name) => [name, 0]));
-    for (const emitted of outputs) steps[stepNames[emitted[1]]] += 1;
-    steps.total = outputs.length;
-    metrics.steps = steps;
-  } else {
-    metrics.horizontal = axisMetrics(outputs, 1);
-    metrics.vertical = axisMetrics(outputs, 2);
-  }
-  return {
-    ...metrics,
-    intentFrames,
-    intentTransitions: intents.slice(1).filter((intent, index) => intent !== intents[index])
-      .length,
-    suppressedFrames: decisions.filter((decision) => decision[4] !== 0).length,
-  };
-}
-
 export function parseCursorMetrics(output, fixture) {
-  const { decisions, outputs } = parseLines(output, fixture, 9, 4);
+  const { decisions, outputs } = parseLines(output, fixture, 6, 3);
   return {
     inputFrames: decisions.length,
-    durationMs: durationMs(fixture),
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),
@@ -141,7 +103,7 @@ export function parseNoiseFilterMetrics(output, fixture) {
   for (const decision of decisions) phaseFrames[phaseNames[decision[1]]] += 1;
   return {
     inputFrames: decisions.length,
-    durationMs: durationMs(fixture),
+    durationMs: fixture.events.reduce((total, event) => total + event[1], 0),
     outputFrames: outputs.length,
     outputCadence: outputCadence(outputs),
     horizontal: axisMetrics(outputs, 1),

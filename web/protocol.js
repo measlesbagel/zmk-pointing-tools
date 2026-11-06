@@ -13,8 +13,6 @@ export const MESSAGE = Object.freeze({
   DEVICE_LIST_REQUEST: 0x0d,
   DEVICE_DESCRIBE_REQUEST: 0x0e,
   DEVICE_PREVIEW_REQUEST: 0x0f,
-  CAPTURE_CONTROL_REQUEST: 0x10,
-  CAPTURE_DESCRIBE_REQUEST: 0x11,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -26,15 +24,11 @@ export const MESSAGE = Object.freeze({
   STATE_STATUS_RESPONSE: 0x89,
   DEVICE_LIST_RESPONSE: 0x8a,
   DEVICE_DESCRIPTION_RESPONSE: 0x8b,
-  CAPTURE_STATUS_RESPONSE: 0x8c,
-  CAPTURE_DESCRIPTION_RESPONSE: 0x8d,
   STATE_SAMPLE: 0x91,
-  CAPTURE_BATCH: 0x92,
 });
 
-/* v7 added pointing-device discovery and preview messages; v8 input
- * capture and the capture drop counter in acknowledgements. */
-export const PROTOCOL_VERSION = 8;
+/* v7 added pointing-device discovery and preview messages. */
+export const PROTOCOL_VERSION = 7;
 export const STATE_SCHEMA_VERSION = 2;
 
 /* Target kinds carried in tuning targets and state samples. Pipeline stages
@@ -130,11 +124,10 @@ export function parseDescribe(payload) {
 }
 
 export function parseAck(payload) {
-  if (payload.length !== 8) throw new Error("Invalid acknowledgement length");
+  if (payload.length !== 4) throw new Error("Invalid acknowledgement length");
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   return {
     stateDropped: view.getUint32(0, true),
-    captureDropped: view.getUint32(4, true),
   };
 }
 
@@ -392,242 +385,4 @@ export function parseDeviceDescription(payload) {
 
 export function encodeDevicePreview(deviceId, cpi) {
   return encodeFrame(MESSAGE.DEVICE_PREVIEW_REQUEST, Uint8Array.of(deviceId, cpi & 0xff, (cpi >> 8) & 0xff));
-}
-
-/* --- Input capture (protocol v8) ------------------------------------- */
-
-export const CAPTURE = Object.freeze({
-  SCHEMA_VERSION: 2,
-  NONE: 0xff,
-  RECORD_FRAME: 1,
-  RECORD_SOURCE: 2,
-  RECORD_KEYPRESS: 3,
-  RECORD_ENTERED: 4,
-  RECORD_LEFT: 5,
-  RECORD_SETTINGS_CHANGED: 6,
-  RECORD_FLUSH: 7,
-  LINK_USB: 0,
-  LINK_BLE: 1,
-  LINK_NONE: 0xff,
-  FLAG_REPLAYABLE: 0x01,
-  /* Wire kinds 0x80 to 0x87: a frame as a delta from the previous one. */
-  DELTA_FRAME: 0x80,
-  DELTA_FLAGS: 0x04,
-  SPAN_PREVIOUS: 0,
-  SPAN_ELAPSED: 1,
-  SPAN_ELAPSED_PLUS: 2,
-  SPAN_ABSOLUTE: 3,
-});
-
-/* Start recording a pipeline, or stop with CAPTURE.NONE; no argument only
- * queries the status. */
-export function encodeCaptureControl(pipelineId) {
-  return encodeFrame(MESSAGE.CAPTURE_CONTROL_REQUEST,
-    pipelineId === undefined ? new Uint8Array() : Uint8Array.of(pipelineId));
-}
-
-export function encodeCaptureDescribe(pipelineId) {
-  return encodeFrame(MESSAGE.CAPTURE_DESCRIBE_REQUEST, Uint8Array.of(pipelineId));
-}
-
-export function parseCaptureStatus(payload) {
-  requireBytes(payload, 0, 1, "capture status");
-  /* Schema 1 streams (no burst buffer) aren't read: record again with
-   * current firmware. */
-  if (payload[0] !== CAPTURE.SCHEMA_VERSION) {
-    throw new Error(`Unsupported capture schema ${payload[0]}; expected ${CAPTURE.SCHEMA_VERSION}`);
-  }
-  requireBytes(payload, 0, 15, "capture status");
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const decoder = new TextDecoder();
-  const pipelines = [];
-  let offset = 15;
-  for (let index = 0; index < payload[14]; index += 1) {
-    requireBytes(payload, offset, 9, "capture pipeline entry");
-    const [id, active, stageCount, flags] = payload.slice(offset, offset + 4);
-    const settingsHash = view.getUint32(offset + 4, true);
-    const labelLength = payload[offset + 8];
-    offset += 9;
-    requireBytes(payload, offset, labelLength, "capture pipeline label");
-    pipelines.push({ id, active: active !== 0, stageCount,
-      replayable: Boolean(flags & CAPTURE.FLAG_REPLAYABLE), settingsHash,
-      label: decoder.decode(payload.slice(offset, offset + labelLength)) });
-    offset += labelLength;
-  }
-  return {
-    schemaVersion: payload[0],
-    recording: payload[1] === CAPTURE.NONE ? null : payload[1],
-    dropped: view.getUint32(2, true),
-    /* Bytes of encoded records waiting in the burst buffer, and its size. */
-    bufferUsed: view.getUint32(6, true),
-    bufferSize: view.getUint32(10, true),
-    pipelines,
-  };
-}
-
-export function parseCaptureDescription(payload) {
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const decoder = new TextDecoder();
-  let offset = 0;
-  const byte = (context) => {
-    requireBytes(payload, offset, 1, context);
-    return payload[offset++];
-  };
-  const string = (context) => {
-    const length = byte(context);
-    requireBytes(payload, offset, length, context);
-    const text = decoder.decode(payload.slice(offset, offset + length));
-    offset += length;
-    return text;
-  };
-  const pipelineId = byte("capture description");
-  const stableId = string("capture pipeline id");
-  requireBytes(payload, offset, 4, "capture settings hash");
-  const settingsHash = view.getUint32(offset, true);
-  offset += 4;
-  const stages = [];
-  for (let count = byte("capture stage count"); stages.length < count;) {
-    const strategy = string("capture stage strategy");
-    const stageId = string("capture stage id");
-    const fixed = {};
-    for (let settings = byte("capture stage settings"); settings > 0; settings -= 1) {
-      const key = string("capture stage setting");
-      requireBytes(payload, offset, 4, "capture stage setting value");
-      fixed[key] = view.getInt32(offset, true);
-      offset += 4;
-    }
-    stages.push({ strategy, stableId: stageId, fixed });
-  }
-  return { pipelineId, stableId, settingsHash, stages };
-}
-
-/* Decoding state carried from batch to batch of one recording: delta
- * frames build on the previous frame. skipped counts delta frames that had
- * no frame to follow and were left out. */
-export function captureDecoder() {
-  return { nextSequence: 0, previous: null, skipped: 0 };
-}
-
-/* A u32 varint: at most 5 bytes, the 5th holding the top 4 bits, so every
- * zigzag field decodes to an int32. */
-function readVarint(payload, offset, context) {
-  let value = 0;
-  for (let shift = 0; shift < 35; shift += 7) {
-    requireBytes(payload, offset, 1, context);
-    const byte = payload[offset];
-    offset += 1;
-    if (shift === 28 && byte > 0x0f) break;
-    value += (byte & 0x7f) * 2 ** shift;
-    if ((byte & 0x80) === 0) return [value, offset];
-  }
-  throw new Error(`Malformed varint in ${context}`);
-}
-
-const unzigzag = (value) => (value % 2 === 0 ? value / 2 : -(value + 1) / 2);
-
-/* Records of one capture batch, each with its sequence number. state, from
- * captureDecoder(), carries the previous frame across the batches of a
- * recording; a sequence gap or an entered record clears it, since firmware
- * sends the next frame whole after either. A delta frame with no frame to
- * follow is left out and counted in state.skipped, so the converter sees a
- * sequence gap and decoding picks up again at the next whole frame. */
-export function parseCaptureBatch(payload, state) {
-  requireBytes(payload, 0, 5, "capture batch");
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const first = view.getUint32(0, true);
-  if (first !== state.nextSequence) state.previous = null;
-  const records = [];
-  let offset = 5;
-  for (let index = 0; index < payload[4]; index += 1) {
-    requireBytes(payload, offset, 1, "capture record");
-    const kind = payload[offset];
-    const sequence = (first + index) >>> 0;
-    if (kind === CAPTURE.RECORD_FRAME) {
-      requireBytes(payload, offset, 20, "capture frame");
-      records.push({ sequence, kind, flags: payload[offset + 1],
-        timeMs: view.getUint32(offset + 2, true), timeUs: view.getUint16(offset + 6, true),
-        x: view.getInt32(offset + 8, true), y: view.getInt32(offset + 12, true),
-        spanUs: view.getUint32(offset + 16, true) });
-      offset += 20;
-    } else if ((kind & 0xf8) === CAPTURE.DELTA_FRAME) {
-      const previous = state.previous;
-      let elapsed;
-      let x;
-      let y;
-      [elapsed, offset] = readVarint(payload, offset + 1, "capture delta frame");
-      [x, offset] = readVarint(payload, offset, "capture delta frame");
-      [y, offset] = readVarint(payload, offset, "capture delta frame");
-      elapsed = unzigzag(elapsed);
-      let flags = previous?.flags;
-      if (kind & CAPTURE.DELTA_FLAGS) {
-        requireBytes(payload, offset, 1, "capture delta frame");
-        flags = payload[offset];
-        offset += 1;
-      }
-      let spanUs;
-      const mode = kind & 0x03;
-      if (mode === CAPTURE.SPAN_PREVIOUS) spanUs = previous?.spanUs;
-      else if (mode === CAPTURE.SPAN_ELAPSED) spanUs = elapsed;
-      else {
-        let value;
-        [value, offset] = readVarint(payload, offset, "capture delta frame");
-        spanUs = mode === CAPTURE.SPAN_ABSOLUTE ? value : elapsed + unzigzag(value);
-      }
-      if (previous === null) {
-        state.skipped += 1;
-        continue;
-      }
-      const us = previous.timeMs * 1000 + previous.timeUs + elapsed;
-      records.push({ sequence, kind: CAPTURE.RECORD_FRAME, flags,
-        timeMs: Math.floor(us / 1000), timeUs: us % 1000, x: unzigzag(x), y: unzigzag(y),
-        spanUs });
-    } else if (kind === CAPTURE.RECORD_SOURCE) {
-      requireBytes(payload, offset, 6, "capture source");
-      records.push({ sequence, kind, link: payload[offset + 1],
-        sourceId: view.getUint16(offset + 2, true), cpi: view.getUint16(offset + 4, true) });
-      offset += 6;
-    } else if (kind === CAPTURE.RECORD_KEYPRESS || kind === CAPTURE.RECORD_FLUSH) {
-      requireBytes(payload, offset, 5, "capture timed record");
-      records.push({ sequence, kind, timeMs: view.getUint32(offset + 1, true) });
-      offset += 5;
-    } else if (kind === CAPTURE.RECORD_ENTERED) {
-      requireBytes(payload, offset, 5, "capture entered record");
-      records.push({ sequence, kind, settingsHash: view.getUint32(offset + 1, true) });
-      offset += 5;
-      state.previous = null;
-    } else if (kind === CAPTURE.RECORD_LEFT || kind === CAPTURE.RECORD_SETTINGS_CHANGED) {
-      records.push({ sequence, kind });
-      offset += 1;
-    } else {
-      throw new Error(`Unknown capture record kind ${kind}`);
-    }
-    const record = records[records.length - 1];
-    if (record.kind === CAPTURE.RECORD_FRAME) state.previous = record;
-  }
-  if (offset !== payload.length) throw new Error("Capture batch has trailing bytes");
-  state.nextSequence = (first + payload[4]) >>> 0;
-  return records;
-}
-
-/* A pipeline's settings hash (docs/protocol.md, "Capture pipeline
- * description") from a tuner profile export: the sum, modulo 2^32, of
- * FNV-1a over stage stable id, NUL, key, NUL, and the value as 4
- * little-endian bytes, for every parameter of the stages listed. */
-export function captureSettingsHash(profile, stageIds) {
-  const encoder = new TextEncoder();
-  let hash = 0;
-  for (const target of profile.targets) {
-    if (!stageIds.includes(target.stableId)) continue;
-    for (const { key, value } of target.parameters) {
-      const value32 = new Uint8Array(4);
-      new DataView(value32.buffer).setInt32(0, value, true);
-      let fnv = 0x811c9dc5;
-      for (const byte of [...encoder.encode(target.stableId), 0, ...encoder.encode(key), 0,
-        ...value32]) {
-        fnv = Math.imul(fnv ^ byte, 0x01000193) >>> 0;
-      }
-      hash = (hash + fnv) >>> 0;
-    }
-  }
-  return hash;
 }
