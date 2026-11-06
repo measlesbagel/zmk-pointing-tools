@@ -416,7 +416,7 @@ truth. `options.truth` picks how:
 - **`labels-only`** (the default, and `capture.js --truth labels-only`):
   strokes only where labels say what the user meant. Unlabelled motion is
   unscored.
-- **`derive`** (`--truth derive`; the tuner passes this): labels where
+- **`derive`** (`--truth derive`): labels where
   present, and strokes derived from the motion everywhere else, with
   `truth.derived: true` on the trace. Derived truth is
   a heuristic; prefer labels for anything you tune against.

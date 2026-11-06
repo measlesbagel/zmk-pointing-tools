@@ -2,11 +2,7 @@
 
 /* Turns a firmware input capture (docs/protocol.md, "Input capture") into
  * fixture v2 traces of cursor, scroll, or text pipelines that replay
- * through the stage-chain runner. capture.js wraps
- * it as a command; the tuner loads it as is from the Pages build's replay/
- * module, so it has no Node imports. host/wasm/build.sh rewrites the
- * protocol import below for that layout, where replay/ sits next to the
- * tuner's protocol.js. */
+ * through the stage-chain runner. capture.js wraps it as a command. */
 
 import { FIXTURE_SCHEMA, eventTimesUs, validateFixture, validateProfile } from "./fixture.js";
 import {

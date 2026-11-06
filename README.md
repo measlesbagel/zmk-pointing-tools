@@ -70,9 +70,6 @@ replay.
 See [`docs/playground.md`](docs/playground.md) for guided hardware evaluation.
 See [`docs/calibration.md`](docs/calibration.md) for per-device gain
 calibration.
-See [`docs/agent-tools.md`](docs/agent-tools.md) for letting your own AI agent
-tune through the tuner, and [`docs/agent-guide.md`](docs/agent-guide.md) for a
-guide to give the agent itself.
 See [`host/README.md`](host/README.md) for the native development and test
 subsystem.
 See [`docs/build.md`](docs/build.md) for host checks and the firmware smoke
@@ -104,7 +101,7 @@ keyboard, because the tuning service isn't advertised. A keyboard that is
 connected to a computer usually stops advertising, so it may be missing from
 the picker. If it is, switch the keyboard to a free Bluetooth profile, or turn
 the computer's Bluetooth off and on, then try again.
-Everything works as over USB, including agent tools, previews, revert and
+Everything works as over USB, including previews, resets, the playground and
 calibration. Every-frame telemetry is limited by the Bluetooth connection: the
 firmware drops the samples the link can't carry and the tuner shows them as
 dropped, so calibration over Bluetooth may need longer or slower strokes.
