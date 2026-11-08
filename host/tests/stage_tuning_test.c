@@ -329,7 +329,7 @@ static void test_binding_rejects_malformed_targets(void) {
 /* Orientation flags tune independently and the stage applies the tuned
  * transform, so a mounting fix can be tried without reflashing. */
 static void test_orientation_tunes_each_axis_flag(void) {
-    const struct zpt_orientation_config current = {.invert_y = true};
+    struct zpt_orientation_config current = {.invert_y = true};
     const struct zpt_tuning_value values[] = {{.parameter_id = 0, .value = 1},
                                               {.parameter_id = 2, .value = 0}};
     struct zpt_orientation_config candidate;
