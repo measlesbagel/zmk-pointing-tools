@@ -177,3 +177,19 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
   .playground-dialog-heading, .playground-controls { align-items: flex-start; }
   .playground-controls strong, .calibration-controls strong { width: 100%; margin-left: 0; }
 }
+.views { display: flex; gap: 0; margin: 8px 0 0; border-bottom: 1px solid var(--line); }
+.views button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 10px 16px; color: var(--muted); }
+.views button[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.game-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.game-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--line); background: #11141a; }
+.game-card h3 { margin: 0; font-size: 15px; }
+.game-card p { margin: 0; color: var(--muted); font-size: 13px; }
+.game-card button { align-self: flex-start; }
+.setup-steps { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 14px; padding-left: 20px; color: var(--muted); }
+.setup-steps .current { color: var(--accent); font-weight: 700; }
+.setup-steps .done { text-decoration: line-through; }
+.game-links { color: var(--muted); font-size: 12px; }
+.game-links a { color: var(--accent); }
+.capability-checks { margin: 0; padding-left: 20px; }
+.capability-checks .missing { color: var(--warning); }
+#game-screen details { margin-top: 12px; }

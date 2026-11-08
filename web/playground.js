@@ -113,6 +113,15 @@ export class PointingPlayground {
     this.renderActivity();
   }
 
+  /* Open on one activity, as a game's Play button does. */
+  openActivity(activityId) {
+    if (this.running) this.finish(false);
+    this.activity.value = activityId;
+    this.run = undefined;
+    this.dialog.showModal();
+    this.renderActivity();
+  }
+
   stop() {
     clearInterval(this.timer);
     clearTimeout(this.dwellTimer);

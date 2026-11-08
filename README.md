@@ -23,7 +23,7 @@ work with arbitrary ZMK pointing devices.
 - An offline, repository-owned tuner that connects over Web Serial or Web Bluetooth
 - Versioned profile export/import and generated devicetree handoff
 - Deterministic byte-exact regression replay through the composed stages
-- Guided scroll, text, cursor, click, and drag playground activities
+- A games-first tuner: the games your keyboard can play, each with the settings that matter for it
 - Repeated-gesture calibration of cursor gain, scroll speed, and text steps
 
 Planned capabilities include:

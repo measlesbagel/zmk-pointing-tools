@@ -27,11 +27,55 @@
         Connect the central half over USB or Bluetooth using desktop Chrome, or use the simulator without hardware.
       </p>
 
+      <nav class="views" aria-label="Tuner sections">
+        <button type="button" data-view-tab="games" aria-current="page">Games</button>
+        <button type="button" data-view-tab="settings">Settings</button>
+        <button type="button" data-view-tab="diagnostics">Diagnostics</button>
+      </nav>
+
+      <div data-view="games">
+      <section id="games" class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Games</h2>
+            <span>Short games for what your keyboard can do, each with the settings that matter for it.</span>
+          </div>
+          <div class="panel-actions">
+            <button type="button" class="primary" data-setup-start disabled>Start first setup</button>
+          </div>
+        </div>
+        <ol id="setup-steps" class="setup-steps" hidden></ol>
+        <div id="game-list" class="game-list">
+          <p class="muted">Connect current firmware, or use the simulator, to see the games your keyboard can play.</p>
+        </div>
+      </section>
+
+      <section id="game-screen" class="panel" hidden aria-live="polite">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow" data-game-drives></p>
+            <h2 data-game-title></h2>
+            <span data-game-summary></span>
+          </div>
+          <div class="panel-actions">
+            <button type="button" class="primary" data-game-play>Play</button>
+            <button type="button" data-game-save hidden>Save</button>
+            <button type="button" data-setup-next hidden>Next game</button>
+            <button type="button" data-game-close>Back to games</button>
+          </div>
+        </div>
+        <div data-game-settings class="parameters"></div>
+        <details data-game-related-wrap>
+          <summary>More settings that affect this game</summary>
+          <div data-game-related class="parameters"></div>
+        </details>
+      </section>
+
       <section id="playground" class="panel playground-panel">
         <div class="panel-heading">
           <div>
-            <h2>Guided playground</h2>
-            <span>Repeatable scroll, text, cursor, click, and drag activities.</span>
+            <h2>Free play</h2>
+            <span>Every activity, without a game's settings beside it.</span>
           </div>
           <button type="button" data-playground-open>Open playground</button>
         </div>
@@ -80,11 +124,13 @@
           </p>
         </dialog>
       </section>
+      </div>
 
+      <div data-view="settings" hidden>
       <section class="panel">
         <div class="panel-heading">
           <div>
-            <h2>Runtime tuning</h2>
+            <h2>All settings</h2>
             <span>Preview values in RAM, then save the ones worth keeping. Nothing is written to flash until you press Save.</span>
           </div>
           <div class="panel-actions">
@@ -165,6 +211,21 @@
         </div>
       </section>
 
+      </div>
+
+      <div data-view="diagnostics" hidden>
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Connection checks</h2>
+            <span>What the connected firmware reports, and what is missing.</span>
+          </div>
+        </div>
+        <ul id="capability-checks" class="capability-checks">
+          <li class="muted">Not connected.</li>
+        </ul>
+      </section>
+
       <section class="panel">
         <div class="panel-heading">
           <div>
@@ -194,6 +255,7 @@
           <li>On Linux, Chrome may need Experimental Web Platform features turned on in <code>chrome://flags</code> before Web Bluetooth is available.</li>
         </ul>
       </details>
+      </div>
 
       <footer class="build">
         <!-- The Pages deploy replaces this line with the deployed commit. -->
