@@ -13,6 +13,10 @@ export const MESSAGE = Object.freeze({
   DEVICE_LIST_REQUEST: 0x0d,
   DEVICE_DESCRIBE_REQUEST: 0x0e,
   DEVICE_PREVIEW_REQUEST: 0x0f,
+  TUNING_SAVE_REQUEST: 0x10,
+  TUNING_CLEAR_SAVED_REQUEST: 0x11,
+  DEVICE_SAVE_REQUEST: 0x12,
+  DEVICE_CLEAR_SAVED_REQUEST: 0x13,
   DESCRIBE_RESPONSE: 0x81,
   ACK: 0x82,
   TUNING_TARGETS_RESPONSE: 0x83,
@@ -27,8 +31,14 @@ export const MESSAGE = Object.freeze({
   STATE_SAMPLE: 0x91,
 });
 
-/* v7 added pointing-device discovery and preview messages. */
-export const PROTOCOL_VERSION = 7;
+/* v8 added on-device saving: saved values in descriptions, save and clear
+ * requests, and a features byte in the describe response. */
+export const PROTOCOL_VERSION = 8;
+
+/* Describe response feature bits. */
+export const FEATURE = Object.freeze({
+  SAVING: 0x01,
+});
 export const STATE_SCHEMA_VERSION = 2;
 
 /* Target kinds carried in tuning targets and state samples. Pipeline stages
@@ -42,6 +52,10 @@ export const TUNING = Object.freeze({
   INTEGER: 0,
   BOOLEAN: 1,
   STATUS_OK: 0,
+  /* The build doesn't save settings. */
+  STATUS_UNSUPPORTED: 6,
+  /* Tuning description parameter flags. */
+  PARAMETER_SAVED: 0x01,
 });
 
 export const DEVICE = Object.freeze({
@@ -120,7 +134,8 @@ export function parseDescribe(payload) {
   if (version !== PROTOCOL_VERSION) {
     throw new Error(`Firmware protocol ${version} does not match tuner protocol ${PROTOCOL_VERSION}`);
   }
-  return { version };
+  const features = payload.length > 1 ? payload[1] : 0;
+  return { version, saving: Boolean(features & FEATURE.SAVING) };
 }
 
 export function parseAck(payload) {
@@ -214,7 +229,7 @@ export function parseTuningDescription(payload) {
   let offset = 2;
 
   for (let index = 0; index < count; index += 1) {
-    requireBytes(payload, offset, 24, "tuning parameter descriptor");
+    requireBytes(payload, offset, 29, "tuning parameter descriptor");
     const id = payload[offset++];
     const type = payload[offset++];
     const minimum = view.getInt32(offset, true); offset += 4;
@@ -222,6 +237,10 @@ export function parseTuningDescription(payload) {
     const step = view.getInt32(offset, true); offset += 4;
     const compiled = view.getInt32(offset, true); offset += 4;
     const current = view.getInt32(offset, true); offset += 4;
+    const savedValue = view.getInt32(offset, true); offset += 4;
+    const flags = payload[offset++];
+    /* Without a saved value the device runs on compiled. */
+    const saved = flags & TUNING.PARAMETER_SAVED ? savedValue : undefined;
     const labelLength = payload[offset++];
     const unitLength = payload[offset++];
     requireBytes(payload, offset, labelLength + unitLength, "tuning parameter strings");
@@ -229,7 +248,7 @@ export function parseTuningDescription(payload) {
     offset += labelLength;
     const unit = decoder.decode(payload.slice(offset, offset + unitLength));
     offset += unitLength;
-    parameters.push({ id, type, minimum, maximum, step, compiled, current, label, unit });
+    parameters.push({ id, type, minimum, maximum, step, compiled, current, saved, label, unit });
   }
   return { targetId, parameters };
 }
@@ -350,17 +369,20 @@ export function parseDeviceDescription(payload) {
   requireBytes(payload, offset, pathLength, "device devicetree path");
   const devicetreePath = decoder.decode(payload.slice(offset, offset + pathLength));
   offset += pathLength;
-  requireBytes(payload, offset, 5, "device resolution fields");
+  requireBytes(payload, offset, 7, "device resolution fields");
   const currentCpi = view.getUint16(offset, true);
   offset += 2;
   const defaultCpi = view.getUint16(offset, true);
+  offset += 2;
+  /* 0 means nothing saved. */
+  const savedCpi = view.getUint16(offset, true) || undefined;
   offset += 2;
   const flags = payload[offset++];
   const settable = Boolean(flags & DEVICE.DESCRIPTION_SETTABLE);
   const stale = Boolean(flags & DEVICE.DESCRIPTION_STALE);
 
   if (!settable) {
-    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale };
+    return { stableId, devicetreePath, currentCpi, defaultCpi, savedCpi, settable, stale };
   }
 
   requireBytes(payload, offset, 1, "device capability count");
@@ -372,7 +394,7 @@ export function parseDeviceDescription(payload) {
       values.push(view.getUint16(offset, true));
       offset += 2;
     }
-    return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale, discrete: true, values };
+    return { stableId, devicetreePath, currentCpi, defaultCpi, savedCpi, settable, stale, discrete: true, values };
   }
   requireBytes(payload, offset, 6, "device capability range");
   const range = {
@@ -380,9 +402,26 @@ export function parseDeviceDescription(payload) {
     max: view.getUint16(offset + 2, true),
     step: view.getUint16(offset + 4, true),
   };
-  return { stableId, devicetreePath, currentCpi, defaultCpi, settable, stale, discrete: false, range };
+  return { stableId, devicetreePath, currentCpi, defaultCpi, savedCpi, settable, stale, discrete: false, range };
 }
 
 export function encodeDevicePreview(deviceId, cpi) {
   return encodeFrame(MESSAGE.DEVICE_PREVIEW_REQUEST, Uint8Array.of(deviceId, cpi & 0xff, (cpi >> 8) & 0xff));
+}
+
+/* Save or clear one target (or 0xff for all) or one device (or 0xff). */
+export function encodeTuningSave(targetId = TUNING.ALL_TARGETS) {
+  return encodeFrame(MESSAGE.TUNING_SAVE_REQUEST, Uint8Array.of(targetId));
+}
+
+export function encodeTuningClearSaved(targetId = TUNING.ALL_TARGETS) {
+  return encodeFrame(MESSAGE.TUNING_CLEAR_SAVED_REQUEST, Uint8Array.of(targetId));
+}
+
+export function encodeDeviceSave(deviceId = 0xff) {
+  return encodeFrame(MESSAGE.DEVICE_SAVE_REQUEST, Uint8Array.of(deviceId));
+}
+
+export function encodeDeviceClearSaved(deviceId = 0xff) {
+  return encodeFrame(MESSAGE.DEVICE_CLEAR_SAVED_REQUEST, Uint8Array.of(deviceId));
 }

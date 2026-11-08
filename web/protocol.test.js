@@ -4,7 +4,12 @@ import assert from "node:assert/strict";
 import {
   FrameDecoder,
   MESSAGE,
+  TUNING,
+  encodeDeviceClearSaved,
   encodeDevicePreview,
+  encodeDeviceSave,
+  encodeTuningClearSaved,
+  encodeTuningSave,
   encodeStateControl,
   encodeTuningSet,
   encodeTuningSetMany,
@@ -43,9 +48,10 @@ test("decodes fragmented and adjacent frames", () => {
 });
 
 test("parses the version-only description", () => {
-  assert.deepEqual(parseDescribe(Uint8Array.of(7)), { version: 7 });
+  assert.deepEqual(parseDescribe(Uint8Array.of(8, 0)), { version: 8, saving: false });
+  assert.deepEqual(parseDescribe(Uint8Array.of(8, 1)), { version: 8, saving: true });
   assert.throws(
-    () => parseDescribe(Uint8Array.of(6)),
+    () => parseDescribe(Uint8Array.of(7)),
     /does not match tuner protocol/,
   );
 });
@@ -115,7 +121,7 @@ test("parses runtime tuning discovery and parameter descriptions", () => {
 
   const label = new TextEncoder().encode("Physical keypress guard");
   const unit = new TextEncoder().encode("ms");
-  const description = new Uint8Array(2 + 24 + label.length + unit.length);
+  const description = new Uint8Array(2 + 29 + label.length + unit.length);
   const view = new DataView(description.buffer);
   description.set([3, 1, 9, 0]);
   view.setInt32(4, 0, true);
@@ -123,9 +129,11 @@ test("parses runtime tuning discovery and parameter descriptions", () => {
   view.setInt32(12, 1, true);
   view.setInt32(16, 75, true);
   view.setInt32(20, 60, true);
-  description.set([label.length, unit.length], 24);
-  description.set(label, 26);
-  description.set(unit, 26 + label.length);
+  view.setInt32(24, 90, true);
+  description[28] = TUNING.PARAMETER_SAVED;
+  description.set([label.length, unit.length], 29);
+  description.set(label, 31);
+  description.set(unit, 31 + label.length);
 
   assert.deepEqual(parseTuningDescription(description), {
     targetId: 3,
@@ -137,10 +145,15 @@ test("parses runtime tuning discovery and parameter descriptions", () => {
       step: 1,
       compiled: 75,
       current: 60,
+      saved: 90,
       label: "Physical keypress guard",
       unit: "ms",
     }],
   });
+
+  /* Without the saved flag the saved field is ignored. */
+  description[28] = 0;
+  assert.equal(parseTuningDescription(description).parameters[0].saved, undefined);
 });
 
 test("encodes tuning previews and parses results", () => {
@@ -231,6 +244,7 @@ test("parses pointing device descriptions in every capability form", () => {
     path.length, 0, ...path,
     0x20, 0x03, // current 800
     0x20, 0x03, // default 800
+    0x90, 0x01, // saved 400
     1,          // settable
   ];
   const discrete = Uint8Array.of(...head, 4, 200 & 0xff, 200 >> 8, 400 & 0xff, 400 >> 8, 800 & 0xff, 800 >> 8, 1600 & 0xff, 1600 >> 8);
@@ -239,6 +253,7 @@ test("parses pointing device descriptions in every capability form", () => {
     devicetreePath: "/trackball-local",
     currentCpi: 800,
     defaultCpi: 800,
+    savedCpi: 400,
     settable: true,
     stale: false,
     discrete: true,
@@ -251,18 +266,20 @@ test("parses pointing device descriptions in every capability form", () => {
     devicetreePath: "/trackball-local",
     currentCpi: 800,
     defaultCpi: 800,
+    savedCpi: 400,
     settable: true,
     stale: false,
     discrete: false,
     range: { min: 100, max: 1200, step: 100 },
   });
 
-  const readOnly = Uint8Array.of(stableId.length, ...stableId, path.length, 0, ...path, 0xb0, 0x04, 0xb0, 0x04, 0);
+  const readOnly = Uint8Array.of(stableId.length, ...stableId, path.length, 0, ...path, 0xb0, 0x04, 0xb0, 0x04, 0, 0, 0);
   assert.deepEqual(parseDeviceDescription(readOnly), {
     stableId: "test-local-trackball",
     devicetreePath: "/trackball-local",
     currentCpi: 1200,
     defaultCpi: 1200,
+    savedCpi: undefined,
     settable: false,
     stale: false,
   });
@@ -279,4 +296,12 @@ test("parses pointing device descriptions in every capability form", () => {
 test("encodes device previews little-endian", () => {
   const frame = encodeDevicePreview(1, 800);
   assert.deepEqual([...frame.slice(0, 8)], [0x5a, 0x50, MESSAGE.DEVICE_PREVIEW_REQUEST, 3, 0, 1, 0x20, 0x03]);
+});
+
+test("encodes save and clear requests with an all-ids default", () => {
+  assert.deepEqual([...encodeTuningSave(2)], [0x5a, 0x50, MESSAGE.TUNING_SAVE_REQUEST, 1, 0, 2]);
+  assert.equal(encodeTuningClearSaved()[5], 0xff);
+  assert.equal(encodeTuningClearSaved()[2], MESSAGE.TUNING_CLEAR_SAVED_REQUEST);
+  assert.equal(encodeDeviceSave(1)[2], MESSAGE.DEVICE_SAVE_REQUEST);
+  assert.equal(encodeDeviceClearSaved()[5], 0xff);
 });

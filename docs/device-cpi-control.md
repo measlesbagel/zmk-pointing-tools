@@ -2,12 +2,13 @@
 
 Issue #13. The web tuner can discover the physical pointing devices on a
 keyboard, show what each sensor supports, and preview a new resolution on the
-half that owns the sensor. Previews live in RAM only and reboot restores the
-compiled values. Nothing assumes continuous CPI steps or a particular driver.
+half that owns the sensor. Previews live in RAM; a value is kept across reboots
+only when the user saves it (see [Saving](protocol.md#saving)). Nothing assumes
+continuous CPI steps or a particular driver.
 
 ```text
 web tuner
-   │  USB CDC or Bluetooth GATT, protocol v7 (docs/protocol.md)
+   │  USB CDC or Bluetooth GATT, protocol v8 (docs/protocol.md)
    ▼
 telemetry service (central)
    │  device table lookup
@@ -223,9 +224,11 @@ meaning. Without `device`, the source keeps its compiled `resolution-cpi`.
 
 ## Known limits
 
-- **Peripheral reboot.** A rebooted peripheral restores its compiled CPI, but
-  the central keeps labelling that half's frames with the last previewed value
-  until the next describe or preview of that device refreshes it.
+- **Peripheral reboot.** A rebooted peripheral restores its compiled CPI. If
+  the central has a saved CPI for it, the central sends it again 1.5 s after
+  the half connects. An unsaved preview is lost, and the central keeps
+  labelling that half's frames with it until the next describe or preview of
+  that device refreshes it.
 - **Change boundary.** The sensor switches resolution when the driver writes
   it, which isn't synchronized with the frame boundary, and transported frames
   already in flight were measured at the old value. Expect at most a frame or
@@ -233,8 +236,10 @@ meaning. Without `device`, the source keeps its compiled `resolution-cpi`.
 - **More than one peripheral.** Channel-routed entries are built for it (a
   dongle with two halves), but haven't been run on real hardware yet.
   Legacy `location` entries still map to ZMK's pairing-order slot.
-- **Persistence.** Previews are RAM-only. Exporting a chosen value back into
-  devicetree is the way to keep it (#24 owns lifecycle).
+- **Persistence.** The central saves a device's CPI under
+  `zpt/d/<stable-id>`, for peripheral-owned devices too, so a peripheral never
+  writes flash. Exporting a value into devicetree remains the way to make it
+  the compiled default.
 
 ## Testing
 
@@ -244,7 +249,7 @@ meaning. Without `device`, the source keeps its compiled `resolution-cpi`.
   (`source_normalization_test`, `source_ingress_test`).
 - **ztest (`tests/unit`).** Device table discovery, optional sensors, the RAM
   store, recording a peripheral's value, the peripheral's request service, and
-  the v7 list, describe and preview messages.
+  the v8 list, describe, preview and save messages.
 - **Smoke builds.** CI builds both Corne halves with the tunnel wired as above,
   so the central's proxy and the peripheral's agent both compile and link.
 - **On hardware.** Round-trip time while the peripheral streams motion at full
