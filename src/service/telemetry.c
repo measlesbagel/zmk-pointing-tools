@@ -273,11 +273,14 @@ static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length
     }
 }
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+#define ZPT_FEATURES ZPT_FEATURE_SAVING
+#else
+#define ZPT_FEATURES 0
+#endif
+
 static void zpt_send_describe(void) {
-    uint8_t payload[2] = {
-        ZPT_PROTOCOL_VERSION,
-        IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS) ? ZPT_FEATURE_SAVING : 0,
-    };
+    uint8_t payload[2] = {ZPT_PROTOCOL_VERSION, ZPT_FEATURES};
     zpt_send_frame(ZPT_RESP_DESCRIBE, payload, sizeof(payload));
 }
 
