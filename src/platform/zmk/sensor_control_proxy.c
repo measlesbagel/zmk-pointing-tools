@@ -119,8 +119,8 @@ static int zpt_sensor_proxy_relay(const struct zpt_pointing_device *device, uint
         /* Halves that don't own the device stay silent, so asking every
          * slot reaches the owner without knowing which slot it paired as. */
         ret = -ENOTCONN;
-        for (uint8_t slot = 0; slot < ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT; slot++) {
-            if (zmk_split_central_invoke_behavior(slot, &binding, event, true) == 0) {
+        for (int slot = 0; slot < ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT; slot++) {
+            if (zmk_split_central_invoke_behavior((uint8_t)slot, &binding, event, true) == 0) {
                 ret = 0;
             }
         }
