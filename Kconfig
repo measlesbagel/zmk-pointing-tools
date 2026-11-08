@@ -112,9 +112,9 @@ config ZMK_POINTING_TOOLS_RUNTIME_TUNING
     bool "Temporary runtime tuning over the host protocol"
     default y
     help
-      Discover targets and preview validated parameter changes. Runtime
-      values are never persisted and return to devicetree defaults on reset
-      or reboot.
+      Discover targets and preview validated parameter changes. Previews
+      live in RAM; only an explicit save keeps them (see
+      ZMK_POINTING_TOOLS_SAVED_SETTINGS).
 
 if ZMK_POINTING_TOOLS_RUNTIME_TUNING
 
@@ -122,6 +122,27 @@ config ZMK_POINTING_TOOLS_TUNING_MAX_TARGETS
     int "Maximum runtime tuning targets"
     default 16
     range 1 32
+
+config ZMK_POINTING_TOOLS_SAVED_SETTINGS
+    bool "Save tuned settings on the keyboard"
+    default y
+    depends on SETTINGS
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    help
+      Let the host save previewed tuning values and pointing-device CPI to
+      flash through Zephyr settings, so they survive a restart. Nothing is
+      written until the host asks to save. A split keyboard keeps every
+      value on the central and re-sends a peripheral's saved CPI each time
+      that half connects. Turn off to keep tuning RAM-only.
+
+config ZMK_POINTING_TOOLS_SAVED_VALUES_MAX
+    int "Maximum saved tuning values"
+    default 128
+    range 16 1024
+    depends on ZMK_POINTING_TOOLS_SAVED_SETTINGS
+    help
+      Saved values across every tuning target, held in RAM (8 bytes each).
+      Only values that differ from devicetree count.
 
 config ZMK_POINTING_TOOLS_STATE_TELEMETRY
     bool "Semantic stage-state telemetry"

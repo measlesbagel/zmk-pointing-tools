@@ -27,8 +27,8 @@ LOG_MODULE_REGISTER(zpt_sensor_proxy, CONFIG_ZMK_LOG_LEVEL);
 /* Central counterpart of the sensor-control agent: relays requests to the
  * owning peripheral through INVOKE_BEHAVIOR, listens on every zmk,input-split
  * channel this central receives for the packed responses, and correlates
- * them by sequence number. One request is outstanding at a time; the host
- * protocol's flow control already serializes callers.
+ * them by sequence number. One request is outstanding at a time: a lock
+ * serializes the host protocol and the saved-CPI re-send.
  *
  * A device with a split channel is owned by whichever half sends on that
  * channel, and ZMK numbers peripheral slots in pairing order, so the proxy
@@ -89,8 +89,23 @@ static void zpt_sensor_proxy_note_reachable(uint8_t source, bool reachable) {
     }
 }
 
+/* Serializes relays from the host protocol and the saved-CPI re-send, so
+ * one request is outstanding at a time. */
+static K_MUTEX_DEFINE(zpt_sensor_proxy_relay_lock);
+
+static int zpt_sensor_proxy_relay_locked(const struct zpt_pointing_device *device, uint8_t opcode,
+                                         uint16_t payload, uint16_t *value);
+
 static int zpt_sensor_proxy_relay(const struct zpt_pointing_device *device, uint8_t opcode,
                                   uint16_t payload, uint16_t *value) {
+    (void)k_mutex_lock(&zpt_sensor_proxy_relay_lock, K_FOREVER);
+    const int ret = zpt_sensor_proxy_relay_locked(device, opcode, payload, value);
+    (void)k_mutex_unlock(&zpt_sensor_proxy_relay_lock);
+    return ret;
+}
+
+static int zpt_sensor_proxy_relay_locked(const struct zpt_pointing_device *device, uint8_t opcode,
+                                         uint16_t payload, uint16_t *value) {
     if (zpt_sensor_proxy.agent_name == NULL) {
         return -ENODEV;
     }

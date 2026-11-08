@@ -4,7 +4,7 @@ The protocol runs over USB CDC-ACM serial (Web Serial) and, optionally, over a
 Bluetooth GATT service (Web Bluetooth). Both carry the same framed byte stream;
 see [Transports](#transports). All multi-byte integers are little-endian.
 
-The current protocol is version 7. Firmware and host are updated together; the
+The current protocol is version 8. Firmware and host are updated together; the
 tuner rejects every other version instead of carrying compatibility parsers or
 feature gates for older firmware.
 
@@ -149,7 +149,7 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 | `0x04` | host → device | List tuning targets | empty |
 | `0x05` | host → device | Describe tuning target | `target-id:u8` |
 | `0x06` | host → device | Preview tuning value | `target-id:u8, parameter-id:u8, value:i32` |
-| `0x07` | host → device | Reset tuning target | `target-id:u8`; `0xff` resets all |
+| `0x07` | host → device | Discard tuning previews | `target-id:u8`; `0xff` for all |
 | `0x08` | host → device | Get parameter help | `target-id:u8, parameter-id:u8` |
 | `0x09` | host → device | Get target metadata | `target-id:u8` |
 | `0x0a` | host → device | Get parameter metadata | `target-id:u8, parameter-id:u8` |
@@ -158,6 +158,10 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 | `0x0d` | host → device | List pointing devices | empty |
 | `0x0e` | host → device | Describe pointing device | `device-id:u8` |
 | `0x0f` | host → device | Preview device CPI | `device-id:u8, cpi:u16` |
+| `0x10` | host → device | Save tuning target | `target-id:u8`; `0xff` for all |
+| `0x11` | host → device | Clear saved tuning | `target-id:u8`; `0xff` for all |
+| `0x12` | host → device | Save device CPI | `device-id:u8`; `0xff` for all |
+| `0x13` | host → device | Clear saved device CPI | `device-id:u8`; `0xff` for all |
 | `0x81` | device → host | Describe response | described below |
 | `0x82` | device → host | Acknowledgement | `state-dropped:u32` |
 | `0x83` | device → host | Tuning targets | described below |
@@ -175,10 +179,12 @@ ZMK's peripheral latency of 30 the keyboard may skip fewer events. To check:
 
 ```text
 protocol-version:u8
+features:u8           /* bit0 on-device saving */
 ```
 
 The describe response is the protocol version handshake; the tuner rejects
-every other version. While the host keeps streaming alive, it sends a
+every other version. The saving bit is set when the build has
+`CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS`; see [Saving](#saving). While the host keeps streaming alive, it sends a
 heartbeat at least every five seconds. Firmware disables all state levels
 automatically when the host disappears.
 
@@ -243,6 +249,8 @@ repeat parameter-count times:
   step:i32
   compiled-value:i32
   current-value:i32
+  saved-value:i32     /* meaningful only when flags bit0 is set */
+  flags:u8            /* bit0 saved */
   label-length:u8
   unit-length:u8
   label:utf8[label-length]
@@ -264,13 +272,44 @@ value:i32
 ```
 
 Status values are success (`0`), unknown target (`1`), unknown parameter (`2`),
-invalid value (`3`), internal error (`4`), and, for pointing-device results
-only, unreachable (`5`): the split half that owns the device didn't answer. A
-successful preview returns the effective current value.
+invalid value (`3`), internal error (`4`), unreachable (`5`) for
+pointing-device results, when the split half that owns the device didn't
+answer, and unsupported (`6`), when a save or clear reaches a build without
+saving. A successful preview returns the effective current value.
 
-Runtime values live only in RAM. They remain active when the web page
-disconnects, but reset explicitly or on keyboard reboot. No protocol command
-writes settings to flash.
+Previews live only in RAM. They remain active when the web page disconnects,
+and end on `0x07` or a reboot, which both return to the saved value, or to
+compiled when nothing is saved. Only the save and clear requests write flash.
+
+### Saving
+
+Firmware built with `CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS` (the default
+when Zephyr settings are on, on the central or an unsplit keyboard) keeps saved
+values through Zephyr settings:
+
+- `0x10` saves a target's current values. A value equal to compiled is erased
+  rather than stored, so a saved set only holds what differs. Saving values
+  that are already saved writes nothing.
+- `0x11` erases a target's saved values and returns it to compiled.
+- `0x12` saves a device's current CPI, and `0x13` erases it and returns the
+  device to its compiled CPI, through the split for a peripheral's device.
+
+Each answers with an ordinary tuning result carrying its request type, the
+target id (or, for devices, the device id in the parameter-id byte) and value
+`0`. `0xff` acts on every target or device and reports the first failure.
+
+Tuning values are stored as `zpt/t/<stable-id>/<parameter-key>` and device CPI
+as `zpt/d/<stable-id>`, so a firmware update that renumbers targets keeps them.
+At boot each target's saved values are applied as one batch, like `0x0b`. If a
+target no longer accepts them (a range shrank or a cross-parameter check
+fails), it runs on compiled values and its saved set is ignored; names the
+firmware no longer knows are skipped. The central keeps a peripheral's saved
+CPI and sends it each time that half connects.
+
+Nothing is written except on an explicit save or clear, so a session of
+previews costs no flash wear. Each save rewrites only the values that changed,
+a handful of small records in the settings partition, which rotates erases
+across its pages; saving by hand stays far below the flash's erase endurance.
 
 ### Parameter help
 
@@ -364,6 +403,7 @@ stable-id-length:u8, stable-id:utf8[..]
 devicetree-path-length:u16, devicetree-path:utf8[..]
 current-cpi:u16
 default-cpi:u16       /* compiled devicetree value */
+saved-cpi:u16         /* 0 when nothing is saved */
 flags:u8              /* bit0 settable (capabilities follow), bit1 stale */
 if settable and discrete:
   value-count:u8, then value-count × cpi:u16   /* ascending */
@@ -386,7 +426,7 @@ device id in its parameter-id byte, and the effective value on success:
 firmware validates the request against the declared capabilities and snaps to
 the nearest supported value when needed, so a host compares requested against
 effective to offer corrections. Previews are RAM-only and expire on reboot,
-like tuning previews. Read-only devices reject previews with status invalid
+like tuning previews, back to the saved CPI or the compiled one. Read-only devices reject previews with status invalid
 value. A preview for a peripheral's device is relayed to that half, and fails
 with status unreachable when the half doesn't answer within 500 ms.
 

@@ -120,6 +120,10 @@ if(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY OR
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_BLE
     src/service/transport/gatt.c)
   zephyr_library_sources_ifdef(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING src/service/tuning.c)
+  if(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+    zephyr_library_sources(src/service/tuning_store.c)
+    zephyr_library_sources(src/platform/zmk/saved_settings.c)
+  endif()
   # Runtime stage tuning needs both the pipeline and the tuning service.
   if(CONFIG_ZMK_POINTING_TOOLS_PIPELINE AND CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
     zephyr_library_sources(src/stage/stage_tuning.c)

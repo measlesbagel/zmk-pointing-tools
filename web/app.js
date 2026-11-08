@@ -5,9 +5,13 @@ import {
   PROTOCOL_VERSION,
   STATE,
   TUNING,
+  encodeDeviceClearSaved,
   encodeDevicePreview,
+  encodeDeviceSave,
   encodeFrame,
   encodeStateControl,
+  encodeTuningClearSaved,
+  encodeTuningSave,
   encodeTuningSet,
   encodeTuningSetMany,
   parseAck,
@@ -50,13 +54,15 @@ const STAGE_EVENT_INTENT_CHANGED = 3;
 const SIGNAL_KIND_LABELS = ["invalid", "raw", "normalized", "pointer", "scroll", "action"];
 
 const elements = Object.fromEntries(
-  ["status", "connect", "connect-bluetooth", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
+  ["status", "connect", "connect-bluetooth", "simulate", "clear", "notice", "tuning", "devices", "reset-all", "save-all", "profile-export", "profile-copy", "profile-import", "profile-file", "modified-count", "diagnostics", "state-count", "state-dropped"].map(
     (id) => [id, document.getElementById(id)],
   ),
 );
 
 let transport;
 let protocolReady = false;
+/* Whether the firmware can keep values across a reboot. */
+let savingSupported = false;
 let simulator;
 let heartbeat;
 let tuningTargets = new Map();
@@ -127,8 +133,34 @@ function escapeHtml(value) {
 
 function setDescription(description) {
   protocolReady = true;
+  setSavingSupported(description.saving);
   stateDirty = true;
-  notice(`Protocol v${description.version} connected.`);
+  notice(`Protocol v${description.version} connected${savingSupported ? "" : "; this build can't save values on the device"}.`);
+}
+
+function setSavingSupported(supported) {
+  savingSupported = supported;
+  elements["save-all"].hidden = !supported;
+  /* With saving, resetting returns to what a reboot would run. */
+  elements["reset-all"].textContent = supported ? "Discard all" : "Reset all defaults";
+}
+
+/* What a value runs on after a reboot: the saved one, or compiled. */
+function bootValue(parameter) {
+  return parameter.saved ?? parameter.compiled;
+}
+
+function unitSuffix(parameter) {
+  return parameter.unit ? ` ${escapeHtml(parameter.unit)}` : "";
+}
+
+/* "Compiled 75 ms · saved 90 ms · previewing", leaving out what doesn't
+ * apply. */
+function parameterProvenance(parameter) {
+  const parts = [`Compiled: ${parameter.compiled}${unitSuffix(parameter)}`];
+  if (parameter.saved !== undefined) parts.push(`saved: ${parameter.saved}${unitSuffix(parameter)}`);
+  if (parameter.current !== bootValue(parameter)) parts.push(savingSupported ? "previewing, not saved" : "modified");
+  return parts.join(" · ");
 }
 
 
@@ -150,15 +182,22 @@ function renderTuning() {
   }
   const targets = [...tuningTargets.values()];
   const modified = targets.reduce(
-    (count, target) => count + target.parameters.filter((parameter) => parameter.current !== parameter.compiled).length,
+    (count, target) => count + target.parameters.filter((parameter) => parameter.current !== bootValue(parameter)).length,
+    0,
+  );
+  const saved = targets.reduce(
+    (count, target) => count + target.parameters.filter((parameter) => parameter.saved !== undefined).length,
     0,
   );
   const profileReady = isProfileReady();
   elements["reset-all"].disabled = tuningTargets.size === 0;
+  elements["save-all"].disabled = tuningTargets.size === 0 || modified === 0;
   elements["profile-export"].disabled = !profileReady;
   elements["profile-copy"].disabled = !profileReady;
   elements["profile-import"].disabled = !profileReady;
-  elements["modified-count"].textContent = `${modified} modified`;
+  elements["modified-count"].textContent = savingSupported
+    ? `${modified} unsaved · ${saved} saved`
+    : `${modified} modified`;
   calibration?.refresh();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
@@ -172,14 +211,27 @@ function renderTuning() {
       const curve = findCurve(target);
       if (curve) curveEditors.settle(target.id, curve);
       const parameters = curve ? target.parameters.filter(({ id }) => !curve.ids.has(id)) : target.parameters;
+      const empty = target.parameters.length === 0;
+      const unsaved = target.parameters.some((parameter) => parameter.current !== bootValue(parameter));
+      const hasSaved = target.parameters.some((parameter) => parameter.saved !== undefined);
+      const subtitle = !savingSupported
+        ? "Temporary preview values"
+        : unsaved ? "Previewing unsaved changes" : hasSaved ? "Running saved values" : "Running compiled values";
+      /* With saving, Discard goes back to what a reboot would run and Reset
+       * to compiled also forgets what was saved. */
+      const actions = savingSupported
+        ? `<button data-save-target="${target.id}" ${empty || !unsaved ? "disabled" : ""}>Save</button>
+        <button data-reset-target="${target.id}" ${empty || !unsaved ? "disabled" : ""}>Discard</button>
+        <button data-clear-target="${target.id}" ${empty || (!hasSaved && !unsaved) ? "disabled" : ""}>Reset to compiled</button>`
+        : `<button data-reset-target="${target.id}" ${empty ? "disabled" : ""}>Reset target</button>`;
       return `<article class="tuning-target">
       <div class="tuning-target-heading">
-        <div><h3>${escapeHtml(target.label)}</h3><span>${target.stableId ? `<code>${escapeHtml(target.stableId)}</code> · ` : ""}Temporary preview values</span></div>
-        <button data-reset-target="${target.id}" ${target.parameters.length ? "" : "disabled"}>Reset target</button>
+        <div><h3>${escapeHtml(target.label)}</h3><span>${target.stableId ? `<code>${escapeHtml(target.stableId)}</code> · ` : ""}${subtitle}</span></div>
+        <div class="tuning-target-actions">${actions}</div>
       </div>
       ${curve ? curveEditors.render(target.id, curve) : ""}
       ${parameters.length ? `<div class="parameters">${parameters.map((parameter) => {
-        const changed = parameter.current !== parameter.compiled;
+        const changed = parameter.current !== bootValue(parameter);
         const control = parameter.type === TUNING.BOOLEAN
           ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
           : `<input type="number" data-value value="${parameter.current}" min="${parameter.minimum}" max="${parameter.maximum}" step="${parameter.step}">`;
@@ -189,7 +241,7 @@ function renderTuning() {
         return `<div class="parameter ${changed ? "changed" : ""}" data-target="${target.id}" data-parameter="${parameter.id}">
           <label><span>${escapeHtml(parameter.label)}${parameter.unit ? ` <small>(${escapeHtml(parameter.unit)})</small>` : ""}</span>${help}</label>
           <div class="parameter-control">${control}<button data-preview>Preview</button></div>
-          <small>Compiled: ${parameter.compiled}${parameter.unit ? ` ${escapeHtml(parameter.unit)}` : ""}${changed ? " · modified" : ""}</small>
+          <small>${parameterProvenance(parameter)}</small>
         </div>`;
       }).join("")}</div>` : (curve ? "" : '<p class="muted">Loading parameters…</p>')}
     </article>`;
@@ -408,7 +460,11 @@ function renderDevices() {
     if (device.settable && !described) {
       body = '<p class="muted">Loading capabilities…</p>';
     } else if (described) {
-      const modified = described.currentCpi !== described.defaultCpi;
+      const bootCpi = described.savedCpi ?? described.defaultCpi;
+      const modified = described.currentCpi !== bootCpi;
+      const provenance = [`Compiled: ${described.defaultCpi} CPI`];
+      if (described.savedCpi !== undefined) provenance.push(`saved: ${described.savedCpi} CPI`);
+      if (modified) provenance.push(savingSupported ? "previewing, not saved" : "modified");
       const control = described.discrete
         ? `<select data-device-value>
             ${described.values.map((value) => `<option value="${value}" ${value === described.currentCpi ? "selected" : ""}>${value} CPI</option>`).join("")}
@@ -417,16 +473,24 @@ function renderDevices() {
       body = `<div class="parameter ${modified ? "changed" : ""}">
         <label><span>Sensor resolution <small>(CPI)</small></span></label>
         <div class="parameter-control">${control}<button data-device-preview>Preview</button></div>
-        <small>Compiled: ${described.defaultCpi} CPI${modified ? " · modified" : ""}</small>
+        <small>${provenance.join(" · ")}</small>
         ${device.error ? `<small class="device-error">${escapeHtml(device.error)}</small>` : ""}
       </div>`;
     }
-    /* The whole card carries the id: Reset default sits in the heading,
+    const bootCpi = described ? (described.savedCpi ?? described.defaultCpi) : undefined;
+    const unsaved = Boolean(described) && described.currentCpi !== bootCpi;
+    const hasSaved = described?.savedCpi !== undefined;
+    const actions = savingSupported && device.settable
+      ? `<button data-device-save ${unsaved ? "" : "disabled"}>Save</button>
+        <button data-device-reset ${unsaved ? "" : "disabled"}>Discard</button>
+        <button data-device-clear ${hasSaved || unsaved ? "" : "disabled"}>Reset to compiled</button>`
+      : `<button data-device-reset ${device.settable ? "" : "disabled"}>Reset default</button>`;
+    /* The whole card carries the id: the actions sit in the heading,
      * outside the resolution row. */
     return `<article class="tuning-target" data-device="${device.id}">
       <div class="tuning-target-heading">
         <div><h3>${escapeHtml(device.label)}</h3><span>${badge}</span></div>
-        <button data-device-reset ${device.settable ? "" : "disabled"}>Reset default</button>
+        <div class="tuning-target-actions">${actions}</div>
       </div>
       ${body}
     </article>`;
@@ -518,6 +582,14 @@ function handleFrame(frame) {
   } else if (frame.type === MESSAGE.TUNING_RESULT) {
     const result = parseTuningResult(frame.payload);
     tuningRequests.complete(result.requestType);
+    if ([MESSAGE.DEVICE_SAVE_REQUEST, MESSAGE.DEVICE_CLEAR_SAVED_REQUEST].includes(result.requestType)) {
+      handleDeviceSavingResult(result);
+      return;
+    }
+    if ([MESSAGE.TUNING_SAVE_REQUEST, MESSAGE.TUNING_CLEAR_SAVED_REQUEST].includes(result.requestType)) {
+      handleTuningSavingResult(result);
+      return;
+    }
     if (result.requestType === MESSAGE.DEVICE_PREVIEW_REQUEST) {
       /* Device ids ride the result's parameter-id byte; target-id is the
        * all-targets sentinel for device results. */
@@ -538,7 +610,7 @@ function handleFrame(frame) {
         device.error = undefined;
         if (device.description) device.description.currentCpi = result.value;
         renderDevices();
-        notice(`${device.label} resolution preview updated. Changes remain temporary until reboot.`);
+        notice(`${device.label} resolution preview updated.${savingSupported ? " Save to keep it after a reboot." : " Changes remain temporary until reboot."}`);
       }
       return;
     }
@@ -554,16 +626,62 @@ function handleFrame(frame) {
       const parameter = target.parameters.find(({ id }) => id === result.parameterId);
       if (parameter) parameter.current = result.value;
       renderTuning();
-      notice(`${target.label} preview updated. Changes remain temporary until reboot.`);
+      notice(`${target.label} preview updated.${savingSupported ? " Save to keep it after a reboot." : " Changes remain temporary until reboot."}`);
     } else if (result.requestType === MESSAGE.TUNING_SET_MANY_REQUEST && target) {
       queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(target.id));
       notice(`${target.label} values applied atomically as a temporary preview.`);
     } else if (result.requestType === MESSAGE.TUNING_RESET_REQUEST) {
       const resetTargets = result.targetId === TUNING.ALL_TARGETS ? [...tuningTargets.values()] : [target].filter(Boolean);
       for (const item of resetTargets) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
-      notice(result.targetId === TUNING.ALL_TARGETS ? "All compiled defaults restored." : `${target?.label ?? "Target"} defaults restored.`);
+      const restored = savingSupported ? "previews discarded" : "defaults restored";
+      notice(result.targetId === TUNING.ALL_TARGETS ? `All ${restored}.` : `${target?.label ?? "Target"} ${restored}.`);
     }
   }
+}
+
+const SAVING_FAILURES = ["success", "unknown target", "unknown parameter", "invalid value", "storage error", "the half that owns it didn't answer", "this build can't save values"];
+
+function savingFailure(status) {
+  return SAVING_FAILURES[status] ?? `status ${status}`;
+}
+
+function handleTuningSavingResult(result) {
+  const all = result.targetId === TUNING.ALL_TARGETS;
+  const affected = all ? [...tuningTargets.values()] : [tuningTargets.get(result.targetId)].filter(Boolean);
+  /* Re-read either way: a batch save can fail partway. */
+  for (const item of affected) queueTuningRequest(MESSAGE.TUNING_DESCRIBE_REQUEST, Uint8Array.of(item.id));
+  const what = all ? "All targets" : (affected[0]?.label ?? "Target");
+  const saving = result.requestType === MESSAGE.TUNING_SAVE_REQUEST;
+  if (result.status === TUNING.STATUS_UNSUPPORTED) {
+    setSavingSupported(false);
+    renderTuning();
+    renderDevices();
+  }
+  if (result.status !== TUNING.STATUS_OK) {
+    notice(`${saving ? "Save" : "Reset"} failed: ${savingFailure(result.status)}.`, true);
+  } else {
+    notice(saving ? `${what} saved on the device.` : `${what} back to compiled values; nothing saved.`);
+  }
+}
+
+function handleDeviceSavingResult(result) {
+  const device = devices.get(result.parameterId);
+  const saving = result.requestType === MESSAGE.DEVICE_SAVE_REQUEST;
+  if (result.status !== TUNING.STATUS_OK) {
+    const reason = savingFailure(result.status);
+    if (device) {
+      device.error = `${saving ? "Save" : "Reset"} failed: ${reason}.`;
+      renderDevices();
+    }
+    notice(`Device ${saving ? "save" : "reset"} failed: ${reason}.`, true);
+    return;
+  }
+  if (device) {
+    device.error = undefined;
+    queueTuningRequest(MESSAGE.DEVICE_DESCRIBE_REQUEST, Uint8Array.of(device.id));
+  }
+  const label = device?.label ?? "Device";
+  notice(saving ? `${label} resolution saved on the device.` : `${label} back to its compiled resolution.`);
 }
 
 function receive(bytes) {
@@ -589,6 +707,7 @@ async function disconnect() {
   await link?.close();
   elements.connect.disabled = false;
   protocolReady = false;
+  setSavingSupported(false);
   calibration.cancel();
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
@@ -626,6 +745,7 @@ async function connect(Transport) {
     await link.open();
     transport = link;
     protocolReady = false;
+    setSavingSupported(false);
     elements.connect.textContent = "Disconnect";
     elements["connect-bluetooth"].hidden = true;
     elements.simulate.disabled = true;
@@ -662,6 +782,7 @@ function startSimulator() {
     tuningTargets = new Map();
     devices = new Map();
     protocolReady = false;
+    setSavingSupported(false);
     stateEvents = [];
     stateStatus = { schemaVersion: 0, dropped: 0, queueCapacity: 0, levels: new Map(), labels: new Map() };
     stateDirty = true;
@@ -759,6 +880,18 @@ elements["profile-file"].addEventListener("change", async () => {
 elements.tuning.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-preview]");
   const reset = event.target.closest("[data-reset-target]");
+  const save = event.target.closest("[data-save-target]");
+  const clear = event.target.closest("[data-clear-target]");
+  if (save) {
+    queueTuningRequest(MESSAGE.TUNING_SAVE_REQUEST, Uint8Array.of(Number(save.dataset.saveTarget)));
+    return;
+  }
+  if (clear) {
+    const targetId = Number(clear.dataset.clearTarget);
+    curveEditors.discard(targetId);
+    tuningRequests.enqueue(MESSAGE.TUNING_CLEAR_SAVED_REQUEST, encodeTuningClearSaved(targetId));
+    return;
+  }
   if (preview) {
     const row = preview.closest("[data-target][data-parameter]");
     const targetId = Number(row.dataset.target);
@@ -809,21 +942,33 @@ function resetAllTargets() {
 }
 
 elements["reset-all"].addEventListener("click", () => resetAllTargets());
+elements["save-all"].addEventListener("click", () => {
+  if (transport && savingSupported) tuningRequests.enqueue(MESSAGE.TUNING_SAVE_REQUEST, encodeTuningSave());
+});
 
 elements.devices.addEventListener("click", async (event) => {
   const preview = event.target.closest("[data-device-preview]");
   const reset = event.target.closest("[data-device-reset]");
+  const save = event.target.closest("[data-device-save]");
+  const clear = event.target.closest("[data-device-clear]");
   const card = event.target.closest("[data-device]");
-  if (!card || (!preview && !reset)) return;
+  if (!card || (!preview && !reset && !save && !clear)) return;
   const deviceId = Number(card.dataset.device);
   const device = devices.get(deviceId);
   if (!device?.description) return;
+  if (save || clear) {
+    if (transport) {
+      tuningRequests.enqueue(save ? MESSAGE.DEVICE_SAVE_REQUEST : MESSAGE.DEVICE_CLEAR_SAVED_REQUEST,
+        save ? encodeDeviceSave(deviceId) : encodeDeviceClearSaved(deviceId));
+    }
+    return;
+  }
 
-  /* Device previews reuse the preview message for resets too: sending the
-   * compiled default restores it without a dedicated wire message. */
+  /* Device previews reuse the preview message for discards too: sending
+   * the value a reboot would run restores it without a dedicated message. */
   const requested = preview
     ? Number(card.querySelector("[data-device-value]")?.value ?? device.description.currentCpi)
-    : device.description.defaultCpi;
+    : (device.description.savedCpi ?? device.description.defaultCpi);
   if (!Number.isInteger(requested)) {
     notice("Enter a whole CPI value.", true);
     return;

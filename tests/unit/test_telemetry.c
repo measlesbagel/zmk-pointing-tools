@@ -27,9 +27,9 @@
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #include <zmk/pointing_tools/service/tuning.h>
 
-/* --- Wire protocol (v6) ---------------------------------------------- */
+/* --- Wire protocol (v8) ---------------------------------------------- */
 
-#define ZPT_PROTOCOL_VERSION 7
+#define ZPT_PROTOCOL_VERSION 8
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -44,6 +44,8 @@
 #define ZPT_REQ_TUNING_PARAMETER_METADATA 0x0a
 #define ZPT_REQ_TUNING_SET_MANY 0x0b
 #define ZPT_REQ_STATE_CONTROL 0x0c
+#define ZPT_REQ_TUNING_SAVE 0x10
+#define ZPT_REQ_DEVICE_SAVE 0x12
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
@@ -60,6 +62,7 @@
 #define ZPT_TUNING_STATUS_UNKNOWN_PARAMETER 2
 #define ZPT_TUNING_STATUS_INVALID_VALUE 3
 #define ZPT_TUNING_STATUS_INTERNAL_ERROR 4
+#define ZPT_TUNING_STATUS_UNSUPPORTED 6
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_RESPONSE_PAYLOAD 512
@@ -174,10 +177,29 @@ static const uint8_t *state_status_entry(const uint8_t *payload, uint8_t target_
 }
 
 ZTEST(zpt_unit, describe) {
-    uint8_t payload[1] = {ZPT_PROTOCOL_VERSION};
+    /* This build has no settings subsystem, so the saving feature is off. */
+    uint8_t payload[2] = {ZPT_PROTOCOL_VERSION, 0};
 
     tx_frame(ZPT_REQ_DESCRIBE, NULL, 0);
-    expect_frame(ZPT_RESP_DESCRIBE, payload, 1);
+    expect_frame(ZPT_RESP_DESCRIBE, payload, sizeof(payload));
+}
+
+ZTEST(zpt_unit, saving_is_unsupported_without_settings) {
+    uint8_t frame_type;
+    uint8_t payload[ZPT_MAX_RESPONSE_PAYLOAD];
+    uint16_t length;
+
+    tx_frame(ZPT_REQ_TUNING_SAVE, (const uint8_t[1]){0}, 1);
+    zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
+    zassert_equal(frame_type, ZPT_RESP_TUNING_RESULT);
+    zassert_equal(payload[0], ZPT_REQ_TUNING_SAVE);
+    zassert_equal(payload[1], ZPT_TUNING_STATUS_UNSUPPORTED);
+
+    tx_frame(ZPT_REQ_DEVICE_SAVE, (const uint8_t[1]){0}, 1);
+    zassert_equal(rx_frame(&frame_type, payload, &length, ZPT_RX_TIMEOUT_MS), 0);
+    zassert_equal(frame_type, ZPT_RESP_TUNING_RESULT);
+    zassert_equal(payload[0], ZPT_REQ_DEVICE_SAVE);
+    zassert_equal(payload[1], ZPT_TUNING_STATUS_UNSUPPORTED);
 }
 
 /* --- Pointing device discovery and preview (protocol v7) ------------- */
@@ -224,6 +246,8 @@ ZTEST(zpt_unit, zz_device_describe_reports_identity_and_capabilities) {
         expected[offset++] = 800 & 0xff;
         expected[offset++] = 800 >> 8;
     }
+    expected[offset++] = 0; /* saved: none in this build */
+    expected[offset++] = 0;
     expected[offset++] = 0x01; /* settable */
     expected[offset++] = (uint8_t)(sizeof(values) / sizeof(values[0]));
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
@@ -253,6 +277,8 @@ ZTEST(zpt_unit, zz_device_describe_reports_range_capabilities) {
         expected[offset++] = 0x90;
         expected[offset++] = 0x01;
     }
+    expected[offset++] = 0; /* saved: none */
+    expected[offset++] = 0;
     expected[offset++] = 0x01; /* settable, value is current */
     expected[offset++] = 0;    /* range form */
     memcpy(&expected[offset], (uint8_t[]){100, 0, 0xb0, 0x04, 100, 0}, 6);
@@ -410,13 +436,16 @@ ZTEST(zpt_unit, tuning_describe) {
         zassert_equal(sys_get_le32(&payload[offset + 10]), i == 0 ? 5 : 1);
         zassert_equal(sys_get_le32(&payload[offset + 14]), i == 0 ? 10 : 1);
         zassert_equal(sys_get_le32(&payload[offset + 18]), i == 0 ? 10 : 1);
+        /* Nothing saved: saved value mirrors compiled, flags clear. */
+        zassert_equal(sys_get_le32(&payload[offset + 22]), i == 0 ? 10 : 1);
+        zassert_equal(payload[offset + 26], 0);
         const char *label = i == 0 ? "Gain" : "Enabled";
         const char *unit = i == 0 ? "cpi" : "";
-        zassert_equal(payload[offset + 22], (uint8_t)strlen(label));
-        zassert_equal(payload[offset + 23], (uint8_t)strlen(unit));
-        zassert_mem_equal(&payload[offset + 24], label, strlen(label));
-        zassert_mem_equal(&payload[offset + 24 + strlen(label)], unit, strlen(unit));
-        offset += 24 + strlen(label) + strlen(unit);
+        zassert_equal(payload[offset + 27], (uint8_t)strlen(label));
+        zassert_equal(payload[offset + 28], (uint8_t)strlen(unit));
+        zassert_mem_equal(&payload[offset + 29], label, strlen(label));
+        zassert_mem_equal(&payload[offset + 29 + strlen(label)], unit, strlen(unit));
+        offset += 29 + strlen(label) + strlen(unit);
     }
     zassert_equal(offset, length);
 

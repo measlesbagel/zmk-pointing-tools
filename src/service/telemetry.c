@@ -16,6 +16,10 @@
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
 #include <zmk/pointing_tools/service/tuning.h>
 #endif
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+#include <zmk/pointing_tools/platform/zmk/saved_settings.h>
+#include <zmk/pointing_tools/service/tuning_store.h>
+#endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_DEVICE_TABLE)
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
 #endif
@@ -44,7 +48,9 @@ LOG_MODULE_REGISTER(zpt_telemetry, ZPT_TELEMETRY_LOG_LEVEL);
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
              "exactly one measlesbagel,zpt-telemetry node is supported");
 
-#define ZPT_PROTOCOL_VERSION 7
+#define ZPT_PROTOCOL_VERSION 8
+/* Describe response feature bits. */
+#define ZPT_FEATURE_SAVING 0x01
 #define ZPT_FRAME_MAGIC_0 0x5a
 #define ZPT_FRAME_MAGIC_1 0x50
 
@@ -62,6 +68,10 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 #define ZPT_REQ_DEVICE_LIST 0x0d
 #define ZPT_REQ_DEVICE_DESCRIBE 0x0e
 #define ZPT_REQ_DEVICE_PREVIEW 0x0f
+#define ZPT_REQ_TUNING_SAVE 0x10
+#define ZPT_REQ_TUNING_CLEAR_SAVED 0x11
+#define ZPT_REQ_DEVICE_SAVE 0x12
+#define ZPT_REQ_DEVICE_CLEAR_SAVED 0x13
 #define ZPT_RESP_DESCRIBE 0x81
 #define ZPT_RESP_ACK 0x82
 #define ZPT_RESP_TUNING_TARGETS 0x83
@@ -77,9 +87,10 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 
 #define ZPT_MAX_REQUEST_PAYLOAD 128
 #define ZPT_MAX_DESCRIBE_PAYLOAD 512
-/* A target description carries 24 bytes plus label and unit per parameter;
- * an acceleration curve's 18 parameters need about 800. */
-#define ZPT_MAX_TUNING_DESCRIPTION_PAYLOAD 1024
+/* A target description carries 29 bytes plus label and unit per parameter;
+ * an acceleration curve's 18 parameters need about 900. */
+#define ZPT_MAX_TUNING_DESCRIPTION_PAYLOAD 1280
+#define ZPT_TUNING_PARAMETER_SAVED 0x01
 #define ZPT_TUNING_ALL_TARGETS UINT8_MAX
 #define ZPT_TUNING_BATCH_HEADER_SIZE 2
 #define ZPT_TUNING_BATCH_VALUE_SIZE 5
@@ -100,6 +111,8 @@ enum zpt_tuning_status {
     ZPT_TUNING_STATUS_INTERNAL_ERROR = 4,
     /* Device results only: the split half owning the device didn't answer. */
     ZPT_TUNING_STATUS_UNREACHABLE = 5,
+    /* This build doesn't save settings. */
+    ZPT_TUNING_STATUS_UNSUPPORTED = 6,
 };
 
 #if !IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_TELEMETRY_UART) &&                                       \
@@ -260,8 +273,14 @@ static void zpt_send_frame(uint8_t type, const uint8_t *payload, uint16_t length
     }
 }
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+#define ZPT_FEATURES ZPT_FEATURE_SAVING
+#else
+#define ZPT_FEATURES 0
+#endif
+
 static void zpt_send_describe(void) {
-    uint8_t payload[1] = {ZPT_PROTOCOL_VERSION};
+    uint8_t payload[2] = {ZPT_PROTOCOL_VERSION, ZPT_FEATURES};
     zpt_send_frame(ZPT_RESP_DESCRIBE, payload, sizeof(payload));
 }
 
@@ -362,6 +381,8 @@ static uint8_t zpt_tuning_status_from_errno(int error) {
         return ZPT_TUNING_STATUS_INVALID_VALUE;
     case -EAGAIN:
         return ZPT_TUNING_STATUS_UNREACHABLE;
+    case -ENOTSUP:
+        return ZPT_TUNING_STATUS_UNSUPPORTED;
     default:
         return ZPT_TUNING_STATUS_INTERNAL_ERROR;
     }
@@ -416,7 +437,7 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         const struct zpt_tuning_parameter *parameter = &target->parameters[i];
         const size_t label_length = MIN(strlen(parameter->label), UINT8_MAX);
         const size_t unit_length = MIN(strlen(parameter->unit), UINT8_MAX);
-        const size_t encoded_length = 24 + label_length + unit_length;
+        const size_t encoded_length = 29 + label_length + unit_length;
         int32_t compiled;
         int32_t current;
         int ret = zpt_tuning_get(target_id, parameter->id, true, &compiled);
@@ -429,6 +450,11 @@ static void zpt_send_tuning_description(uint8_t target_id) {
             zpt_send_tuning_result(ZPT_REQ_TUNING_DESCRIBE, ret, target_id, parameter->id, 0);
             return;
         }
+        int32_t saved = compiled;
+        bool has_saved = false;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+        has_saved = zpt_tuning_store_saved(target_id, parameter->id, &saved) == 0;
+#endif
         if (offset + encoded_length > sizeof(payload)) {
             LOG_WRN("Tuning description full after %u parameters", (unsigned int)i);
             payload[1] = i;
@@ -436,7 +462,7 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         }
 
         /* The bounds check above reserves exactly encoded_length =
-         * 24 + label_length + unit_length bytes, which is everything the
+         * 29 + label_length + unit_length bytes, which is everything the
          * block writes below; the static analyzer cannot see through the
          * symbolic lengths and flags the first write anyway. */
         // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
@@ -452,6 +478,9 @@ static void zpt_send_tuning_description(uint8_t target_id) {
         offset += 4;
         sys_put_le32((uint32_t)current, &payload[offset]);
         offset += 4;
+        sys_put_le32((uint32_t)saved, &payload[offset]);
+        offset += 4;
+        payload[offset++] = has_saved ? ZPT_TUNING_PARAMETER_SAVED : 0;
         payload[offset++] = label_length;
         payload[offset++] = unit_length;
         // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
@@ -488,9 +517,30 @@ static void zpt_handle_tuning_reset(const uint8_t *payload, uint16_t length) {
     }
 
     const uint8_t target_id = payload[0];
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+    /* Discarding previews returns to saved values, which may be compiled. */
+    int ret = zpt_tuning_store_restore(target_id);
+#else
     int ret =
         target_id == ZPT_TUNING_ALL_TARGETS ? zpt_tuning_reset_all() : zpt_tuning_reset(target_id);
+#endif
     zpt_send_tuning_result(ZPT_REQ_TUNING_RESET, ret, target_id, UINT8_MAX, 0);
+}
+
+/* Save (or clear) one target's values, or every target's with 0xff. */
+static void zpt_handle_tuning_saving(uint8_t type, const uint8_t *payload, uint16_t length) {
+    if (length != 1) {
+        zpt_send_tuning_result(type, -EINVAL, UINT8_MAX, UINT8_MAX, 0);
+        return;
+    }
+    const uint8_t target_id = payload[0];
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+    const int ret = type == ZPT_REQ_TUNING_SAVE ? zpt_tuning_store_save(target_id)
+                                                : zpt_tuning_store_clear(target_id);
+#else
+    const int ret = -ENOTSUP;
+#endif
+    zpt_send_tuning_result(type, ret, target_id, UINT8_MAX, 0);
 }
 
 static void zpt_send_tuning_help(uint8_t target_id, uint8_t parameter_id) {
@@ -644,6 +694,10 @@ static void zpt_dispatch_tuning(uint8_t type, const uint8_t *payload, uint16_t l
     case ZPT_REQ_TUNING_SET_MANY:
         zpt_handle_tuning_set_many(payload, length);
         break;
+    case ZPT_REQ_TUNING_SAVE:
+    case ZPT_REQ_TUNING_CLEAR_SAVED:
+        zpt_handle_tuning_saving(type, payload, length);
+        break;
     default:
         break;
     }
@@ -661,6 +715,8 @@ static bool zpt_is_tuning_request(uint8_t type) {
     case ZPT_REQ_TUNING_TARGET_METADATA:
     case ZPT_REQ_TUNING_PARAMETER_METADATA:
     case ZPT_REQ_TUNING_SET_MANY:
+    case ZPT_REQ_TUNING_SAVE:
+    case ZPT_REQ_TUNING_CLEAR_SAVED:
         return true;
     default:
         return false;
@@ -676,9 +732,9 @@ static bool zpt_is_tuning_request(uint8_t type) {
 #define ZPT_DEVICE_DESCRIPTION_SETTABLE 0x01
 #define ZPT_DEVICE_DESCRIPTION_STALE 0x02
 /* Description bytes besides the two strings: stable-id length (1), path
- * length (2), current and compiled CPI (4), flags (1), and the range form's
- * reserved count byte plus min, max and step (7). */
-#define ZPT_DEVICE_DESCRIPTION_FIXED_SIZE 15
+ * length (2), current, compiled and saved CPI (6), flags (1), and the range
+ * form's reserved count byte plus min, max and step (7). */
+#define ZPT_DEVICE_DESCRIPTION_FIXED_SIZE 17
 
 /* Device discovery and preview reuse the tuning result message so hosts
  * keep one error-status mapping; device ids ride the parameter-id byte. */
@@ -772,6 +828,12 @@ static void zpt_send_device_description(uint8_t device_id) {
     offset += 2;
     sys_put_le16(device->default_cpi, &payload[offset]);
     offset += 2;
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+    sys_put_le16(zpt_saved_device_cpi(device_id), &payload[offset]);
+#else
+    sys_put_le16(0, &payload[offset]);
+#endif
+    offset += 2;
     payload[offset++] = (uint8_t)((device->caps.settable ? ZPT_DEVICE_DESCRIPTION_SETTABLE : 0) |
                                   (stale ? ZPT_DEVICE_DESCRIPTION_STALE : 0));
     if (device->caps.settable && device->caps.discrete) {
@@ -834,6 +896,21 @@ static void zpt_handle_device_preview(const uint8_t *payload, uint16_t length) {
      * hosts compare requested against effective to offer a correction. */
     zpt_send_device_result(ZPT_REQ_DEVICE_PREVIEW, ret < 0 ? ret : 0, payload[0], effective);
 }
+
+/* Save (or clear) one device's CPI, or every device's with 0xff. */
+static void zpt_handle_device_saving(uint8_t type, const uint8_t *payload, uint16_t length) {
+    if (length != 1) {
+        zpt_send_device_result(type, -EINVAL, UINT8_MAX, 0);
+        return;
+    }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_TOOLS_SAVED_SETTINGS)
+    const int ret = type == ZPT_REQ_DEVICE_SAVE ? zpt_saved_device_save(payload[0])
+                                                : zpt_saved_device_clear(payload[0]);
+#else
+    const int ret = -ENOTSUP;
+#endif
+    zpt_send_device_result(type, ret, payload[0], 0);
+}
 #endif
 
 /* k_uptime_get_32() is uint32_t and atomic_val_t is signed; the explicit
@@ -869,6 +946,11 @@ static void zpt_dispatch(uint8_t type, const uint8_t *payload, uint16_t length) 
     case ZPT_REQ_DEVICE_PREVIEW:
         zpt_note_contact();
         zpt_handle_device_preview(payload, length);
+        return;
+    case ZPT_REQ_DEVICE_SAVE:
+    case ZPT_REQ_DEVICE_CLEAR_SAVED:
+        zpt_note_contact();
+        zpt_handle_device_saving(type, payload, length);
         return;
     default:
         break;

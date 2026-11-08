@@ -94,6 +94,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .playground-drop-zone { position: absolute; right: 45px; top: 50%; display: grid; width: 180px; height: 180px; place-items: center; border: 3px dashed var(--warning); color: var(--warning); transform: translateY(-50%); }
 .tuning-target { border: 1px solid var(--line); background: #11141a; padding: 14px; }
 .tuning-target-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.tuning-target-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .tuning-target-heading h3 { margin: 0; font-size: 16px; }
 .tuning-target-heading span { color: var(--muted); font-size: 13px; }
 .parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 10px; }

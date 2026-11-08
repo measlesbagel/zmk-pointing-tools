@@ -83,6 +83,9 @@ zpt_host_executable(source_ingress_test tests/source_ingress_test.c)
 zpt_host_executable(sensor_control_session_test tests/sensor_control_session_test.c)
 zpt_host_executable(stage_tuning_test tests/stage_tuning_test.c)
 zpt_host_executable(cursor_acceleration_test tests/cursor_acceleration_test.c)
+# The store runs against a stand-in tuning registry defined by the test.
+zpt_host_executable(tuning_store_test tests/tuning_store_test.c)
+target_sources(tuning_store_test PRIVATE "${ZPT_ROOT}/src/service/tuning_store.c")
 # The test checks the integer curve against a floating-point reference.
 target_link_libraries(cursor_acceleration_test PRIVATE m)
 zpt_host_executable(cursor_coalescer_test tests/cursor_coalescer_test.c)
@@ -107,6 +110,7 @@ add_test(NAME source_normalization COMMAND source_normalization_test)
 add_test(NAME source_ingress COMMAND source_ingress_test)
 add_test(NAME sensor_control_session COMMAND sensor_control_session_test)
 add_test(NAME stage_tuning COMMAND stage_tuning_test)
+add_test(NAME tuning_store COMMAND tuning_store_test)
 add_test(NAME cursor_acceleration COMMAND cursor_acceleration_test)
 add_test(NAME cursor_coalescer COMMAND cursor_coalescer_test)
 
