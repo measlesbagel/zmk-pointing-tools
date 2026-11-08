@@ -12,6 +12,7 @@
 #include <zmk/pointing_tools/stage/cursor_coalescer.h>
 #include <zmk/pointing_tools/stage/cursor_transfer.h>
 #include <zmk/pointing_tools/stage/motion_gate/coherent_displacement.h>
+#include <zmk/pointing_tools/stage/orientation.h>
 #include <zmk/pointing_tools/stage/scroll_batcher.h>
 #include <zmk/pointing_tools/stage/stage_tuning.h>
 #include <zmk/pointing_tools/stage/text_nav.h>
@@ -135,6 +136,65 @@ int zpt_stage_tuning_target_init(struct zpt_tuning_target *target,
     };
     return 0;
 }
+
+/* --- Orthogonal orientation ------------------------------------------ */
+
+enum {
+    ORIENTATION_SWAP_XY = 0,
+    ORIENTATION_INVERT_X,
+    ORIENTATION_INVERT_Y,
+};
+
+static const struct zpt_tuning_parameter orientation_parameters[] = {
+    {ORIENTATION_SWAP_XY, ZPT_TUNING_VALUE_BOOLEAN, "swap-xy", "swap-xy", 0, 1, 1, "Swap X and Y",
+     "", "Exchange the sensor axes before any inversion, for a sensor mounted a quarter turn."},
+    {ORIENTATION_INVERT_X, ZPT_TUNING_VALUE_BOOLEAN, "invert-x", "invert-x", 0, 1, 1, "Invert X",
+     "", "Flip horizontal motion after any swap."},
+    {ORIENTATION_INVERT_Y, ZPT_TUNING_VALUE_BOOLEAN, "invert-y", "invert-y", 0, 1, 1, "Invert Y",
+     "", "Flip vertical motion after any swap."},
+};
+
+static int orientation_get(const void *config, uint8_t parameter_id, int32_t *value) {
+    const struct zpt_orientation_config *orientation = config;
+    switch (parameter_id) {
+    case ORIENTATION_SWAP_XY:
+        *value = orientation->swap_xy ? 1 : 0;
+        return 0;
+    case ORIENTATION_INVERT_X:
+        *value = orientation->invert_x ? 1 : 0;
+        return 0;
+    case ORIENTATION_INVERT_Y:
+        *value = orientation->invert_y ? 1 : 0;
+        return 0;
+    default:
+        return -ENOENT;
+    }
+}
+
+static int orientation_put(void *config, uint8_t parameter_id, int32_t value) {
+    struct zpt_orientation_config *orientation = config;
+    switch (parameter_id) {
+    case ORIENTATION_SWAP_XY:
+        orientation->swap_xy = value != 0;
+        return 0;
+    case ORIENTATION_INVERT_X:
+        orientation->invert_x = value != 0;
+        return 0;
+    case ORIENTATION_INVERT_Y:
+        orientation->invert_y = value != 0;
+        return 0;
+    default:
+        return -ENOENT;
+    }
+}
+
+const struct zpt_stage_tuning_ops zpt_orientation_tuning_ops = {
+    .parameters = orientation_parameters,
+    .parameter_count = ZPT_ARRAY_SIZE(orientation_parameters),
+    .config_size = sizeof(struct zpt_orientation_config),
+    .get = orientation_get,
+    .put = orientation_put,
+};
 
 /* --- Coherent-displacement motion gate -------------------------------- */
 
