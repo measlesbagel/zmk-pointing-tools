@@ -221,7 +221,7 @@ int zpt_saved_device_clear(uint8_t device_id) {
 
 /* Relays block for up to the tunnel timeout per device, too long for the
  * system work queue, so the re-send runs on its own small queue. */
-K_THREAD_STACK_DEFINE(zpt_saved_stack, 1024);
+static K_THREAD_STACK_DEFINE(zpt_saved_stack, 1024);
 static struct k_work_q zpt_saved_queue;
 
 static void zpt_saved_resend(struct k_work *work) {
@@ -319,6 +319,9 @@ static int zpt_saved_commit(void) {
     return 0;
 }
 
+/* The handler macro defines an iterable-section object, which needs
+ * external linkage. */
+// NOLINTNEXTLINE(misc-use-internal-linkage)
 SETTINGS_STATIC_HANDLER_DEFINE(zpt_saved, ZPT_SAVED_ROOT, NULL, zpt_saved_set, zpt_saved_commit,
                                NULL);
 
