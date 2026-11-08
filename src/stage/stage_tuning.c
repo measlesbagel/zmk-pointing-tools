@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <zmk/pointing_tools/core/signal.h>
+#include <zmk/pointing_tools/policy/keypress_guard.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/cursor_acceleration.h>
@@ -136,6 +137,45 @@ int zpt_stage_tuning_target_init(struct zpt_tuning_target *target,
     };
     return 0;
 }
+
+/* --- Keypress guard --------------------------------------------------- */
+
+enum {
+    GUARD_SUPPRESS_AFTER_KEYPRESS = 0,
+};
+
+static const struct zpt_tuning_parameter guard_parameters[] = {
+    {GUARD_SUPPRESS_AFTER_KEYPRESS, ZPT_TUNING_VALUE_INTEGER, "suppress-after-keypress",
+     "suppress-after-keypress-ms", 0, 2000, 1, "Guard window", "ms",
+     "How long motion is held back after any key press. Raise it if typing nudges the "
+     "cursor; lower it if pointing right after a key press feels sluggish."},
+};
+
+static int guard_get(const void *config, uint8_t parameter_id, int32_t *value) {
+    const struct zpt_keypress_guard_config *guard = config;
+    if (parameter_id != GUARD_SUPPRESS_AFTER_KEYPRESS) {
+        return -ENOENT;
+    }
+    *value = (int32_t)guard->suppress_after_keypress_ms;
+    return 0;
+}
+
+static int guard_put(void *config, uint8_t parameter_id, int32_t value) {
+    struct zpt_keypress_guard_config *guard = config;
+    if (parameter_id != GUARD_SUPPRESS_AFTER_KEYPRESS) {
+        return -ENOENT;
+    }
+    guard->suppress_after_keypress_ms = (uint32_t)value;
+    return 0;
+}
+
+const struct zpt_stage_tuning_ops zpt_keypress_guard_tuning_ops = {
+    .parameters = guard_parameters,
+    .parameter_count = ZPT_ARRAY_SIZE(guard_parameters),
+    .config_size = sizeof(struct zpt_keypress_guard_config),
+    .get = guard_get,
+    .put = guard_put,
+};
 
 /* --- Orthogonal orientation ------------------------------------------ */
 

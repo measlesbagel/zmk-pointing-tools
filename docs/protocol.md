@@ -190,6 +190,7 @@ devicetree order:
 
 | Stage | Parameters |
 | --- | --- |
+| `measlesbagel,zpt-keypress-suppression` | `suppress-after-keypress` |
 | `measlesbagel,zpt-stage-orientation` | `swap-xy`, `invert-x`, `invert-y` |
 | `measlesbagel,zpt-stage-coherent-displacement` | `enabled`, `activation-distance`, `coherence`, `qualification-timeout`, `idle-timeout` |
 | `measlesbagel,zpt-stage-cursor-transfer` | `scale-multiplier`, `scale-divisor` |

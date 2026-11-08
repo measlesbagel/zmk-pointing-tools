@@ -31,6 +31,7 @@ struct zpt_stage_tuning_ops {
 /* Largest stage config tuning can stage on the stack. */
 #define ZPT_STAGE_TUNING_MAX_CONFIG_SIZE 96
 
+extern const struct zpt_stage_tuning_ops zpt_keypress_guard_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_orientation_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_coherent_displacement_tuning_ops;
 extern const struct zpt_stage_tuning_ops zpt_cursor_transfer_tuning_ops;

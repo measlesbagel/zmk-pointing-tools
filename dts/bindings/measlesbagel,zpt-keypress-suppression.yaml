@@ -5,6 +5,11 @@ description: Shared keypress suppression policy for composed pointing pipelines
 compatible: "measlesbagel,zpt-keypress-suppression"
 
 properties:
+  stable-id:
+    type: string
+    description: >
+      Identity the tuner shows for this guard. Defaults to the node name.
+
   suppress-after-keypress-ms:
     type: int
     required: true
