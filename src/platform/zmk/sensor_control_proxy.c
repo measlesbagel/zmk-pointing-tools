@@ -211,10 +211,14 @@ int zpt_sensor_control_get_remote(const struct zpt_pointing_device *device, uint
 DT_INST_FOREACH_STATUS_OKAY(ZPT_SENSOR_PROXY_DEFINE)
 
 /* Answers can come from any peripheral, so listen on every channel this
- * central receives. Each callback knows its channel's reg. */
+ * central receives. Each callback knows its channel's reg. The extra macro
+ * layer expands the callback's name before INPUT_CALLBACK_DEFINE_NAMED
+ * pastes it. */
+#define ZPT_SENSOR_PROXY_CALLBACK(dev, user_data, name)                                            \
+    INPUT_CALLBACK_DEFINE_NAMED(dev, zpt_sensor_proxy_receive, user_data, name)
+
 #define ZPT_SENSOR_PROXY_LISTEN(node)                                                              \
-    INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(node), zpt_sensor_proxy_receive,                     \
-                                (void *)(uintptr_t)DT_REG_ADDR(node),                              \
-                                UTIL_CAT(zpt_sensor_proxy_listen_, DT_DEP_ORD(node)));
+    ZPT_SENSOR_PROXY_CALLBACK(DEVICE_DT_GET(node), (void *)(uintptr_t)DT_REG_ADDR(node),           \
+                              DT_CAT(zpt_sensor_proxy_listen_, node));
 
 DT_FOREACH_STATUS_OKAY(zmk_input_split, ZPT_SENSOR_PROXY_LISTEN)
