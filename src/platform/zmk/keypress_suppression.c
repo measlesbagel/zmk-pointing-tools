@@ -11,17 +11,27 @@
 #include <zmk/events/position_state_changed.h>
 
 #include <zmk/pointing_tools/platform/zmk/keypress_suppression.h>
+#include <zmk/pointing_tools/policy/keypress_guard.h>
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+#include <zmk/pointing_tools/platform/zmk/stage_tuning.h>
+#endif
 
 struct zpt_keypress_suppression_config {
-    uint32_t suppress_after_ms;
+    const char *stable_id;
+    const char *devicetree_path;
+    struct zpt_keypress_guard_config guard;
 };
 
 struct zpt_keypress_suppression_data {
-    uint32_t suppress_after_ms;
+    /* Read by the input thread; runtime tuning replaces it between frames. */
+    struct zpt_keypress_guard_config guard;
     /* Written by the ZMK event listener thread, read by the input thread. */
     atomic_t last_keypress_ms;
     atomic_t have_keypress;
     struct zpt_suppression_policy policy;
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    struct zpt_zmk_stage_tuning tuning;
+#endif
 };
 
 static bool keypress_is_suppressed(void *context, const struct zpt_signal *signal,
@@ -30,8 +40,9 @@ static bool keypress_is_suppressed(void *context, const struct zpt_signal *signa
     struct zpt_keypress_suppression_data *data = context;
     /* have_keypress is published after last_keypress_ms, so observing it
      * nonzero means the timestamp is already the newest press. */
-    return atomic_get(&data->have_keypress) != 0 &&
-           now_ms - (uint32_t)atomic_get(&data->last_keypress_ms) < data->suppress_after_ms;
+    const bool have_keypress = atomic_get(&data->have_keypress) != 0;
+    return zpt_keypress_guard_active(&data->guard, have_keypress,
+                                     (uint32_t)atomic_get(&data->last_keypress_ms), now_ms);
 }
 
 static const struct zpt_suppression_policy *
@@ -71,11 +82,15 @@ int zpt_zmk_keypress_suppression_get(const struct device *dev,
 static int keypress_suppression_init(const struct device *dev) {
     const struct zpt_keypress_suppression_config *config = dev->config;
     struct zpt_keypress_suppression_data *data = dev->data;
-    data->suppress_after_ms = config->suppress_after_ms;
+    data->guard = config->guard;
     data->policy = (struct zpt_suppression_policy){
         .is_suppressed = keypress_is_suppressed,
         .context = data,
     };
+#if defined(CONFIG_ZMK_POINTING_TOOLS_RUNTIME_TUNING)
+    zpt_zmk_stage_tuning_register(&data->tuning, &zpt_keypress_guard_tuning_ops, config->stable_id,
+                                  config->devicetree_path, &config->guard, &data->guard);
+#endif
     return 0;
 }
 
@@ -113,7 +128,9 @@ ZMK_SUBSCRIPTION(zpt_keypress_suppression, zmk_position_state_changed);
 #define ZPT_KEYPRESS_SUPPRESSION_DEFINE(inst)                                                      \
     static struct zpt_keypress_suppression_data zpt_keypress_suppression_data_##inst;              \
     static const struct zpt_keypress_suppression_config zpt_keypress_suppression_config_##inst = { \
-        .suppress_after_ms = DT_INST_PROP(inst, suppress_after_keypress_ms),                       \
+        .stable_id = DT_INST_PROP_OR(inst, stable_id, DT_NODE_FULL_NAME(DT_DRV_INST(inst))),       \
+        .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \
+        .guard = {.suppress_after_keypress_ms = DT_INST_PROP(inst, suppress_after_keypress_ms)},   \
     };                                                                                             \
     DEVICE_DT_INST_DEFINE(inst, keypress_suppression_init, NULL,                                   \
                           &zpt_keypress_suppression_data_##inst,                                   \

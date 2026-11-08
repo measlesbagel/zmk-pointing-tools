@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <zmk/pointing_tools/core/signal.h>
+#include <zmk/pointing_tools/policy/keypress_guard.h>
 #include <zmk/pointing_tools/stage/axis_constraint.h>
 #include <zmk/pointing_tools/stage/axis_intent.h>
 #include <zmk/pointing_tools/stage/cursor_acceleration.h>
@@ -19,11 +20,11 @@
 #include <zmk/pointing_tools/stage/text_nav.h>
 
 static const struct zpt_stage_tuning_ops *const all_ops[] = {
-    &zpt_orientation_tuning_ops,      &zpt_coherent_displacement_tuning_ops,
-    &zpt_cursor_transfer_tuning_ops,  &zpt_scroll_batcher_tuning_ops,
-    &zpt_text_nav_tuning_ops,         &zpt_axis_intent_tuning_ops,
-    &zpt_axis_constraint_tuning_ops,  &zpt_cursor_acceleration_tuning_ops,
-    &zpt_cursor_coalescer_tuning_ops,
+    &zpt_keypress_guard_tuning_ops,        &zpt_orientation_tuning_ops,
+    &zpt_coherent_displacement_tuning_ops, &zpt_cursor_transfer_tuning_ops,
+    &zpt_scroll_batcher_tuning_ops,        &zpt_text_nav_tuning_ops,
+    &zpt_axis_intent_tuning_ops,           &zpt_axis_constraint_tuning_ops,
+    &zpt_cursor_acceleration_tuning_ops,   &zpt_cursor_coalescer_tuning_ops,
 };
 
 static int32_t get(const struct zpt_stage_tuning_ops *ops, const void *config, uint8_t id) {
@@ -345,11 +346,37 @@ static void test_orientation_tunes_each_axis_flag(void) {
     assert(output.x_counts == -5 && output.y_counts == 3);
 }
 
+/* A tuned guard window takes effect on the next key press check, and the
+ * window still holds across the millisecond counter wrapping. */
+static void test_keypress_guard_window_tunes(void) {
+    struct zpt_keypress_guard_config current = {.suppress_after_keypress_ms = 40};
+    assert(zpt_keypress_guard_active(&current, true, 1000, 1030));
+    assert(!zpt_keypress_guard_active(&current, true, 1000, 1040));
+    assert(!zpt_keypress_guard_active(&current, false, 1000, 1000));
+    assert(zpt_keypress_guard_active(&current, true, UINT32_MAX - 9, 20));
+
+    const struct zpt_tuning_value value = {.parameter_id = 0, .value = 120};
+    struct zpt_keypress_guard_config candidate;
+    uint8_t failed = UINT8_MAX;
+    assert(zpt_stage_tuning_prepare(&zpt_keypress_guard_tuning_ops, &current, &value, 1, &candidate,
+                                    &failed) == 0);
+    assert(current.suppress_after_keypress_ms == 40);
+    current = candidate;
+    assert(zpt_keypress_guard_active(&current, true, 1000, 1100));
+    assert(!zpt_keypress_guard_active(&current, true, 1000, 1120));
+
+    const struct zpt_tuning_value off = {.parameter_id = 0, .value = 0};
+    assert(zpt_stage_tuning_prepare(&zpt_keypress_guard_tuning_ops, &current, &off, 1, &candidate,
+                                    &failed) == 0);
+    assert(!zpt_keypress_guard_active(&candidate, true, 1000, 1000));
+}
+
 int main(void) {
     test_parameter_tables_round_trip();
     test_devicetree_units_read_back_exactly();
     test_prepare_builds_a_candidate();
     test_orientation_tunes_each_axis_flag();
+    test_keypress_guard_window_tunes();
     test_axis_intent_rejects_release_above_engage();
     test_acceleration_curve_moves_as_one_batch();
     test_coalescer_keeps_its_link_query();
