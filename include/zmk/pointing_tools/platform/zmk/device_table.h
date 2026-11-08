@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -13,10 +14,16 @@
  * agree without runtime negotiation. */
 
 struct zpt_pointing_device {
-    uint8_t id;       /* dense session id, assigned in devicetree order */
-    uint8_t location; /* 0 central-local, otherwise owning peripheral index + 1;
-                         for split topologies with more than one peripheral,
-                         align this with the half's zmk,input-split reg + 1 */
+    uint8_t id; /* dense session id, assigned in devicetree order */
+    /* 0 when this build owns the device locally, otherwise nonzero. With a
+     * split channel it is the channel's reg + 1; legacy entries without one
+     * give the owning peripheral index + 1. */
+    uint8_t location;
+    /* The zmk,input-split channel that carries this device's motion from
+     * its owning half. Control requests are routed by this channel, not by
+     * the order halves paired in. */
+    bool has_split_channel;
+    uint8_t split_reg;
     uint16_t default_cpi;
     const char *stable_id;
     const char *devicetree_path; /* node path of this entry, for host profiles */

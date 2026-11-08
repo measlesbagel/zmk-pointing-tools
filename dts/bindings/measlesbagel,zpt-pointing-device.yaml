@@ -23,12 +23,23 @@ properties:
       entry still lists, labels motion, and relays control requests, but
       nothing reaches a driver on that half.
 
+  split-input:
+    type: phandle
+    description: >
+      The zmk,input-split node whose channel carries this device's motion
+      from the half that owns it. Control requests and their answers are
+      routed by this channel, so they reach the right half whatever order
+      the halves paired in, with a dongle or either half as central. The
+      device counts as local on a central that also names its sensor, so
+      one entry serves every central choice. Replaces location.
+
   location:
     type: int
     default: 0
     description: >
-      Which half owns the device: 0 for central-local, otherwise the owning
-      split peripheral index plus one.
+      Legacy alternative to split-input for one-peripheral splits: 0 for
+      central-local, otherwise the owning split peripheral index plus one.
+      Peripheral indices follow pairing order, so prefer split-input.
 
   resolution-cpi:
     type: int

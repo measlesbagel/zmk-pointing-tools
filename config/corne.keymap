@@ -258,8 +258,9 @@
     };
 
     /* Physical pointing devices, one per half, declared identically for
-     * both halves. Corne's left half is the central (location 0). Neither
-     * names a sensor: the smoke build has none, and a real keyboard adds
+     * both halves. Corne's left half is the central. The peripheral ball
+     * names the split channel its motion rides, which routes CPI requests
+     * to whichever half sends on it. Neither names a sensor: the smoke build has none, and a real keyboard adds
      * each sensor from its owning half's devicetree. The range matches the
      * PAW3222 driver, which applies multiples of 38 CPI. */
     zpt_test_central_ball: zpt_test_central_ball {
@@ -274,7 +275,7 @@
     zpt_test_peripheral_ball: zpt_test_peripheral_ball {
         compatible = "measlesbagel,zpt-pointing-device";
         stable-id = "peripheral-ball";
-        location = <1>;
+        split-input = <&zpt_cpi_split>;
         resolution-cpi = <684>;
         cpi-min = <608>;
         cpi-max = <4826>;
@@ -309,18 +310,17 @@
     };
 
     /* Split sensor-control tunnel. The peripheral builds the agent
-     * behavior, which serves CPI requests and answers on its split-input
-     * channel; the central's proxy listens there and matches answers to its
-     * requests. This smoke build has no peripheral sensor, so the tunnel
-     * gets a channel of its own; a real keyboard points split-input at the
-     * channel its sensor already uses. The channel needs some device, and
-     * naming the agent would be a devicetree cycle, so it names the kscan,
-     * which never reports input events. The agent's node name must stay
-     * within 8 characters. */
+     * behavior, which serves CPI requests for devices whose sensor it has
+     * and answers on the device's split-input channel; the central's proxy
+     * listens on every channel and matches answers to its requests. This
+     * smoke build has no peripheral sensor, so the peripheral ball gets a
+     * channel of its own; a real keyboard points split-input at the channel
+     * its sensor already uses. The channel needs some device, so it names
+     * the kscan, which never reports input events. The agent's node name
+     * must stay within 8 characters. */
     zpt_cpi: zpt_cpi {
         compatible = "measlesbagel,zpt-sensor-control";
         #binding-cells = <0>;
-        split-input = <&zpt_cpi_split>;
     };
 
     split_inputs {

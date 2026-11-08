@@ -60,7 +60,7 @@ ZTEST(zpt_unit, device_local_entry_reports_discrete_capabilities) {
 ZTEST(zpt_unit, device_remote_entry_reports_range_capabilities) {
     const struct zpt_pointing_device *device = zpt_device_table_find("test-remote-trackball");
 
-    /* Peripheral one owns this entry. */
+    /* The half sending on channel 0 owns this entry. */
     zassert_equal(device->location, 1);
     zassert_equal(device->default_cpi, 400);
     zassert_true(device->caps.settable);
@@ -68,6 +68,25 @@ ZTEST(zpt_unit, device_remote_entry_reports_range_capabilities) {
     zassert_equal(device->caps.range_min, 100);
     zassert_equal(device->caps.range_max, 1200);
     zassert_equal(device->caps.range_step, 100);
+}
+
+ZTEST(zpt_unit, device_split_channel_routes_by_reg) {
+    const struct zpt_pointing_device *local = zpt_device_table_find("test-local-trackball");
+    const struct zpt_pointing_device *remote = zpt_device_table_find("test-remote-trackball");
+    const struct zpt_pointing_device *fixed = zpt_device_table_find("test-fixed-numpad");
+
+    /* A central that has the sensor owns the device whatever its channel. */
+    zassert_true(local->has_split_channel);
+    zassert_equal(local->split_reg, 1);
+    zassert_equal(local->location, 0);
+
+    /* Without the sensor, the owner is whoever sends on the channel, and
+     * the location is that channel's reg + 1. */
+    zassert_true(remote->has_split_channel);
+    zassert_equal(remote->split_reg, 0);
+    zassert_equal(remote->location, 1);
+
+    zassert_false(fixed->has_split_channel);
 }
 
 ZTEST(zpt_unit, device_sensor_is_optional) {
