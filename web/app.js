@@ -42,6 +42,7 @@ import {
   renderDevicetreeSnippet,
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
+import { applicableGames, gamesForSetting } from "./games.js";
 import { PointingPlayground } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
@@ -201,9 +202,11 @@ function renderTuning() {
   calibration?.refresh();
   if (!tuningTargets.size) {
     elements.tuning.innerHTML = '<p class="muted">This firmware has no tunable pipeline stages. Gate, acceleration, transfer, coalescer, scroll, text, axis-intent, and axis-constraint stages appear here.</p>';
+    renderGames([]);
     return;
   }
 
+  const games = applicableGames(tuningTargets.values());
   elements.tuning.innerHTML = [...tuningTargets.values()]
     .map((target) => {
       /* An acceleration curve gets the graphical editor; its other
@@ -230,23 +233,39 @@ function renderTuning() {
         <div class="tuning-target-actions">${actions}</div>
       </div>
       ${curve ? curveEditors.render(target.id, curve) : ""}
-      ${parameters.length ? `<div class="parameters">${parameters.map((parameter) => {
-        const changed = parameter.current !== bootValue(parameter);
-        const control = parameter.type === TUNING.BOOLEAN
-          ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
-          : `<input type="number" data-value value="${parameter.current}" min="${parameter.minimum}" max="${parameter.maximum}" step="${parameter.step}">`;
-        const help = parameter.description
-          ? `<span class="parameter-help" tabindex="0" role="img" aria-label="${escapeHtml(parameter.description)}" data-tooltip="${escapeHtml(parameter.description)}">?</span>`
-          : "";
-        return `<div class="parameter ${changed ? "changed" : ""}" data-target="${target.id}" data-parameter="${parameter.id}">
-          <label><span>${escapeHtml(parameter.label)}${parameter.unit ? ` <small>(${escapeHtml(parameter.unit)})</small>` : ""}</span>${help}</label>
-          <div class="parameter-control">${control}<button data-preview>Preview</button></div>
-          <small>${parameterProvenance(parameter)}</small>
-        </div>`;
-      }).join("")}</div>` : (curve ? "" : '<p class="muted">Loading parameters…</p>')}
+      ${parameters.length ? `<div class="parameters">${parameters.map((parameter) => renderParameterRow(target, parameter, { games })).join("")}</div>`
+        : (curve ? "" : '<p class="muted">Loading parameters…</p>')}
     </article>`;
     })
     .join("");
+  renderGames(games);
+}
+
+/* One setting's row. In the settings menu it links to the games that use
+ * it; on a game screen it names its stage and links back to the menu. */
+function renderParameterRow(target, parameter, { games, inGame = false } = {}) {
+  const changed = parameter.current !== bootValue(parameter);
+  const control = parameter.type === TUNING.BOOLEAN
+    ? `<input type="checkbox" data-value ${parameter.current ? "checked" : ""}>`
+    : `<input type="number" data-value value="${parameter.current}" min="${parameter.minimum}" max="${parameter.maximum}" step="${parameter.step}">`;
+  const help = parameter.description
+    ? `<span class="parameter-help" tabindex="0" role="img" aria-label="${escapeHtml(parameter.description)}" data-tooltip="${escapeHtml(parameter.description)}">?</span>`
+    : "";
+  const links = inGame
+    ? `<small class="game-links">${escapeHtml(target.label)} · <a href="#setting-${target.id}-${parameter.id}" data-show-setting="${target.id}-${parameter.id}">in settings</a></small>`
+    : (() => {
+      const used = games ? gamesForSetting(games, target.id, parameter.id) : [];
+      return used.length
+        ? `<small class="game-links">Played in ${used.map(({ id, title }) => `<a href="#game-${id}" data-open-game="${id}">${escapeHtml(title)}</a>`).join(", ")}</small>`
+        : "";
+    })();
+  const anchor = inGame ? "" : ` id="setting-${target.id}-${parameter.id}"`;
+  return `<div class="parameter ${changed ? "changed" : ""}"${anchor} data-target="${target.id}" data-parameter="${parameter.id}">
+    <label><span>${escapeHtml(parameter.label)}${parameter.unit ? ` <small>(${escapeHtml(parameter.unit)})</small>` : ""}</span>${help}</label>
+    <div class="parameter-control">${control}<button data-preview>Preview</button></div>
+    <small>${parameterProvenance(parameter)}</small>
+    ${links}
+  </div>`;
 }
 
 function stateFlagLabels(flags) {
@@ -425,6 +444,7 @@ function setDevices(list) {
       queueTuningRequest(MESSAGE.DEVICE_DESCRIBE_REQUEST, Uint8Array.of(device.id));
     }
   }
+  renderCapabilityChecks();
 }
 
 /* Device descriptions echo their stable identity instead of a numeric id,
@@ -892,29 +912,38 @@ elements.tuning.addEventListener("click", async (event) => {
     tuningRequests.enqueue(MESSAGE.TUNING_CLEAR_SAVED_REQUEST, encodeTuningClearSaved(targetId));
     return;
   }
+  const gameLink = event.target.closest("[data-open-game]");
+  if (gameLink) {
+    event.preventDefault();
+    openGame(gameLink.dataset.openGame);
+    return;
+  }
   if (preview) {
-    const row = preview.closest("[data-target][data-parameter]");
-    const targetId = Number(row.dataset.target);
-    const parameterId = Number(row.dataset.parameter);
-    const target = tuningTargets.get(targetId);
-    const parameter = target?.parameters.find(({ id }) => id === parameterId);
-    const input = row.querySelector("[data-value]");
-    const value = parameter?.type === TUNING.BOOLEAN ? Number(input.checked) : Number(input.value);
-    if (!parameter || !Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum) {
-      notice("Enter a whole value within the advertised range.", true);
-      return;
-    }
-    if (simulator) {
-      parameter.current = value;
-      renderTuning();
-      notice(`${target.label} simulator preview updated.`);
-    } else if (transport) {
-      tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
-    }
+    previewParameterRow(preview.closest("[data-target][data-parameter]"));
   } else if (reset) {
     resetTarget(Number(reset.dataset.resetTarget));
   }
 });
+
+function previewParameterRow(row) {
+  const targetId = Number(row.dataset.target);
+  const parameterId = Number(row.dataset.parameter);
+  const target = tuningTargets.get(targetId);
+  const parameter = target?.parameters.find(({ id }) => id === parameterId);
+  const input = row.querySelector("[data-value]");
+  const value = parameter?.type === TUNING.BOOLEAN ? Number(input.checked) : Number(input.value);
+  if (!parameter || !Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum) {
+    notice("Enter a whole value within the advertised range.", true);
+    return;
+  }
+  if (simulator) {
+    parameter.current = value;
+    renderTuning();
+    notice(`${target.label} simulator preview updated.`);
+  } else if (transport) {
+    tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
+  }
+}
 
 function resetTarget(targetId) {
   curveEditors.discard(targetId);
@@ -1005,7 +1034,7 @@ function playgroundContext() {
   };
 }
 
-new PointingPlayground(document.getElementById("playground"), {
+const playground = new PointingPlayground(document.getElementById("playground"), {
   getContext: playgroundContext,
   onExport: (result) => {
     downloadJson(
@@ -1052,4 +1081,164 @@ calibration = new CalibrationPanel(document.getElementById("calibration"), {
 });
 
 renderLoop();
+
+/* --- App shell: views, games, first setup ----------------------------- */
+
+const views = [...document.querySelectorAll("[data-view]")];
+const viewTabs = [...document.querySelectorAll("[data-view-tab]")];
+
+function showView(name) {
+  for (const view of views) view.hidden = view.dataset.view !== name;
+  for (const tab of viewTabs) {
+    if (tab.dataset.viewTab === name) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
+  }
+}
+
+for (const tab of viewTabs) tab.addEventListener("click", () => showView(tab.dataset.viewTab));
+
+const gameScreen = document.getElementById("game-screen");
+const gameList = document.getElementById("game-list");
+const setupSteps = document.getElementById("setup-steps");
+const setupStart = document.querySelector("[data-setup-start]");
+let currentGames = [];
+let openGameId;
+/* The first-setup run: game ids in order and where the user is. */
+let setup;
+
+function settingRows(settings) {
+  return settings.map(({ targetId, parameterId }) => {
+    const target = tuningTargets.get(targetId);
+    const parameter = target?.parameters.find(({ id }) => id === parameterId);
+    return parameter ? renderParameterRow(target, parameter, { inGame: true }) : "";
+  }).join("");
+}
+
+function renderGames(games) {
+  currentGames = games;
+  setupStart.disabled = games.length === 0;
+  gameList.innerHTML = games.length
+    ? games.map((game) => `<article class="game-card" id="game-${game.id}">
+        <h3>${escapeHtml(game.title)}</h3>
+        <p>${escapeHtml(game.summary)}</p>
+        <p>Drives the ${escapeHtml(game.drives)} · ${game.main.length + game.related.length} settings</p>
+        <button type="button" data-open-game="${game.id}">Open</button>
+      </article>`).join("")
+    : `<p class="muted">${tuningTargets.size
+      ? "None of this firmware's stages has a game yet, or their names are still loading."
+      : "Connect current firmware, or use the simulator, to see the games your keyboard can play."}</p>`;
+  renderSetupSteps();
+  renderGameScreen();
+  renderCapabilityChecks();
+}
+
+function renderSetupSteps() {
+  setupSteps.hidden = !setup;
+  if (!setup) return;
+  setupSteps.innerHTML = setup.ids.map((id, index) => {
+    const game = currentGames.find((item) => item.id === id);
+    const state = index < setup.index ? "done" : index === setup.index ? "current" : "";
+    return `<li class="${state}">${escapeHtml(game?.title ?? id)}</li>`;
+  }).join("");
+}
+
+function renderGameScreen() {
+  const game = currentGames.find(({ id }) => id === openGameId);
+  gameScreen.hidden = !game;
+  if (!game) return;
+  gameScreen.querySelector("[data-game-drives]").textContent = `Drives the ${game.drives}`;
+  gameScreen.querySelector("[data-game-title]").textContent = game.title;
+  gameScreen.querySelector("[data-game-summary]").textContent = game.summary;
+  gameScreen.querySelector("[data-game-settings]").innerHTML = settingRows(game.main)
+    || '<p class="muted">This game\'s main settings are still loading.</p>';
+  gameScreen.querySelector("[data-game-related-wrap]").hidden = game.related.length === 0;
+  gameScreen.querySelector("[data-game-related]").innerHTML = settingRows(game.related);
+  const unsaved = [...game.main, ...game.related].some(({ targetId, parameterId }) => {
+    const parameter = tuningTargets.get(targetId)?.parameters.find(({ id }) => id === parameterId);
+    return parameter && parameter.current !== bootValue(parameter);
+  });
+  const save = gameScreen.querySelector("[data-game-save]");
+  save.hidden = !savingSupported;
+  save.disabled = !unsaved;
+  const next = gameScreen.querySelector("[data-setup-next]");
+  next.hidden = !setup || setup.ids[setup.index] !== game.id;
+  next.textContent = setup && setup.index === setup.ids.length - 1 ? "Finish setup" : "Next game";
+}
+
+function openGame(id) {
+  if (!currentGames.some((game) => game.id === id)) return;
+  openGameId = id;
+  showView("games");
+  renderGameScreen();
+  gameScreen.scrollIntoView({ block: "start" });
+}
+
+gameList.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-open-game]");
+  if (open) openGame(open.dataset.openGame);
+});
+
+setupStart.addEventListener("click", () => {
+  setup = { ids: currentGames.map(({ id }) => id), index: 0 };
+  renderSetupSteps();
+  openGame(setup.ids[0]);
+});
+
+gameScreen.addEventListener("click", (event) => {
+  const game = currentGames.find(({ id }) => id === openGameId);
+  if (!game) return;
+  const preview = event.target.closest("[data-preview]");
+  const settingLink = event.target.closest("[data-show-setting]");
+  if (preview) {
+    previewParameterRow(preview.closest("[data-target][data-parameter]"));
+  } else if (settingLink) {
+    event.preventDefault();
+    showView("settings");
+    document.getElementById(`setting-${settingLink.dataset.showSetting}`)?.scrollIntoView({ block: "center" });
+  } else if (event.target.closest("[data-game-play]")) {
+    playground.openActivity(game.activity);
+  } else if (event.target.closest("[data-game-save]")) {
+    /* Save every stage this game's settings live on. */
+    const targetIds = new Set([...game.main, ...game.related].map(({ targetId }) => targetId));
+    for (const targetId of targetIds) queueTuningRequest(MESSAGE.TUNING_SAVE_REQUEST, Uint8Array.of(targetId));
+  } else if (event.target.closest("[data-setup-next]")) {
+    setup.index += 1;
+    if (setup.index >= setup.ids.length) {
+      setup = undefined;
+      openGameId = undefined;
+      renderSetupSteps();
+      renderGameScreen();
+      notice(savingSupported
+        ? "First setup finished. Anything you saved now survives a reboot."
+        : "First setup finished. This build can't save, so copy the config from Settings to keep it.");
+      return;
+    }
+    renderSetupSteps();
+    openGame(setup.ids[setup.index]);
+  } else if (event.target.closest("[data-game-close]")) {
+    openGameId = undefined;
+    renderGameScreen();
+  }
+});
+
+/* What the connected firmware offers, as plain checks a person or an agent
+ * reading the page can follow. */
+function renderCapabilityChecks() {
+  const list = document.getElementById("capability-checks");
+  if (!protocolReady && !simulator) {
+    list.innerHTML = '<li class="muted">Not connected.</li>';
+    return;
+  }
+  const checks = [
+    [true, transport ? `Protocol v${PROTOCOL_VERSION} connected.` : "Simulator running; no keyboard is connected."],
+    [tuningTargets.size > 0, `${tuningTargets.size} tunable stages reported.`],
+    [devices.size > 0, `${devices.size} pointing devices reported.`],
+    [currentGames.length > 0, `${currentGames.length} games available.`],
+    [savingSupported, savingSupported ? "Saving on the device is available." : "This build can't save on the device; previews last until reboot."],
+  ];
+  list.innerHTML = checks
+    .map(([ok, text]) => `<li class="${ok ? "" : "missing"}">${ok ? "OK" : "Missing"}: ${escapeHtml(text)}</li>`)
+    .join("");
+}
+
 renderTuning();

@@ -1,8 +1,24 @@
-# Guided playground
+# Games and the playground
 
-The local tuner includes repeatable activities for comparing pointing settings
-without switching between arbitrary desktop applications. Open **Guided
-playground** and choose an activity before starting a run.
+The tuner opens on **Games**. After connecting, it lists the games this
+keyboard can play, worked out from the stages its firmware reports: a cursor
+game needs a cursor-transfer or acceleration stage, scroll speed needs a
+scroll stage, axis lock an axis-intent stage, text movement a text stage, and
+so on (`web/games.js`). Nothing is asked up front.
+
+Each game screen shows the game's one or two main settings, with the other
+settings that affect it under **More settings**. **Play** opens the game's
+activity; previews take effect immediately, and **Save** keeps the game's
+stages on the device when the firmware can save (see
+[Saving](protocol.md#saving)). Every setting row links to the same setting in
+**Settings**, and each setting there lists the games that use it.
+
+**Start first setup** walks through the available games in order: direction,
+base speed, then each capability. **Diagnostics** lists what the connected
+firmware reports and what is missing, next to the stage-decision stream.
+
+The games are built on the playground activities below, which stay available
+under **Free play**.
 
 Available activities cover:
 
