@@ -16,6 +16,7 @@
 #include <zmk/split/peripheral.h>
 
 #include <zmk/pointing_tools/platform/zmk/device_table.h>
+#include <zmk/pointing_tools/source/sensor_control_wire.h>
 
 LOG_MODULE_REGISTER(zpt_sensor_agent, CONFIG_ZMK_LOG_LEVEL);
 
@@ -23,8 +24,12 @@ LOG_MODULE_REGISTER(zpt_sensor_agent, CONFIG_ZMK_LOG_LEVEL);
  * requests through ZMK's INVOKE_BEHAVIOR command, and this behavior serves
  * them against the local device table. The outcome rides back as one packed
  * relative input event, reported straight to the split transport on the
- * agent's split-input channel, where the central proxy listens (see
- * docs/device-cpi-control.md for the wiring).
+ * device's split-input channel (or, for legacy entries, the agent's), where
+ * the central proxy listens (see docs/device-cpi-control.md for the wiring).
+ *
+ * The central sends a request for a channel-routed device to every half,
+ * because it can't tell which peripheral slot owns a channel. Only the half
+ * that has the device's sensor answers; the others stay silent.
  *
  * Invocations arrive on the Bluetooth receive path, so serving (which talks
  * to the sensor over SPI) and reporting (which sends a notification) are
@@ -33,7 +38,9 @@ LOG_MODULE_REGISTER(zpt_sensor_agent, CONFIG_ZMK_LOG_LEVEL);
  * that hasn't run yet, because the central has stopped waiting for it. */
 
 struct zpt_agent_config {
-    uint8_t split_reg;
+    /* The agent's own channel for legacy entries without split-input, or
+     * -1 when the agent names none. */
+    int16_t split_reg;
 };
 
 struct zpt_agent_request {
@@ -82,9 +89,25 @@ static int zpt_agent_pressed(struct zmk_behavior_binding *binding,
     }
 
     const struct zpt_agent_config *config = behavior->config;
+    const struct zpt_pointing_device *device =
+        zpt_device_table_at(zpt_scw_param_device_id(binding->param1));
+    int16_t split_reg = config->split_reg;
+    if (device != NULL && device->has_split_channel) {
+        if (device->sensor == NULL) {
+            /* Another half owns this device and answers for it. */
+            return ZMK_BEHAVIOR_OPAQUE;
+        }
+        split_reg = device->split_reg;
+    }
+    if (split_reg < 0) {
+        LOG_WRN("No split channel to answer on for device %u",
+                zpt_scw_param_device_id(binding->param1));
+        return ZMK_BEHAVIOR_OPAQUE;
+    }
+
     k_spinlock_key_t key = k_spin_lock(&zpt_agent_lock);
     zpt_agent_pending = (struct zpt_agent_request){
-        .split_reg = config->split_reg,
+        .split_reg = (uint8_t)split_reg,
         .param1 = binding->param1,
         .param2 = binding->param2,
     };
@@ -101,13 +124,20 @@ static const struct behavior_driver_api zpt_sensor_control_behavior_api = {
 /* ZMK's central subscribes reliably to only one zmk,input-split channel per
  * peripheral, so the agent answers on the channel that half already uses
  * for its sensor instead of needing one of its own. */
+#define ZPT_SENSOR_CONTROL_SPLIT_REG(inst)                                                         \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, split_input),                                          \
+                (DT_REG_ADDR(DT_INST_PHANDLE(inst, split_input))), (-1))
+
 #define ZPT_SENSOR_CONTROL_DEFINE(inst)                                                            \
     BUILD_ASSERT(sizeof(DEVICE_DT_NAME(DT_DRV_INST(inst))) <= 9,                                   \
                  "ZMK's split relay carries at most 8 characters of behavior name");               \
-    BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(inst, split_input), zmk_input_split),          \
-                 "split-input must name a zmk,input-split node");                                  \
+    COND_CODE_1(                                                                                   \
+        DT_INST_NODE_HAS_PROP(inst, split_input),                                                  \
+        (BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(inst, split_input), zmk_input_split),     \
+                      "split-input must name a zmk,input-split node");),                           \
+        ())                                                                                        \
     static const struct zpt_agent_config zpt_agent_config_##inst = {                               \
-        .split_reg = DT_REG_ADDR(DT_INST_PHANDLE(inst, split_input)),                              \
+        .split_reg = ZPT_SENSOR_CONTROL_SPLIT_REG(inst),                                           \
     };                                                                                             \
     BEHAVIOR_DT_INST_DEFINE(inst, NULL, NULL, NULL, &zpt_agent_config_##inst, POST_KERNEL,         \
                             CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                                   \

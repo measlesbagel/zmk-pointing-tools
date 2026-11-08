@@ -40,7 +40,7 @@ One `measlesbagel,zpt-pointing-device` node per physical device:
 left_ball: left_ball {
     compatible = "measlesbagel,zpt-pointing-device";
     stable-id = "left-ball";
-    location = <1>;               /* 0 central, else peripheral index + 1 */
+    split-input = <&trackball_left_split>; /* channel its motion rides */
     resolution-cpi = <684>;
     cpi-min = <608>;              /* or a discrete cpi-values list */
     cpi-max = <4826>;
@@ -58,8 +58,16 @@ left_ball: left_ball {
   driver's behavior, not the datasheet's marketing range: the PAW3222 driver
   applies multiples of 38 CPI from 608 to 4826, so a board's
   `res-cpi = <700>` really runs at 684.
-- `location` is the owning half: 0 for the central, otherwise the peripheral's
-  split source index plus one. With one peripheral that is always 1.
+- `split-input` names the `zmk,input-split` channel the device's motion
+  arrives on. The owning half is whichever half sends on that channel, so
+  routing doesn't depend on the order halves paired in. A central that also
+  names the device's `sensor` treats it as local, so one shared entry works
+  with a dongle or with either half as central. The reported location is 0
+  for a local device, otherwise the channel's reg plus one.
+- `location` is the legacy alternative for one-peripheral splits: 0 for the
+  central, otherwise the peripheral's split source index plus one. ZMK
+  numbers peripherals in pairing order, so prefer `split-input`. An entry
+  can't set both.
 
 ### Sensors on a split keyboard
 
@@ -108,7 +116,13 @@ The central sends requests with ZMK's existing `INVOKE_BEHAVIOR` split
 command, so no ZMK changes are needed. Peripherals answer on the
 `zmk,input-split` channel they already send their sensor's motion on.
 
-The answers share that channel because ZMK's central only subscribes
+The central doesn't know which peripheral slot owns a channel, so it sends
+a request for a channel-routed device to every connected peripheral. Only
+the half that has the device's sensor answers, on the device's channel, and
+the central accepts an answer only from that channel. The proxy listens on
+every `zmk,input-split` channel the central receives.
+
+The answers share the sensor's channel because ZMK's central only subscribes
 reliably to one input-split characteristic per peripheral. Its discovery
 reads every input characteristic's CCC descriptor in one response, takes the
 second one for the first characteristic's format descriptor, and treats a
@@ -123,7 +137,8 @@ Shared devicetree, compiled into every half:
 zpt_cpi: zpt_cpi {
     compatible = "measlesbagel,zpt-sensor-control";
     #binding-cells = <0>;
-    /* The channel the peripheral's sensor motion already uses. */
+    /* Only needed for legacy entries that set location: the channel the
+     * peripheral's sensor motion already uses. */
     split-input = <&trackball_peripheral_split>;
 };
 
@@ -144,7 +159,7 @@ Two rules are checked at build time:
 - The agent's node name must be at most 8 characters, because ZMK's split
   relay truncates longer behavior names and the peripheral would never find
   it.
-- `split-input` must name a `zmk,input-split` node.
+- The agent's `split-input`, when set, must name a `zmk,input-split` node.
 
 A peripheral without a sensor of its own can give the agent a dedicated
 channel, as long as it is that peripheral's only input-split channel. Its
@@ -173,7 +188,8 @@ never 0, which marks no outstanding request.
   answering sends a notification.
 - The agent only serves entries with a nonzero location. A request for a
   central-owned or unknown entry is answered with `-ENODEV` so the central
-  doesn't wait.
+  doesn't wait. For a channel-routed entry, a half without the device's
+  sensor stays silent, because the owning half answers.
 - ZMK queues a split command and silently drops it when the half is
   disconnected, so the only sign of an unreachable half is silence. Requests
   time out after 500 ms and report status unreachable. The device list shows a
@@ -214,10 +230,9 @@ meaning. Without `device`, the source keeps its compiled `resolution-cpi`.
   it, which isn't synchronized with the frame boundary, and transported frames
   already in flight were measured at the old value. Expect at most a frame or
   two at the wrong scale right after a preview.
-- **More than one peripheral.** Everything is a list end to end and requests
-  name their half, but only one-peripheral splits have been built. A shared
-  agent split channel across several peripherals, and the mapping from
-  location to ZMK's split source index, need checking on real hardware first.
+- **More than one peripheral.** Channel-routed entries are built for it (a
+  dongle with two halves), but haven't been run on real hardware yet.
+  Legacy `location` entries still map to ZMK's pairing-order slot.
 - **Persistence.** Previews are RAM-only. Exporting a chosen value back into
   devicetree is the way to keep it (#24 owns lifecycle).
 

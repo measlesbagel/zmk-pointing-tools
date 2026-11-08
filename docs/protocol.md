@@ -346,7 +346,7 @@ identities join the two halves of a split keyboard.
 device-count:u8
 repeat device-count times:
   device-id:u8
-  location:u8          /* 0 central-local, otherwise peripheral index + 1 */
+  location:u8          /* 0 central-local, otherwise split channel reg + 1 (legacy: peripheral index + 1) */
   flags:u8             /* bit0 reachable, bit1 settable */
   label-length:u8
   label:utf8[label-length]

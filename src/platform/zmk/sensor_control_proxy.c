@@ -24,11 +24,17 @@
 
 LOG_MODULE_REGISTER(zpt_sensor_proxy, CONFIG_ZMK_LOG_LEVEL);
 
-/* Central-half counterpart of the sensor-control agent: relays requests to
- * the owning peripheral through INVOKE_BEHAVIOR, listens on the agent's
- * split-input device for its packed responses, and correlates them by
- * sequence number. One request is outstanding at a time; the host protocol's
- * flow control already serializes callers. */
+/* Central counterpart of the sensor-control agent: relays requests to the
+ * owning peripheral through INVOKE_BEHAVIOR, listens on every zmk,input-split
+ * channel this central receives for the packed responses, and correlates
+ * them by sequence number. One request is outstanding at a time; the host
+ * protocol's flow control already serializes callers.
+ *
+ * A device with a split channel is owned by whichever half sends on that
+ * channel, and ZMK numbers peripheral slots in pairing order, so the proxy
+ * can't name the owner's slot. It sends the request to every slot instead,
+ * and only accepts an answer that arrives on the device's channel. Legacy
+ * entries name their slot through location and may answer on any channel. */
 
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
              "one sensor-control proxy serves every peripheral");
@@ -38,29 +44,37 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 /* Peripheral indices whose last relay succeeded, one bit per index. */
 #define ZPT_PROXY_REACHABLE_BITS (sizeof(atomic_t) * 8U)
 
+/* expected_reg value that accepts an answer on any channel. */
+#define ZPT_PROXY_ANY_CHANNEL (-1)
+
 static struct zpt_sensor_proxy_state {
     const char *agent_name;
     struct k_spinlock lock;
     struct zpt_scw_session session;
+    /* The channel the outstanding request's answer must arrive on. */
+    int16_t expected_reg;
     struct k_sem response_ready;
     atomic_t reachable;
 } zpt_sensor_proxy;
 
 static void zpt_sensor_proxy_receive(struct input_event *event, void *user_data) {
-    ARG_UNUSED(user_data);
+    const int16_t reg = (int16_t)(uintptr_t)user_data;
 
     if (event->type != INPUT_EV_REL || event->code != INPUT_REL_MISC || !event->sync) {
         return;
     }
 
     k_spinlock_key_t key = k_spin_lock(&zpt_sensor_proxy.lock);
-    const bool answered = zpt_scw_session_offer(&zpt_sensor_proxy.session, (uint32_t)event->value);
+    const int16_t expected = zpt_sensor_proxy.expected_reg;
+    const bool answered = (expected == ZPT_PROXY_ANY_CHANNEL || expected == reg) &&
+                          zpt_scw_session_offer(&zpt_sensor_proxy.session, (uint32_t)event->value);
     k_spin_unlock(&zpt_sensor_proxy.lock, key);
 
     if (answered) {
         k_sem_give(&zpt_sensor_proxy.response_ready);
     } else {
-        LOG_DBG("Dropped stale or foreign control frame 0x%08x", (uint32_t)event->value);
+        LOG_DBG("Dropped stale or foreign control frame 0x%08x on channel %d",
+                (uint32_t)event->value, reg);
     }
 }
 
@@ -88,6 +102,8 @@ static int zpt_sensor_proxy_relay(const struct zpt_pointing_device *device, uint
     k_sem_reset(&zpt_sensor_proxy.response_ready);
     k_spinlock_key_t key = k_spin_lock(&zpt_sensor_proxy.lock);
     const uint8_t seq = zpt_scw_session_begin(&zpt_sensor_proxy.session);
+    zpt_sensor_proxy.expected_reg =
+        device->has_split_channel ? (int16_t)device->split_reg : ZPT_PROXY_ANY_CHANNEL;
     k_spin_unlock(&zpt_sensor_proxy.lock, key);
 
     struct zmk_behavior_binding binding = {
@@ -98,7 +114,19 @@ static int zpt_sensor_proxy_relay(const struct zpt_pointing_device *device, uint
     const struct zmk_behavior_binding_event event = {.position = 0, .timestamp = k_uptime_get()};
     /* ZMK queues the command and drops it if the half is disconnected, so
      * silence is the only sign of an unreachable half. */
-    int ret = zmk_split_central_invoke_behavior(source, &binding, event, true);
+    int ret;
+    if (device->has_split_channel) {
+        /* Halves that don't own the device stay silent, so asking every
+         * slot reaches the owner without knowing which slot it paired as. */
+        ret = -ENOTCONN;
+        for (int slot = 0; slot < ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT; slot++) {
+            if (zmk_split_central_invoke_behavior((uint8_t)slot, &binding, event, true) == 0) {
+                ret = 0;
+            }
+        }
+    } else {
+        ret = zmk_split_central_invoke_behavior(source, &binding, event, true);
+    }
     const bool answered =
         ret == 0 && k_sem_take(&zpt_sensor_proxy.response_ready, ZPT_PROXY_TIMEOUT) == 0;
 
@@ -109,6 +137,7 @@ static int zpt_sensor_proxy_relay(const struct zpt_pointing_device *device, uint
         zpt_scw_session_cancel(&zpt_sensor_proxy.session);
         ret = ret < 0 ? ret : -EAGAIN;
     }
+    zpt_sensor_proxy.expected_reg = ZPT_PROXY_ANY_CHANNEL;
     k_spin_unlock(&zpt_sensor_proxy.lock, key);
 
     /* An answer, even an error, shows the half is there. */
@@ -171,13 +200,25 @@ int zpt_sensor_control_get_remote(const struct zpt_pointing_device *device, uint
                  "the sensor-control agent's node name must be at most 8 characters");             \
     static int zpt_sensor_proxy_init_##inst(void) {                                                \
         zpt_sensor_proxy.agent_name = ZPT_SENSOR_PROXY_AGENT_NAME(inst);                           \
+        zpt_sensor_proxy.expected_reg = ZPT_PROXY_ANY_CHANNEL;                                     \
         k_sem_init(&zpt_sensor_proxy.response_ready, 0, 1);                                        \
         zpt_scw_session_init(&zpt_sensor_proxy.session);                                           \
         LOG_INF("Pointing device control proxy ready");                                            \
         return 0;                                                                                  \
     }                                                                                              \
-    SYS_INIT(zpt_sensor_proxy_init_##inst, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);         \
-    INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_PHANDLE(DT_INST_PHANDLE(inst, agent), split_input)),    \
-                          zpt_sensor_proxy_receive, NULL);
+    SYS_INIT(zpt_sensor_proxy_init_##inst, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 DT_INST_FOREACH_STATUS_OKAY(ZPT_SENSOR_PROXY_DEFINE)
+
+/* Answers can come from any peripheral, so listen on every channel this
+ * central receives. Each callback knows its channel's reg. The extra macro
+ * layer expands the callback's name before INPUT_CALLBACK_DEFINE_NAMED
+ * pastes it. */
+#define ZPT_SENSOR_PROXY_CALLBACK(dev, user_data, name)                                            \
+    INPUT_CALLBACK_DEFINE_NAMED(dev, zpt_sensor_proxy_receive, user_data, name)
+
+#define ZPT_SENSOR_PROXY_LISTEN(node)                                                              \
+    ZPT_SENSOR_PROXY_CALLBACK(DEVICE_DT_GET(node), (void *)(uintptr_t)DT_REG_ADDR(node),           \
+                              DT_CAT(zpt_sensor_proxy_listen_, node));
+
+DT_FOREACH_STATUS_OKAY(zmk_input_split, ZPT_SENSOR_PROXY_LISTEN)

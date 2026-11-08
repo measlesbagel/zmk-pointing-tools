@@ -82,15 +82,42 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= UINT8_MAX + 1,
                                .range_step = (uint16_t)DT_INST_PROP_OR(inst, cpi_step, 1)}),       \
                              ({.settable = false}))))
 
+/* The build that owns a device locally: the central, or a keyboard that
+ * isn't split. A peripheral serves its own devices but reports them as
+ * remote, like every other half does. */
+#define ZPT_DEVICE_BUILD_IS_CENTRAL                                                                \
+    (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+
+#define ZPT_DEVICE_SPLIT_REG(inst) DT_REG_ADDR(DT_INST_PHANDLE(inst, split_input))
+
+/* With a split channel, the device is local only on a central that has its
+ * sensor, so the same entry works whichever half (or a dongle) is central. */
+#define ZPT_DEVICE_LOCATION(inst)                                                                  \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, split_input),                                          \
+                ((ZPT_DEVICE_BUILD_IS_CENTRAL && DT_INST_NODE_HAS_PROP(inst, sensor))              \
+                     ? 0U                                                                          \
+                     : (uint8_t)(ZPT_DEVICE_SPLIT_REG(inst) + 1U)),                                \
+                ((uint8_t)DT_INST_PROP_OR(inst, location, 0)))
+
 #define ZPT_DEVICE_DEFINE(inst)                                                                    \
     BUILD_ASSERT(IN_RANGE(DT_INST_PROP_OR(inst, location, 0), 0, UINT8_MAX),                       \
                  "location must fit in a u8 (0 local, otherwise peripheral index + 1)");           \
+    BUILD_ASSERT(                                                                                  \
+        !(DT_INST_NODE_HAS_PROP(inst, split_input) && DT_INST_PROP_OR(inst, location, 0)),         \
+        "split-input replaces location; set only one");                                            \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, split_input),                                          \
+                (BUILD_ASSERT(ZPT_DEVICE_SPLIT_REG(inst) < UINT8_MAX,                              \
+                              "split-input reg must fit in a u8");),                               \
+                ())                                                                                \
     BUILD_ASSERT(IN_RANGE(DT_INST_PROP(inst, resolution_cpi), 1, UINT16_MAX),                      \
                  "resolution-cpi must fit in a u16");                                              \
     ZPT_DEVICE_FORM(inst)                                                                          \
     static const struct zpt_pointing_device zpt_device_##inst = {                                  \
         .id = (uint8_t)(inst),                                                                     \
-        .location = (uint8_t)DT_INST_PROP_OR(inst, location, 0),                                   \
+        .location = ZPT_DEVICE_LOCATION(inst),                                                     \
+        .has_split_channel = DT_INST_NODE_HAS_PROP(inst, split_input),                             \
+        .split_reg = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, split_input),                         \
+                                 ((uint8_t)ZPT_DEVICE_SPLIT_REG(inst)), (0U)),                     \
         .default_cpi = (uint16_t)DT_INST_PROP(inst, resolution_cpi),                               \
         .stable_id = DT_INST_PROP(inst, stable_id),                                                \
         .devicetree_path = DT_NODE_PATH(DT_DRV_INST(inst)),                                        \

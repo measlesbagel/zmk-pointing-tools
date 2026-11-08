@@ -18,14 +18,31 @@
 		measlesbagel,zpt-telemetry-uart = &zpt_test_uart;
 	};
 
+	/* Stand-ins for zmk,input-split channels: the device table only reads
+	 * their reg. */
+	zpt-test-splits {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		zpt_test_left_split: split@0 {
+			reg = <0>;
+		};
+
+		zpt_test_right_split: split@1 {
+			reg = <1>;
+		};
+	};
+
 	/* Physical pointing devices for the device-table suite. The sensor
 	 * phandle is opaque to the registry, so the mock UART doubles as a
 	 * stand-in driver device. The remote entry has no sensor, as on a half
-	 * that doesn't own it. */
+	 * that doesn't own it. Both trackballs name a split channel; the local
+	 * one has its sensor on this (non-split, so central) build. */
 	trackball-local {
 		compatible = "measlesbagel,zpt-pointing-device";
 		stable-id = "test-local-trackball";
 		sensor = <&zpt_test_uart>;
+		split-input = <&zpt_test_right_split>;
 		resolution-cpi = <800>;
 		cpi-values = <200 400 800 1600>;
 	};
@@ -33,7 +50,7 @@
 	trackball-remote {
 		compatible = "measlesbagel,zpt-pointing-device";
 		stable-id = "test-remote-trackball";
-		location = <1>;
+		split-input = <&zpt_test_left_split>;
 		resolution-cpi = <400>;
 		cpi-min = <100>;
 		cpi-max = <1200>;
