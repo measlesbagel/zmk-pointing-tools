@@ -60,8 +60,29 @@ with published pointing measures in `web/measure.js`:
 Results are split by direction and by ring difficulty, kept in this browser,
 and copyable as plain labelled text with the settings each run used. Ticking
 two runs shows them side by side with the settings that differed. One run
-each is only a rough guide; a blind, counterbalanced comparison is tracked in
-#145.
+each is only a rough guide; use a blind comparison to compare settings.
+
+### Blind comparison
+
+The Throughput ring and Distance flicks can compare two settings blind.
+Type the values to try into the game's main settings without previewing
+them, then press **Blind compare**. The values in effect now are side A;
+the typed ones are side B. A session is 7 short blocks:
+
+1. A warm-up that isn't scored, because scores climb at the start of every
+   session.
+2. The two sides in ABBA or BAAB order, picked at random.
+3. An unscored adaptation block after every switch, because overshoot
+   takes a block or two to settle on a new gain.
+
+Sides play as X and Y, and the settings are hidden until the end. You say
+which felt better before the reveal. The result is the median difference
+in movement time on hits and in overshoot, B minus A, with a 95% bootstrap
+interval, beside your preference. When the interval crosses zero the page
+says the session couldn't tell the sides apart; it never picks a winner.
+Flicks also flag a distance band that did clearly worse on either side.
+The values in effect before the session are restored at the end, or if it
+is abandoned.
 
 Turn off the computer's own pointer acceleration while playing, so the
 measures reflect only the keyboard's curve.
