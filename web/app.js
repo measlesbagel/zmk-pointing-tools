@@ -46,6 +46,7 @@ import { applicableGames, gamesForSetting } from "./games.js";
 import { CompassRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
 import { analyseCompass, cueDirections } from "./compass.js";
 import { compareConditions, describeComparison, describePreference, hiddenLabels, planBlocks } from "./comparison.js";
+import { SWEEP_MEASURES, describeSweep, planSweep, summarizeSweep, sweepChart, sweepValues } from "./sweep.js";
 import { seededRandom, summarizeBy } from "./measure.js";
 import { clearHistory, formatRun, loadHistory, saveRun } from "./game-history.js";
 import { flickFlags, flickTrials, ringLevels, ringSequence } from "./target-games.js";
@@ -1170,6 +1171,7 @@ function renderGameScreen() {
   const blind = ["ring", "flicks"].includes(game.runner) && !hiding;
   gameScreen.querySelector("[data-game-blind]").hidden = !blind;
   gameScreen.querySelector("[data-game-blind-hint]").hidden = !blind;
+  renderSweepForm(game, blind);
   const save = gameScreen.querySelector("[data-game-save]");
   save.hidden = !savingSupported || hiding;
   save.disabled = !unsaved;
@@ -1217,6 +1219,8 @@ gameScreen.addEventListener("click", (event) => {
     document.getElementById(`setting-${settingLink.dataset.showSetting}`)?.scrollIntoView({ block: "center" });
   } else if (event.target.closest("[data-game-play]")) {
     playGame(game);
+  } else if (event.target.closest("[data-game-sweep]")) {
+    startSweep(game);
   } else if (event.target.closest("[data-game-blind]")) {
     startBlindComparison(game);
   } else if (event.target.closest("[data-preference]")) {
@@ -1300,9 +1304,9 @@ function stopGames() {
   gameRunner.stop();
   compassRunner.stop();
   if (blindSession) {
-    const { values } = blindSession;
+    const { restore } = blindSession;
     blindSession = undefined;
-    applyValues(values.A);
+    applyValues(restore);
     renderGameScreen();
   }
 }
@@ -1443,7 +1447,7 @@ function startBlindComparison(game) {
   const plan = planBlocks();
   blindSession = {
     game, values, order: plan.order, planned: plan.blocks, labels: hiddenLabels(), index: 0, results: [],
-    startedAt: new Date().toISOString(), settings: settingsSnapshot(game),
+    startedAt: new Date().toISOString(), settings: settingsSnapshot(game), restore: values.A, onDone: askPreference,
   };
   gameScreen.querySelector("[data-game-play-area]").hidden = false;
   gameScreen.querySelector("[data-game-comparison]").replaceChildren();
@@ -1472,7 +1476,7 @@ function runBlindBlock() {
       runBlindBlock();
       return;
     }
-    askPreference();
+    session.onDone();
   });
   gameSurface.scrollIntoView({ block: "center" });
 }
@@ -1494,7 +1498,7 @@ function finishBlindComparison(preference) {
   const session = blindSession;
   if (!session || session.index < session.planned.length) return;
   blindSession = undefined;
-  applyValues(session.values.A);
+  applyValues(session.restore);
   renderGameScreen();
   const result = compareConditions(session.results);
   const describe = (values) => values.map(({ name, value }) => `${name} ${value}`).join(", ");
@@ -1523,6 +1527,127 @@ function finishBlindComparison(preference) {
   gameScreen.querySelector("[data-game-comparison]").innerHTML = `<div class="game-comparison">
     <h3>X was ${session.labels.A === "X" ? "A, the current values" : "B, the typed values"}; Y was ${session.labels.A === "Y" ? "A, the current values" : "B, the typed values"}.</h3>
     ${lines.slice(1).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+    <pre>${escapeHtml(formatRun(run))}</pre>
+  </div>`;
+  renderGameResults(session.game);
+}
+
+/* --- Parameter sweep (#145) ------------------------------------------ */
+
+function sweepParameters(game) {
+  return [...game.main, ...game.related].flatMap(({ targetId, parameterId }) => {
+    const target = tuningTargets.get(targetId);
+    const parameter = target?.parameters.find(({ id }) => id === parameterId);
+    return parameter && parameter.type !== TUNING.BOOLEAN ? [{ target, parameter }] : [];
+  });
+}
+
+/* Keeps the form's choices while the screen re-renders. */
+function renderSweepForm(game, shown) {
+  const wrap = gameScreen.querySelector("[data-game-sweep-wrap]");
+  const options = sweepParameters(game);
+  wrap.hidden = !shown || options.length === 0;
+  if (wrap.hidden) return;
+  const select = wrap.querySelector("[data-sweep-setting]");
+  const html = options.map(({ target, parameter }) => `<option value="${target.id}:${parameter.id}">${escapeHtml(`${parameter.label ?? parameter.key} (${target.label})`)}</option>`).join("");
+  const key = `${game.id}|${options.map(({ target, parameter }) => `${target.id}:${parameter.id}`).join(",")}`;
+  if (select.dataset.options !== key) {
+    const previous = select.dataset.game === game.id ? select.value : undefined;
+    select.innerHTML = html;
+    select.dataset.game = game.id;
+    select.dataset.options = key;
+    if (previous && options.some(({ target, parameter }) => `${target.id}:${parameter.id}` === previous)) select.value = previous;
+    else fillSweepRange(game);
+  }
+}
+
+/* A starting range around the current value: half to double it, inside
+ * the setting's limits. */
+function fillSweepRange(game) {
+  const wrap = gameScreen.querySelector("[data-game-sweep-wrap]");
+  const chosen = selectedSweepParameter(game);
+  if (!chosen) return;
+  const { parameter } = chosen;
+  const current = parameter.current;
+  wrap.querySelector("[data-sweep-from]").value = Math.max(parameter.minimum, Math.round(current / 2));
+  wrap.querySelector("[data-sweep-to]").value = Math.min(parameter.maximum, Math.max(current * 2, current + 2));
+}
+
+function selectedSweepParameter(game) {
+  const [targetId, parameterId] = gameScreen.querySelector("[data-sweep-setting]").value.split(":").map(Number);
+  return sweepParameters(game).find(({ target, parameter }) => target.id === targetId && parameter.id === parameterId);
+}
+
+gameScreen.querySelector("[data-sweep-setting]").addEventListener("change", () => {
+  const game = currentGames.find(({ id }) => id === openGameId);
+  if (game) fillSweepRange(game);
+});
+
+function startSweep(game) {
+  const chosen = selectedSweepParameter(game);
+  const wrap = gameScreen.querySelector("[data-game-sweep-wrap]");
+  if (!chosen) return;
+  const { target, parameter } = chosen;
+  const values = sweepValues(
+    Number(wrap.querySelector("[data-sweep-from]").value),
+    Number(wrap.querySelector("[data-sweep-to]").value),
+    Number(wrap.querySelector("[data-sweep-count]").value),
+    parameter,
+  );
+  if (values.length < 3 || values.some((value) => !Number.isFinite(value))) {
+    notice("Pick a range wide enough for at least 3 different whole values.", true);
+    return;
+  }
+  stopGames();
+  const plan = planSweep(values.length);
+  const setting = (value) => [{ targetId: target.id, parameterId: parameter.id, value, name: parameter.key ?? parameter.label }];
+  blindSession = {
+    game,
+    sweep: { values, name: parameter.key ?? parameter.label },
+    values: Object.fromEntries(values.map((value, key) => [key, setting(value)])),
+    order: plan.order.map((key) => plan.labels[key]).join(""),
+    planned: plan.blocks,
+    labels: plan.labels,
+    index: 0,
+    results: [],
+    startedAt: new Date().toISOString(),
+    settings: settingsSnapshot(game),
+    restore: setting(parameter.current),
+    onDone: finishSweep,
+  };
+  gameScreen.querySelector("[data-game-play-area]").hidden = false;
+  gameScreen.querySelector("[data-game-comparison]").replaceChildren();
+  renderGameScreen();
+  runBlindBlock();
+}
+
+function finishSweep() {
+  const session = blindSession;
+  blindSession = undefined;
+  applyValues(session.restore);
+  renderGameScreen();
+  const rows = summarizeSweep(session.results, session.sweep.values);
+  const lines = describeSweep(session.sweep.name, rows);
+  const run = {
+    game: session.game.id,
+    title: `${session.game.title} · sweep of ${session.sweep.name}`,
+    startedAt: session.startedAt,
+    finishedAt: new Date().toISOString(),
+    sweep: { name: session.sweep.name, order: session.order, labels: session.labels, rows },
+    notes: [...(simulator ? ["Played against the simulator."] : []), ...lines,
+      `The value in effect before the sweep, ${session.restore[0].value}, is back in effect.`],
+    settings: session.settings,
+  };
+  saveRun(run);
+  gameProgress.textContent = "Sweep done. Results below.";
+  gameScreen.querySelector("[data-game-results-wrap]").hidden = false;
+  const charts = SWEEP_MEASURES.map((measure) => {
+    const chart = sweepChart(rows, measure);
+    return chart ? `<figure><figcaption>${escapeHtml(measure.label)}${measure.unit ? ` (${escapeHtml(measure.unit)})` : ""}</figcaption>${chart}</figure>` : "";
+  }).join("");
+  gameScreen.querySelector("[data-game-comparison]").innerHTML = `<div class="game-comparison">
+    <h3>Sweep of ${escapeHtml(session.sweep.name)}</h3>
+    <div class="sweep-charts">${charts}</div>
     <pre>${escapeHtml(formatRun(run))}</pre>
   </div>`;
   renderGameResults(session.game);
