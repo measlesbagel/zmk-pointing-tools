@@ -214,3 +214,8 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .sweep-chart text { font-size: 10px; fill: var(--muted); }
 .pixel-halo { position: absolute; border: 1px solid var(--muted); border-radius: 50%; opacity: .6; pointer-events: none; }
 .pixel-target { position: absolute; background: #fff; pointer-events: none; }
+.game-surface.scrolling { overflow: hidden; cursor: ns-resize; }
+.scroll-page { position: absolute; inset: 0; background-image: repeating-linear-gradient(to bottom, transparent 0 39px, var(--line) 39px 40px); }
+.scroll-band { position: absolute; left: 0; right: 0; border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; }
+.scroll-target { position: absolute; left: 10%; right: 10%; height: 0; border-top: 3px solid var(--warning); pointer-events: none; }
+.scroll-hint { position: absolute; right: 12px; color: var(--warning); font-size: 13px; pointer-events: none; }

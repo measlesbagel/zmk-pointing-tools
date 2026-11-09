@@ -570,3 +570,110 @@ export class StillRunner {
     this.onProgress?.("Last part: click the centre, then take your hands off the ball and keys for a few seconds.");
   }
 }
+
+/* Scroll to the band: the wheel moves a ruled page under a fixed band in
+ * the middle of the surface. A trial starts at its first wheel event and
+ * ends once the target line has stayed in the band for `hold` ms. */
+export class ScrollBandRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  start(trials, run, analyse, { hold = 400, timeout = 15000 } = {}) {
+    this.stop();
+    Object.assign(this, { plan: trials, run, analyse, hold, timeout });
+    this.index = 0;
+    this.page = 0;
+    this.recorded = [];
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running", "scrolling");
+    this.surface.addEventListener("wheel", (event) => this.wheel(event), { signal, passive: false });
+    this.ruler = document.createElement("div");
+    this.ruler.className = "scroll-page";
+    this.bandNode = document.createElement("div");
+    this.bandNode.className = "scroll-band";
+    this.targetNode = document.createElement("div");
+    this.targetNode.className = "scroll-target";
+    this.hint = document.createElement("div");
+    this.hint.className = "scroll-hint";
+    this.surface.replaceChildren(this.ruler, this.bandNode, this.targetNode, this.hint);
+    this.begin();
+  }
+
+  stop() {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running", "scrolling");
+    this.surface.replaceChildren();
+  }
+
+  begin() {
+    const trial = this.plan[this.index];
+    this.trial = { ...trial, origin: this.page, events: [], shownAt: performance.now() };
+    this.bandNode.style.height = `${trial.band}px`;
+    this.timeoutTimer = setTimeout(() => this.end(undefined), this.timeout);
+    this.onProgress?.(`Scroll ${this.index + 1} of ${this.plan.length} (${trial.known ? "target shown" : "target hidden until it comes into view"}): bring the line into the band and hold it there.`);
+    this.render();
+  }
+
+  wheel(event) {
+    event.preventDefault();
+    if (!this.trial) return;
+    const scale = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? this.surface.clientHeight : 1;
+    const delta = event.deltaY * scale;
+    this.page += delta;
+    const trial = this.trial;
+    const offset = this.page - trial.origin;
+    trial.events.push({ t: event.timeStamp, delta, offset });
+    const position = offset * Math.sign(trial.distance);
+    const inside = Math.abs(position - Math.abs(trial.distance)) <= trial.band / 2;
+    if (inside && this.holdStart === undefined) {
+      this.holdStart = event.timeStamp;
+      this.holdTimer = setTimeout(() => this.end(this.holdStart), this.hold);
+    } else if (!inside && this.holdStart !== undefined) {
+      clearTimeout(this.holdTimer);
+      this.holdStart = undefined;
+    }
+    this.render();
+  }
+
+  end(heldAt) {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    this.holdStart = undefined;
+    const { known, distance, band, events, shownAt } = this.trial;
+    this.recorded.push({ known, distance, band, events, startedAt: events[0]?.t ?? shownAt, heldAt });
+    this.trial = undefined;
+    this.index += 1;
+    if (this.index >= this.plan.length) {
+      const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.recorded) };
+      this.stop();
+      this.onFinish?.(result);
+      return;
+    }
+    this.begin();
+  }
+
+  render() {
+    const height = this.surface.clientHeight;
+    const centre = height / 2;
+    this.ruler.style.backgroundPositionY = `${-this.page}px`;
+    this.bandNode.style.top = `${centre - this.trial.band / 2}px`;
+    /* Where the target line is on screen: it sits `distance` below where
+     * the page was when the trial began. */
+    const y = centre + this.trial.distance - (this.page - this.trial.origin);
+    const visible = y >= 0 && y <= height;
+    this.targetNode.hidden = !visible;
+    this.targetNode.style.top = `${y}px`;
+    const remaining = Math.round(y - centre);
+    this.hint.hidden = visible || !this.trial.known;
+    this.hint.textContent = remaining > 0 ? `↓ ${remaining} px` : `↑ ${-remaining} px`;
+    this.hint.style.top = remaining > 0 ? "" : "8px";
+    this.hint.style.bottom = remaining > 0 ? "8px" : "";
+  }
+}
