@@ -19,7 +19,7 @@ firmware reports and what is missing, next to the stage-decision stream.
 
 ### How games are scored
 
-The tuner plays three cursor games itself, and first setup runs them in
+The tuner plays four cursor games itself, and first setup runs them in
 this order:
 
 - **Compass start** checks `swap-xy`, `invert-x` and `invert-y`. Click the
@@ -36,6 +36,14 @@ this order:
   targets needing re-rolls or landing short, near targets landing past the
   centre or needing several corrections, or one distance missed much more
   often. Flags name the part of the curve involved, never a value.
+- **Pixel hunt** shows a 3, 2 and then 1 pixel target, 4 of each, inside
+  a faint ring. Rest the pointer on the target's pixels for 300 ms; no
+  click is needed. Each size reports how often it was reached within 10 s,
+  the time until the hold that counted, and how many landings it took. A
+  size that wasn't always reached, or took several landings, is flagged
+  against the slow end of the curve, the gain and the motion gate.
+  Targets are snapped to whole screen pixels, so a 1 px target is exactly
+  the pixel the pointer reports.
 
 These games record the
 whole pointer path, including every coalesced pointer event, and score it
