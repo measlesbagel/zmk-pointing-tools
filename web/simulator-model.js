@@ -54,7 +54,7 @@ function parameter(id, key, devicetreeProperty, minimum, maximum, compiled, labe
   };
 }
 
-/* The smoke keymap's cursor acceleration and coalescer as fully discovered
+/* The smoke keymap's cursor acceleration, transfer and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -78,6 +78,19 @@ export function buildSimulatorTuningTargets() {
           "How quickly the speed estimate follows the ball speeding up."),
         parameter(17, "speed-fall", "speed-fall-ms", 1, 200, 5, "Speed fall time", "ms",
           "How quickly the speed estimate follows the ball slowing down."),
+      ],
+    },
+    {
+      id: 14,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "cursor-transfer",
+      stableId: "cursor-transfer",
+      devicetreePath: "/zpt_test_cursor_transfer",
+      parameters: [
+        parameter(0, "scale-multiplier", "scale-multiplier", 0, 1000, 1, "Gain multiplier", "×",
+          "Cursor gain numerator: pointer distance is ball distance × multiplier ÷ divisor."),
+        parameter(1, "scale-divisor", "scale-divisor", 1, 1000, 1, "Gain divisor", "÷",
+          "Cursor gain denominator."),
       ],
     },
     {

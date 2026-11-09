@@ -69,6 +69,26 @@
           <summary>More settings that affect this game</summary>
           <div data-game-related class="parameters"></div>
         </details>
+        <div data-game-play-area hidden>
+          <p class="playground-instructions" data-game-progress role="status"></p>
+          <div class="game-surface" data-game-surface></div>
+          <p class="muted">Turn off your computer's pointer acceleration ("enhance pointer precision" on Windows, "pointer acceleration" on macOS and Linux) so the tuner measures only the keyboard's own curve.</p>
+        </div>
+        <div class="game-results" data-game-results-wrap hidden>
+          <div class="panel-heading">
+            <div>
+              <h3>Results</h3>
+              <span>Kept in this browser. Tick two runs to compare them.</span>
+            </div>
+            <div class="panel-actions">
+              <button type="button" data-game-copy>Copy latest results</button>
+              <button type="button" data-game-compare disabled>Compare ticked</button>
+              <button type="button" data-game-clear>Clear history</button>
+            </div>
+          </div>
+          <div data-game-comparison></div>
+          <ol class="game-history" data-game-history reversed></ol>
+        </div>
       </section>
 
       <section id="playground" class="panel playground-panel">

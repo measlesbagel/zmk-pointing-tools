@@ -43,6 +43,9 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
+import { TargetGameRunner } from "./game-runner.js";
+import { clearHistory, formatRun, loadHistory, saveRun } from "./game-history.js";
+import { ringLevels, ringSequence } from "./target-games.js";
 import { PointingPlayground } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
@@ -1160,6 +1163,7 @@ function renderGameScreen() {
   const save = gameScreen.querySelector("[data-game-save]");
   save.hidden = !savingSupported;
   save.disabled = !unsaved;
+  renderGameResults(game);
   const next = gameScreen.querySelector("[data-setup-next]");
   next.hidden = !setup || setup.ids[setup.index] !== game.id;
   next.textContent = setup && setup.index === setup.ids.length - 1 ? "Finish setup" : "Next game";
@@ -1167,6 +1171,12 @@ function renderGameScreen() {
 
 function openGame(id) {
   if (!currentGames.some((game) => game.id === id)) return;
+  if (openGameId !== id) {
+    gameRunner.stop();
+    gameScreen.querySelector("[data-game-play-area]").hidden = true;
+    gameScreen.querySelector("[data-game-comparison]").replaceChildren();
+    comparePicks.clear();
+  }
   openGameId = id;
   showView("games");
   renderGameScreen();
@@ -1196,7 +1206,16 @@ gameScreen.addEventListener("click", (event) => {
     showView("settings");
     document.getElementById(`setting-${settingLink.dataset.showSetting}`)?.scrollIntoView({ block: "center" });
   } else if (event.target.closest("[data-game-play]")) {
-    playground.openActivity(game.activity);
+    playGame(game);
+  } else if (event.target.closest("[data-game-copy]")) {
+    copyLatestResults(game);
+  } else if (event.target.closest("[data-game-compare]")) {
+    renderComparison(game);
+  } else if (event.target.closest("[data-game-clear]")) {
+    clearHistory(game.id);
+    comparePicks.clear();
+    gameScreen.querySelector("[data-game-comparison]").replaceChildren();
+    renderGameResults(game);
   } else if (event.target.closest("[data-game-save]")) {
     /* Save every stage this game's settings live on. */
     const targetIds = new Set([...game.main, ...game.related].map(({ targetId }) => targetId));
@@ -1216,6 +1235,8 @@ gameScreen.addEventListener("click", (event) => {
     renderSetupSteps();
     openGame(setup.ids[setup.index]);
   } else if (event.target.closest("[data-game-close]")) {
+    gameRunner.stop();
+    gameScreen.querySelector("[data-game-play-area]").hidden = true;
     openGameId = undefined;
     renderGameScreen();
   }
@@ -1239,6 +1260,120 @@ function renderCapabilityChecks() {
   list.innerHTML = checks
     .map(([ok, text]) => `<li class="${ok ? "" : "missing"}">${ok ? "OK" : "Missing"}: ${escapeHtml(text)}</li>`)
     .join("");
+}
+
+
+/* --- Playing and recording games -------------------------------------- */
+
+const comparePicks = new Set();
+const gameProgress = gameScreen.querySelector("[data-game-progress]");
+const gameRunner = new TargetGameRunner(gameScreen.querySelector("[data-game-surface]"), {
+  onProgress: (text) => { gameProgress.textContent = text; },
+  onFinish: (run) => {
+    saveRun(run);
+    gameProgress.textContent = Number.isFinite(run.throughput)
+      ? `Done. Throughput ${run.throughput.toFixed(2)} bit/s; details below.`
+      : "Done. Details below.";
+    const game = currentGames.find(({ id }) => id === run.game);
+    if (game) renderGameResults(game);
+  },
+});
+
+/* The values this game's settings had while it was played. */
+function settingsSnapshot(game) {
+  return [...game.main, ...game.related].flatMap(({ targetId, parameterId }) => {
+    const target = tuningTargets.get(targetId);
+    const parameter = target?.parameters.find(({ id }) => id === parameterId);
+    return parameter
+      ? [{ target: target.label, key: parameter.key, label: parameter.label, value: parameter.current, unit: parameter.unit }]
+      : [];
+  });
+}
+
+function playGame(game) {
+  if (game.runner !== "ring") {
+    playground.openActivity(game.activity);
+    return;
+  }
+  const area = gameScreen.querySelector("[data-game-play-area]");
+  area.hidden = false;
+  const surface = gameScreen.querySelector("[data-game-surface]");
+  const size = { width: surface.clientWidth, height: surface.clientHeight };
+  const centre = { x: size.width / 2, y: size.height / 2 };
+  const sequences = ringLevels(size).map((level, index) => ({
+    label: `Ring ${index + 1} of 3 (${level.id.toFixed(1)} bits)`,
+    targets: ringSequence({ amplitude: level.amplitude, width: level.width, centre }),
+  }));
+  gameRunner.start(sequences, {
+    game: game.id,
+    title: game.title,
+    startedAt: new Date().toISOString(),
+    settings: settingsSnapshot(game),
+    notes: simulator ? ["Played against the simulator."] : [],
+  });
+  surface.scrollIntoView({ block: "center" });
+}
+
+function renderGameResults(game) {
+  const wrap = gameScreen.querySelector("[data-game-results-wrap]");
+  const runs = loadHistory(game.id);
+  wrap.hidden = runs.length === 0;
+  const list = gameScreen.querySelector("[data-game-history]");
+  list.innerHTML = runs.map((run, index) => ({ run, index })).reverse().map(({ run, index }) => `<li>
+      <label><input type="checkbox" data-compare-pick="${index}" ${comparePicks.has(index) ? "checked" : ""}>
+        ${escapeHtml(new Date(run.finishedAt).toLocaleString())}${Number.isFinite(run.throughput) ? ` · ${run.throughput.toFixed(2)} bit/s` : ""}</label>
+      <details><summary>Details</summary><pre>${escapeHtml(formatRun(run))}</pre></details>
+    </li>`).join("");
+  gameScreen.querySelector("[data-game-compare]").disabled = comparePicks.size !== 2;
+}
+
+gameScreen.addEventListener("change", (event) => {
+  const pick = event.target.closest("[data-compare-pick]");
+  if (!pick) return;
+  const index = Number(pick.dataset.comparePick);
+  if (pick.checked) comparePicks.add(index);
+  else comparePicks.delete(index);
+  gameScreen.querySelector("[data-game-compare]").disabled = comparePicks.size !== 2;
+});
+
+async function copyLatestResults(game) {
+  const latest = loadHistory(game.id).at(-1);
+  if (!latest) return;
+  try {
+    await navigator.clipboard.writeText(formatRun(latest));
+    notice("Copied the latest results.");
+  } catch {
+    notice("The browser blocked copying; open Details and copy the text instead.", true);
+  }
+}
+
+/* Two runs side by side with the settings that differed. A fair verdict
+ * needs the blind comparison mode (#145); this shows what was measured. */
+function renderComparison(game) {
+  const runs = loadHistory(game.id);
+  const [a, b] = [...comparePicks].sort((x, y) => x - y).map((index) => runs[index]);
+  if (!a || !b) return;
+  const rows = [
+    ["Throughput (bit/s)", (run) => run.throughput, 2],
+    ["Hit rate (%)", (run) => run.summary.hitRate * 100, 0],
+    ["Median time (ms)", (run) => run.summary.movementTime, 0],
+    ["Median endpoint (px, + past)", (run) => run.summary.signedError, 1],
+    ["Re-entries per target", (run) => run.summary.reEntries, 2],
+    ["Median overshoot (%)", (run) => run.summary.overshoot * 100, 1],
+    ["Re-rolls per target", (run) => run.summary.rerolls, 2],
+  ];
+  const cell = (value, digits) => (Number.isFinite(value) ? value.toFixed(digits) : "n/a");
+  const settingKey = (setting) => `${setting.target} / ${setting.key ?? setting.label}`;
+  const bValues = new Map(b.settings.map((setting) => [settingKey(setting), setting.value]));
+  const changed = a.settings.filter((setting) => bValues.get(settingKey(setting)) !== setting.value);
+  gameScreen.querySelector("[data-game-comparison]").innerHTML = `<div class="game-comparison">
+    <table>
+      <thead><tr><th>Measure</th><th>A · ${escapeHtml(new Date(a.finishedAt).toLocaleString())}</th><th>B · ${escapeHtml(new Date(b.finishedAt).toLocaleString())}</th></tr></thead>
+      <tbody>${rows.map(([label, value, digits]) => `<tr><td>${label}</td><td>${cell(value(a), digits)}</td><td>${cell(value(b), digits)}</td></tr>`).join("")}
+      ${changed.map((setting) => `<tr><td>${escapeHtml(settingKey(setting))}</td><td>${setting.value}</td><td>${bValues.get(settingKey(setting)) ?? "n/a"}</td></tr>`).join("")}</tbody>
+    </table>
+    <p class="muted">${changed.length ? "" : "No setting differed between these runs. "}One run each is a rough guide: practice and warm-up move these numbers too.</p>
+  </div>`;
 }
 
 renderTuning();
