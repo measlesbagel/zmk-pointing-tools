@@ -19,7 +19,25 @@ firmware reports and what is missing, next to the stage-decision stream.
 
 ### How games are scored
 
-Games the tuner plays itself (so far the **Throughput ring**) record the
+The tuner plays three cursor games itself, and first setup runs them in
+this order:
+
+- **Compass start** checks `swap-xy`, `invert-x` and `invert-y`. Click the
+  centre, then roll toward the target that appears, 16 times over 8
+  directions. Only the direction of the first 20 px counts, so it works
+  even when the axes are wrong. It names what the cursor did ("Left and
+  right are mirrored") and the settings that fix it, worked out from the
+  ones it was played with. If fewer than three quarters of the movements
+  agree, it asks for another go instead.
+- **Throughput ring**, described below.
+- **Distance flicks** goes from the centre to small targets at near, mid
+  and far distances, 6 each in a fixed shuffled order. Every distance is
+  scored on its own, and a distance that did clearly worse is flagged: far
+  targets needing re-rolls or landing short, near targets landing past the
+  centre or needing several corrections, or one distance missed much more
+  often. Flags name the part of the curve involved, never a value.
+
+These games record the
 whole pointer path, including every coalesced pointer event, and score it
 with published pointing measures in `web/measure.js`:
 

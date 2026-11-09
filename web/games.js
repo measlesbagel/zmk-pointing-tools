@@ -29,11 +29,12 @@ export function classifyStage(target) {
 export const GAMES = Object.freeze([
   {
     id: "direction",
-    title: "Direction check",
+    title: "Compass start",
     drives: "cursor",
     stage: "orientation",
+    runner: "compass",
     activity: "cursor-path",
-    summary: "Trace the diagonal and the circle. The cursor should follow the ball the way you expect.",
+    summary: "Click the centre, then roll toward the target that appears. Only the first few pixels count, so it works even when the axes are wrong, and it says which settings fix them.",
     main: [["orientation", "swap-xy"], ["orientation", "invert-x"], ["orientation", "invert-y"]],
     related: [],
   },
@@ -48,6 +49,18 @@ export const GAMES = Object.freeze([
     summary: "Click targets around a ring as quickly and accurately as is comfortable. Throughput combines speed and accuracy, so a setting that only makes you sloppier doesn't win.",
     main: [["cursor-transfer", "scale-multiplier"], ["cursor-transfer", "scale-divisor"]],
     related: [["cursor-acceleration", "curve-speed-*"], ["cursor-acceleration", "curve-sensitivity-*"]],
+  },
+  {
+    id: "distance-flicks",
+    title: "Distance flicks",
+    drives: "cursor",
+    stage: "cursor-acceleration",
+    runner: "flicks",
+    activity: "cursor-targets",
+    summary: "Flick from the centre to small targets near, mid and far. Each distance is scored on its own, so a curve that wins overall but lands short on long moves still shows.",
+    main: [["cursor-acceleration", "curve-speed-*"], ["cursor-acceleration", "curve-sensitivity-*"]],
+    related: [["cursor-transfer", "scale-multiplier"], ["cursor-transfer", "scale-divisor"],
+      ["cursor-acceleration", "speed-rise"], ["cursor-acceleration", "speed-fall"]],
   },
   {
     id: "cursor-precision",

@@ -47,14 +47,14 @@ test("simulator status enumerates the stage targets at the off level", () => {
   }
 });
 
-test("simulator offers the cursor acceleration, transfer and coalescer for tuning", () => {
+test("simulator offers the cursor acceleration, transfer, orientation and coalescer for tuning", () => {
   const targets = buildSimulatorTuningTargets();
-  assert.deepEqual(targets.map(({ stableId }) => stableId), ["cursor-acceleration", "cursor-transfer", "cursor-coalescer"]);
+  assert.deepEqual(targets.map(({ stableId }) => stableId), ["cursor-acceleration", "cursor-transfer", "orientation", "cursor-coalescer"]);
   for (const target of targets) {
     assert.equal(target.kind, TARGET_KIND.PIPELINE_STAGE);
     assert.ok(!SIMULATED_STAGES.some(({ id }) => id === target.id));
     for (const parameter of target.parameters) {
-      assert.equal(parameter.type, TUNING.INTEGER);
+      assert.equal(parameter.type, target.stableId === "orientation" ? TUNING.BOOLEAN : TUNING.INTEGER);
       assert.ok(parameter.key && parameter.devicetreeProperty && parameter.description);
       assert.ok(parameter.compiled >= parameter.minimum && parameter.compiled <= parameter.maximum);
       assert.equal(parameter.current, parameter.compiled);

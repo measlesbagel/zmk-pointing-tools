@@ -24,7 +24,7 @@ test("classifies stages by a key only they have", () => {
 
 test("offers only the games the keyboard has stages for, in setup order", () => {
   const games = applicableGames([scroll, acceleration, cursorTransfer]);
-  assert.deepEqual(games.map(({ id }) => id), ["cursor-speed", "cursor-precision", "scroll-speed"]);
+  assert.deepEqual(games.map(({ id }) => id), ["cursor-speed", "distance-flicks", "cursor-precision", "scroll-speed"]);
 
   const speed = games.find(({ id }) => id === "cursor-speed");
   assert.deepEqual(speed.main, [{ targetId: 0, parameterId: 0 }, { targetId: 0, parameterId: 1 }]);
@@ -35,8 +35,8 @@ test("offers only the games the keyboard has stages for, in setup order", () => 
 
 test("links a setting back to every game that shows it", () => {
   const games = applicableGames([acceleration, cursorTransfer]);
-  assert.deepEqual(gamesForSetting(games, 1, 2).map(({ id }) => id), ["cursor-speed", "cursor-precision"]);
-  assert.deepEqual(gamesForSetting(games, 1, 4).map(({ id }) => id), ["cursor-precision"]);
+  assert.deepEqual(gamesForSetting(games, 1, 2).map(({ id }) => id), ["cursor-speed", "distance-flicks", "cursor-precision"]);
+  assert.deepEqual(gamesForSetting(games, 1, 4).map(({ id }) => id), ["distance-flicks", "cursor-precision"]);
   assert.deepEqual(gamesForSetting(games, 9, 0), []);
 });
 

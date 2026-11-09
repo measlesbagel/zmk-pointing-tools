@@ -54,7 +54,11 @@ function parameter(id, key, devicetreeProperty, minimum, maximum, compiled, labe
   };
 }
 
-/* The smoke keymap's cursor acceleration, transfer and coalescer as fully discovered
+function toggle(id, key, label, description) {
+  return { ...parameter(id, key, key, 0, 1, 0, label, "", description), type: TUNING.BOOLEAN };
+}
+
+/* The smoke keymap's cursor acceleration, transfer, orientation and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -91,6 +95,18 @@ export function buildSimulatorTuningTargets() {
           "Cursor gain numerator: pointer distance is ball distance × multiplier ÷ divisor."),
         parameter(1, "scale-divisor", "scale-divisor", 1, 1000, 1, "Gain divisor", "÷",
           "Cursor gain denominator."),
+      ],
+    },
+    {
+      id: 15,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "orientation",
+      stableId: "orientation",
+      devicetreePath: "/zpt_test_orientation",
+      parameters: [
+        toggle(0, "swap-xy", "Swap X and Y", "Exchange the sensor axes before any inversion, for a sensor mounted a quarter turn."),
+        toggle(1, "invert-x", "Invert X", "Flip horizontal motion after any swap."),
+        toggle(2, "invert-y", "Invert Y", "Flip vertical motion after any swap."),
       ],
     },
     {
