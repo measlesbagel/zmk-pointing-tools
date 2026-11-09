@@ -45,9 +45,10 @@ import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
 import { CompassRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
 import { analyseCompass, cueDirections } from "./compass.js";
-import { seededRandom } from "./measure.js";
+import { compareConditions, describeComparison, describePreference, hiddenLabels, planBlocks } from "./comparison.js";
+import { seededRandom, summarizeBy } from "./measure.js";
 import { clearHistory, formatRun, loadHistory, saveRun } from "./game-history.js";
-import { flickTrials, ringLevels, ringSequence } from "./target-games.js";
+import { flickFlags, flickTrials, ringLevels, ringSequence } from "./target-games.js";
 import { PointingPlayground } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
@@ -1156,14 +1157,21 @@ function renderGameScreen() {
   gameScreen.querySelector("[data-game-summary]").textContent = game.summary;
   gameScreen.querySelector("[data-game-settings]").innerHTML = settingRows(game.main)
     || '<p class="muted">This game\'s main settings are still loading.</p>';
-  gameScreen.querySelector("[data-game-related-wrap]").hidden = game.related.length === 0;
   gameScreen.querySelector("[data-game-related]").innerHTML = settingRows(game.related);
   const unsaved = [...game.main, ...game.related].some(({ targetId, parameterId }) => {
     const parameter = tuningTargets.get(targetId)?.parameters.find(({ id }) => id === parameterId);
     return parameter && parameter.current !== bootValue(parameter);
   });
+  /* While a blind comparison runs, nothing on screen may show which side
+   * is in effect. */
+  const hiding = Boolean(blindSession);
+  gameScreen.querySelector("[data-game-settings]").hidden = hiding;
+  gameScreen.querySelector("[data-game-related-wrap]").hidden = hiding || game.related.length === 0;
+  const blind = ["ring", "flicks"].includes(game.runner) && !hiding;
+  gameScreen.querySelector("[data-game-blind]").hidden = !blind;
+  gameScreen.querySelector("[data-game-blind-hint]").hidden = !blind;
   const save = gameScreen.querySelector("[data-game-save]");
-  save.hidden = !savingSupported;
+  save.hidden = !savingSupported || hiding;
   save.disabled = !unsaved;
   renderGameResults(game);
   const next = gameScreen.querySelector("[data-setup-next]");
@@ -1209,6 +1217,10 @@ gameScreen.addEventListener("click", (event) => {
     document.getElementById(`setting-${settingLink.dataset.showSetting}`)?.scrollIntoView({ block: "center" });
   } else if (event.target.closest("[data-game-play]")) {
     playGame(game);
+  } else if (event.target.closest("[data-game-blind]")) {
+    startBlindComparison(game);
+  } else if (event.target.closest("[data-preference]")) {
+    finishBlindComparison(event.target.closest("[data-preference]").dataset.preference);
   } else if (event.target.closest("[data-game-copy]")) {
     copyLatestResults(game);
   } else if (event.target.closest("[data-game-compare]")) {
@@ -1287,6 +1299,12 @@ const compassRunner = new CompassRunner(gameSurface, runnerEvents);
 function stopGames() {
   gameRunner.stop();
   compassRunner.stop();
+  if (blindSession) {
+    const { values } = blindSession;
+    blindSession = undefined;
+    applyValues(values.A);
+    renderGameScreen();
+  }
 }
 
 /* The values this game's settings had while it was played. */
@@ -1298,6 +1316,13 @@ function settingsSnapshot(game) {
       ? [{ target: target.label, key: parameter.key, label: parameter.label, value: parameter.current, unit: parameter.unit }]
       : [];
   });
+}
+
+function flickSequences(size, trials, prefix = "") {
+  return trials.map((trial, index) => ({
+    label: `${prefix}Flick ${index + 1} of ${trials.length}`,
+    targets: [trial.home, { ...trial.target, group: trial.band }],
+  }));
 }
 
 /* The orientation the compass game was played with, from its settings. */
@@ -1338,12 +1363,7 @@ function playGame(game) {
     }));
     gameRunner.start(sequences, run);
   } else if (game.runner === "flicks") {
-    const trials = flickTrials(size, { random: seededRandom(7) });
-    const sequences = trials.map((trial, index) => ({
-      label: `Flick ${index + 1} of ${trials.length}`,
-      targets: [trial.home, { ...trial.target, group: trial.band }],
-    }));
-    gameRunner.start(sequences, run, (recorded) => {
+    gameRunner.start(flickSequences(size, flickTrials(size, { random: seededRandom(7) })), run, (recorded) => {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
@@ -1364,6 +1384,148 @@ function playGame(game) {
     );
   }
   gameSurface.scrollIntoView({ block: "center" });
+}
+
+/* --- Blind comparison (#145) ----------------------------------------- */
+
+let blindSession;
+
+/* Sets values without the per-preview notice, for switching sides. */
+function applyValues(values) {
+  for (const { targetId, parameterId, value } of values) {
+    const parameter = tuningTargets.get(targetId)?.parameters.find(({ id }) => id === parameterId);
+    if (!parameter || parameter.current === value) continue;
+    if (simulator) parameter.current = value;
+    else if (transport) tuningRequests.enqueue(MESSAGE.TUNING_SET_REQUEST, encodeTuningSet(targetId, parameterId, value));
+  }
+  if (simulator) renderTuning();
+}
+
+/* Side A is the values in effect now; side B is whatever was typed into
+ * this game's main settings without previewing. */
+function blindValues(game) {
+  const A = [];
+  const B = [];
+  for (const row of gameScreen.querySelectorAll("[data-game-settings] [data-target][data-parameter]")) {
+    const targetId = Number(row.dataset.target);
+    const parameterId = Number(row.dataset.parameter);
+    const parameter = tuningTargets.get(targetId)?.parameters.find(({ id }) => id === parameterId);
+    const input = row.querySelector("[data-value]");
+    if (!parameter || !input) continue;
+    const value = parameter.type === TUNING.BOOLEAN ? Number(input.checked) : Number(input.value);
+    if (!Number.isInteger(value) || value < parameter.minimum || value > parameter.maximum || value === parameter.current) continue;
+    A.push({ targetId, parameterId, value: parameter.current, name: parameter.key ?? parameter.label });
+    B.push({ targetId, parameterId, value, name: parameter.key ?? parameter.label });
+  }
+  return game.main.length ? { A, B } : { A: [], B: [] };
+}
+
+/* One block's targets: the middle ring, or nine flicks in a layout that
+ * changes per block so neither side gets a memorised order. */
+function blindBlockSequences(game, size, index, prefix) {
+  if (game.runner === "ring") {
+    const level = ringLevels(size)[1];
+    return [{
+      label: `${prefix}Ring (${level.id.toFixed(1)} bits)`,
+      targets: ringSequence({ amplitude: level.amplitude, width: level.width, centre: { x: size.width / 2, y: size.height / 2 } }),
+    }];
+  }
+  return flickSequences(size, flickTrials(size, { perBand: 3, random: seededRandom(20 + index) }), prefix);
+}
+
+function startBlindComparison(game) {
+  const values = blindValues(game);
+  if (!values.B.length) {
+    notice("Type a different value into at least one setting above, without previewing it, to compare against.", true);
+    return;
+  }
+  stopGames();
+  const plan = planBlocks();
+  blindSession = {
+    game, values, order: plan.order, planned: plan.blocks, labels: hiddenLabels(), index: 0, results: [],
+    startedAt: new Date().toISOString(), settings: settingsSnapshot(game),
+  };
+  gameScreen.querySelector("[data-game-play-area]").hidden = false;
+  gameScreen.querySelector("[data-game-comparison]").replaceChildren();
+  renderGameScreen();
+  runBlindBlock();
+}
+
+function runBlindBlock() {
+  const session = blindSession;
+  const planned = session.planned[session.index];
+  applyValues(session.values[planned.condition]);
+  const label = session.labels[planned.condition];
+  const kind = planned.scored ? "scored" : `${planned.kind}, not scored`;
+  const prefix = `Block ${session.index + 1} of ${session.planned.length} · setting ${label} (${kind}) · `;
+  const size = { width: gameSurface.clientWidth, height: gameSurface.clientHeight };
+  const analyse = session.game.runner === "flicks" ? analyseFlicks : undefined;
+  gameRunner.start(blindBlockSequences(session.game, size, session.index, prefix), {}, analyse, (result) => {
+    session.results.push({
+      condition: planned.condition,
+      scored: planned.scored,
+      measured: result.trials.flat(),
+      throughput: result.throughput,
+    });
+    session.index += 1;
+    if (session.index < session.planned.length) {
+      runBlindBlock();
+      return;
+    }
+    askPreference();
+  });
+  gameSurface.scrollIntoView({ block: "center" });
+}
+
+function askPreference() {
+  gameProgress.textContent = "All blocks done. Which felt better?";
+  gameScreen.querySelector("[data-game-results-wrap]").hidden = false;
+  gameScreen.querySelector("[data-game-comparison]").innerHTML = `<div class="game-comparison">
+    <p>Which setting felt better to use? Answer before seeing the numbers.</p>
+    <div class="panel-actions">
+      <button type="button" data-preference="X">X</button>
+      <button type="button" data-preference="Y">Y</button>
+      <button type="button" data-preference="same">No difference</button>
+    </div>
+  </div>`;
+}
+
+function finishBlindComparison(preference) {
+  const session = blindSession;
+  if (!session || session.index < session.planned.length) return;
+  blindSession = undefined;
+  applyValues(session.values.A);
+  renderGameScreen();
+  const result = compareConditions(session.results);
+  const describe = (values) => values.map(({ name, value }) => `${name} ${value}`).join(", ");
+  const lines = [
+    `Blind comparison, order ${session.order}: A (${session.labels.A}) = current values, ${describe(session.values.A)}; B (${session.labels.B}) = ${describe(session.values.B)}.`,
+    describePreference(preference, session.labels, result),
+    ...describeComparison(result),
+    ...(session.game.runner === "flicks" ? ["A", "B"].flatMap((side) => {
+      const byBand = Object.fromEntries(summarizeBy(result.measured[side], (item) => item.group));
+      return flickFlags(byBand, result.measured[side][0]?.width ?? 16).map((flag) => `${side}: ${flag}`);
+    }) : []),
+    "One session is a small sample; repeat on another day before deciding. The current values are back in effect.",
+  ];
+  const run = {
+    game: session.game.id,
+    title: `${session.game.title} · blind comparison`,
+    startedAt: session.startedAt,
+    finishedAt: new Date().toISOString(),
+    groups: { Setting: { A: result.A.summary, B: result.B.summary } },
+    comparison: { order: session.order, labels: session.labels, preference, values: session.values },
+    notes: [...(simulator ? ["Played against the simulator."] : []), ...lines],
+    settings: session.settings,
+  };
+  saveRun(run);
+  gameProgress.textContent = "Done. Results below.";
+  gameScreen.querySelector("[data-game-comparison]").innerHTML = `<div class="game-comparison">
+    <h3>X was ${session.labels.A === "X" ? "A, the current values" : "B, the typed values"}; Y was ${session.labels.A === "Y" ? "A, the current values" : "B, the typed values"}.</h3>
+    ${lines.slice(1).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+    <pre>${escapeHtml(formatRun(run))}</pre>
+  </div>`;
+  renderGameResults(session.game);
 }
 
 function renderGameResults(game) {

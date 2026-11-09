@@ -23,12 +23,14 @@ export class TargetGameRunner {
   /* sequences: [{ targets: [{x, y, width, group?}], label }], in surface
    * coordinates; the first target of each sequence starts it. `analyse`
    * turns the recorded trials, one list per sequence, into result fields;
-   * the default scores a throughput ring. */
-  start(sequences, run, analyse = analyseRing) {
+   * the default scores a throughput ring. `onFinish` replaces the
+   * constructor's handler for this run only. */
+  start(sequences, run, analyse = analyseRing, onFinish = this.onFinish) {
     this.stop();
     this.sequences = sequences;
     this.run = run;
     this.analyse = analyse;
+    this.finished = onFinish;
     this.sequenceIndex = 0;
     this.targetIndex = 0;
     this.recorded = sequences.map(() => []);
@@ -120,7 +122,7 @@ export class TargetGameRunner {
       ...this.analyse(this.recorded, this.sequences),
     };
     this.stop();
-    this.onFinish?.(result);
+    this.finished?.(result);
   }
 }
 
@@ -155,7 +157,7 @@ export function analyseFlicks(recorded) {
     summary: summarize(measured),
     groups: { Band: ordered },
     notes: flickFlags(ordered, measured[0]?.width ?? 16),
-    trials: recorded.map((trials) => trials.map(measureTrial)),
+    trials: recorded.map((trials) => trials.map((trial) => ({ ...measureTrial(trial), group: trial.group }))),
   };
 }
 
