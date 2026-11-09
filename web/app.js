@@ -43,7 +43,8 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { CompassRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { CompassRunner, PixelRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { HOLD_MS, PIXEL_TIMEOUT_MS, analysePixel, formatPixel, onTarget, pixelTrials } from "./pixel.js";
 import { analyseCompass, cueDirections } from "./compass.js";
 import { compareConditions, describeComparison, describePreference, hiddenLabels, planBlocks } from "./comparison.js";
 import { SWEEP_MEASURES, describeSweep, planSweep, summarizeSweep, sweepChart, sweepValues } from "./sweep.js";
@@ -1299,10 +1300,12 @@ const runnerEvents = {
 };
 const gameRunner = new TargetGameRunner(gameSurface, runnerEvents);
 const compassRunner = new CompassRunner(gameSurface, runnerEvents);
+const pixelRunner = new PixelRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
   compassRunner.stop();
+  pixelRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1343,7 +1346,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1371,6 +1374,11 @@ function playGame(game) {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
+  } else if (game.runner === "pixel") {
+    pixelRunner.start(pixelTrials(size, { random: seededRandom(5) }), run, (trials) => {
+      const result = analysePixel(trials);
+      return { ...result, notes: [...run.notes, ...formatPixel(result.pixel), ...result.notes] };
+    }, { hold: HOLD_MS, timeout: PIXEL_TIMEOUT_MS, onTarget });
   } else {
     const random = seededRandom(3);
     const cues = [...cueDirections(8), ...cueDirections(8)]

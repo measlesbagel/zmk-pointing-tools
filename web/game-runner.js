@@ -53,7 +53,8 @@ export class TargetGameRunner {
 
   point(event) {
     const rect = this.surface.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    /* Targets are positioned inside the border, so measure from there. */
+    return { x: event.clientX - rect.left - this.surface.clientLeft, y: event.clientY - rect.top - this.surface.clientTop };
   }
 
   move(event) {
@@ -196,7 +197,8 @@ export class CompassRunner {
 
   point(event) {
     const rect = this.surface.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    /* Targets are positioned inside the border, so measure from there. */
+    return { x: event.clientX - rect.left - this.surface.clientLeft, y: event.clientY - rect.top - this.surface.clientTop };
   }
 
   select(event) {
@@ -249,5 +251,125 @@ export class CompassRunner {
       this.dot(home.x + cue.x * this.radius, home.y + cue.y * this.radius, 28, "game-target"),
     );
     this.onProgress?.(`Cue ${this.index + 1} of ${this.cues.length}: roll toward the target.`);
+  }
+}
+
+/* Pixel hunt: click home, then hold the pointer on a tiny target for
+ * `hold` ms. A faint ring marks where the target is; only its pixels
+ * count. A trial that isn't held within `timeout` ms is scored as not
+ * reached. */
+export class PixelRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  /* trials: [{ width, home, target: { left, top, width } }] from pixel.js. */
+  start(trials, run, analyse, { hold = 300, timeout = 10000, onTarget }) {
+    this.stop();
+    Object.assign(this, { plan: trials, run, analyse, hold, timeout, onTarget });
+    this.index = 0;
+    this.recorded = [];
+    this.trial = undefined;
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running");
+    this.surface.addEventListener("pointermove", (event) => this.move(event), { signal });
+    this.surface.addEventListener("pointerdown", (event) => this.select(event), { signal });
+    this.render();
+  }
+
+  stop() {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running");
+    this.surface.replaceChildren();
+  }
+
+  /* The surface can sit at a fractional page position. Measuring from the
+   * nearest whole pixel, and nudging drawn targets by the same amount,
+   * keeps a 1 px target on exactly the screen pixel the pointer reports. */
+  origin() {
+    const rect = this.surface.getBoundingClientRect();
+    const left = rect.left + this.surface.clientLeft;
+    const top = rect.top + this.surface.clientTop;
+    return { x: Math.round(left), y: Math.round(top), dx: Math.round(left) - left, dy: Math.round(top) - top };
+  }
+
+  point(event) {
+    const origin = this.origin();
+    return { x: event.clientX - origin.x, y: event.clientY - origin.y };
+  }
+
+  select(event) {
+    if (event.button !== 0 || this.trial) return;
+    event.preventDefault();
+    const point = this.point(event);
+    const { home } = this.plan[this.index];
+    if (Math.hypot(point.x - home.x, point.y - home.y) > home.width / 2) return;
+    this.trial = { ...this.plan[this.index], startedAt: event.timeStamp, samples: [{ t: event.timeStamp, ...point }] };
+    this.timeoutTimer = setTimeout(() => this.end(undefined), this.timeout);
+    this.render();
+  }
+
+  move(event) {
+    if (!this.trial) return;
+    const events = event.getCoalescedEvents?.() ?? [];
+    for (const item of events.length ? events : [event]) this.trial.samples.push({ t: item.timeStamp, ...this.point(item) });
+    const last = this.trial.samples.at(-1);
+    if (this.onTarget(this.trial.target, last)) {
+      if (this.holdStart === undefined) {
+        this.holdStart = last.t;
+        this.holdTimer = setTimeout(() => this.end(this.holdStart), this.hold);
+      }
+    } else if (this.holdStart !== undefined) {
+      clearTimeout(this.holdTimer);
+      this.holdStart = undefined;
+    }
+  }
+
+  end(heldAt) {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    this.holdStart = undefined;
+    this.recorded.push({ ...this.trial, heldAt });
+    this.trial = undefined;
+    this.index += 1;
+    if (this.index >= this.plan.length) {
+      const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.recorded) };
+      this.stop();
+      this.onFinish?.(result);
+      return;
+    }
+    this.render();
+  }
+
+  render() {
+    const { home, target, width } = this.plan[this.index];
+    const { dx, dy } = this.origin();
+    const node = (className, left, top, size) => {
+      const element = document.createElement("div");
+      element.className = className;
+      element.style.left = `${left + dx}px`;
+      element.style.top = `${top + dy}px`;
+      element.style.width = element.style.height = `${size}px`;
+      return element;
+    };
+    const progress = `Target ${this.index + 1} of ${this.plan.length} (${width} px)`;
+    if (!this.trial) {
+      this.surface.replaceChildren(node("game-target start", home.x - home.width / 2, home.y - home.width / 2, home.width));
+      this.onProgress?.(`${progress}: click the centre to show the next target.`);
+      return;
+    }
+    const cx = target.left + target.width / 2;
+    const cy = target.top + target.width / 2;
+    this.surface.replaceChildren(
+      node("pixel-halo", cx - 14, cy - 14, 28),
+      node("pixel-target", target.left, target.top, target.width),
+    );
+    this.onProgress?.(`${progress}: rest the pointer on the bright pixel in the ring until it counts.`);
   }
 }

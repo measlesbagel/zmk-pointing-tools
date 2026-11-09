@@ -212,3 +212,5 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .sweep-charts figcaption { font-size: 13px; color: var(--muted); }
 .sweep-chart { width: 100%; height: auto; }
 .sweep-chart text { font-size: 10px; fill: var(--muted); }
+.pixel-halo { position: absolute; border: 1px solid var(--muted); border-radius: 50%; opacity: .6; pointer-events: none; }
+.pixel-target { position: absolute; background: #fff; pointer-events: none; }

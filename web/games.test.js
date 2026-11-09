@@ -36,7 +36,7 @@ test("offers only the games the keyboard has stages for, in setup order", () => 
 test("links a setting back to every game that shows it", () => {
   const games = applicableGames([acceleration, cursorTransfer]);
   assert.deepEqual(gamesForSetting(games, 1, 2).map(({ id }) => id), ["cursor-speed", "distance-flicks", "cursor-precision"]);
-  assert.deepEqual(gamesForSetting(games, 1, 4).map(({ id }) => id), ["distance-flicks", "cursor-precision"]);
+  assert.deepEqual(gamesForSetting(games, 1, 4).map(({ id }) => id), ["distance-flicks"]);
   assert.deepEqual(gamesForSetting(games, 9, 0), []);
 });
 
