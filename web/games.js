@@ -75,6 +75,18 @@ export const GAMES = Object.freeze([
       ["motion-gate", "activation-distance"], ["motion-gate", "coherence"]],
   },
   {
+    id: "pursuit",
+    title: "Pursuit",
+    drives: "cursor",
+    stage: "cursor-acceleration",
+    runner: "pursuit",
+    activity: "cursor-path",
+    summary: "Keep the pointer on a target that sweeps back and forth, slowly and then fast. Time on target, lag and overshoot at each reversal are reported apart.",
+    main: [["cursor-acceleration", "speed-rise"], ["cursor-acceleration", "speed-fall"]],
+    related: [["cursor-acceleration", "curve-speed-*"], ["cursor-acceleration", "curve-sensitivity-*"],
+      ["cursor-coalescer", "usb-report-interval"], ["cursor-coalescer", "ble-report-interval"]],
+  },
+  {
     id: "click-drag",
     title: "Click and drag",
     drives: "cursor",

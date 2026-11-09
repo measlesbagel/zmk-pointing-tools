@@ -373,3 +373,90 @@ export class PixelRunner {
     this.onProgress?.(`${progress}: rest the pointer on the bright pixel in the ring until it counts.`);
   }
 }
+
+/* Pursuit: click the target to start, then keep the pointer on it while
+ * it sweeps through each phase. Records the pointer and target once per
+ * animation frame. */
+export class PursuitRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  /* phases from pursuit.js; position(phase, elapsed) gives the target. */
+  start(phases, run, analyse, { position }) {
+    this.stop();
+    this.phaseStart = undefined;
+    Object.assign(this, { phases, run, analyse, position });
+    this.index = 0;
+    this.recorded = [];
+    this.pointer = undefined;
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running");
+    this.surface.addEventListener("pointermove", (event) => { this.pointer = this.point(event); }, { signal });
+    this.surface.addEventListener("pointerdown", (event) => this.select(event), { signal });
+    this.dot = document.createElement("div");
+    this.dot.className = "game-target start";
+    this.surface.replaceChildren(this.dot);
+    this.place(this.position(phases[0], 0), phases[0].radius);
+    this.onProgress?.("Click the target to start, then keep the pointer on it.");
+  }
+
+  stop() {
+    cancelAnimationFrame(this.frame);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running");
+    this.surface.replaceChildren();
+  }
+
+  point(event) {
+    const rect = this.surface.getBoundingClientRect();
+    return { x: event.clientX - rect.left - this.surface.clientLeft, y: event.clientY - rect.top - this.surface.clientTop };
+  }
+
+  place({ x, y }, radius) {
+    this.dot.style.left = `${x - radius}px`;
+    this.dot.style.top = `${y - radius}px`;
+    this.dot.style.width = this.dot.style.height = `${radius * 2}px`;
+  }
+
+  select(event) {
+    if (event.button !== 0 || this.phaseStart !== undefined) return;
+    event.preventDefault();
+    this.pointer = this.point(event);
+    this.dot.className = "game-target";
+    this.beginPhase();
+  }
+
+  beginPhase() {
+    const phase = this.phases[this.index];
+    this.samples = [];
+    this.phaseStart = performance.now();
+    this.onProgress?.(`Phase ${this.index + 1} of ${this.phases.length}: ${phase.variant}, ${phase.axis === "x" ? "side to side" : "up and down"}. Keep the pointer on the target.`);
+    this.frame = requestAnimationFrame((now) => this.tick(now));
+  }
+
+  tick(now) {
+    const phase = this.phases[this.index];
+    const elapsed = now - this.phaseStart;
+    const target = this.position(phase, elapsed);
+    this.place(target, phase.radius);
+    if (this.pointer) this.samples.push({ t: elapsed, p: { ...this.pointer }, target });
+    if (elapsed < phase.duration) {
+      this.frame = requestAnimationFrame((next) => this.tick(next));
+      return;
+    }
+    this.recorded.push({ phase, samples: this.samples });
+    this.index += 1;
+    if (this.index < this.phases.length) {
+      this.beginPhase();
+      return;
+    }
+    const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.recorded) };
+    this.stop();
+    this.onFinish?.(result);
+  }
+}
