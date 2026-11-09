@@ -43,9 +43,11 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { TargetGameRunner } from "./game-runner.js";
+import { CompassRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { analyseCompass, cueDirections } from "./compass.js";
+import { seededRandom } from "./measure.js";
 import { clearHistory, formatRun, loadHistory, saveRun } from "./game-history.js";
-import { ringLevels, ringSequence } from "./target-games.js";
+import { flickTrials, ringLevels, ringSequence } from "./target-games.js";
 import { PointingPlayground } from "./playground.js";
 import { CalibrationPanel } from "./calibration.js";
 import { SIGNAL_KIND, STAGE_FRAME } from "./calibration-model.js";
@@ -1172,7 +1174,7 @@ function renderGameScreen() {
 function openGame(id) {
   if (!currentGames.some((game) => game.id === id)) return;
   if (openGameId !== id) {
-    gameRunner.stop();
+    stopGames();
     gameScreen.querySelector("[data-game-play-area]").hidden = true;
     gameScreen.querySelector("[data-game-comparison]").replaceChildren();
     comparePicks.clear();
@@ -1235,7 +1237,7 @@ gameScreen.addEventListener("click", (event) => {
     renderSetupSteps();
     openGame(setup.ids[setup.index]);
   } else if (event.target.closest("[data-game-close]")) {
-    gameRunner.stop();
+    stopGames();
     gameScreen.querySelector("[data-game-play-area]").hidden = true;
     openGameId = undefined;
     renderGameScreen();
@@ -1267,17 +1269,25 @@ function renderCapabilityChecks() {
 
 const comparePicks = new Set();
 const gameProgress = gameScreen.querySelector("[data-game-progress]");
-const gameRunner = new TargetGameRunner(gameScreen.querySelector("[data-game-surface]"), {
+const gameSurface = gameScreen.querySelector("[data-game-surface]");
+const runnerEvents = {
   onProgress: (text) => { gameProgress.textContent = text; },
   onFinish: (run) => {
     saveRun(run);
     gameProgress.textContent = Number.isFinite(run.throughput)
       ? `Done. Throughput ${run.throughput.toFixed(2)} bit/s; details below.`
-      : "Done. Details below.";
+      : `Done. ${run.notes?.find((note) => !note.startsWith("Played against")) ?? "Details below."}`;
     const game = currentGames.find(({ id }) => id === run.game);
     if (game) renderGameResults(game);
   },
-});
+};
+const gameRunner = new TargetGameRunner(gameSurface, runnerEvents);
+const compassRunner = new CompassRunner(gameSurface, runnerEvents);
+
+function stopGames() {
+  gameRunner.stop();
+  compassRunner.stop();
+}
 
 /* The values this game's settings had while it was played. */
 function settingsSnapshot(game) {
@@ -1290,28 +1300,70 @@ function settingsSnapshot(game) {
   });
 }
 
+/* The orientation the compass game was played with, from its settings. */
+function currentOrientation(game) {
+  const value = (key) => {
+    for (const { targetId, parameterId } of game.main) {
+      const parameter = tuningTargets.get(targetId)?.parameters.find(({ id }) => id === parameterId);
+      if (parameter?.key === key) return parameter.current !== 0;
+    }
+    return undefined;
+  };
+  const orientation = { swapXY: value("swap-xy"), invertX: value("invert-x"), invertY: value("invert-y") };
+  return Object.values(orientation).every((item) => item !== undefined) ? orientation : undefined;
+}
+
 function playGame(game) {
-  if (game.runner !== "ring") {
+  if (!["ring", "flicks", "compass"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
+  stopGames();
   const area = gameScreen.querySelector("[data-game-play-area]");
   area.hidden = false;
-  const surface = gameScreen.querySelector("[data-game-surface]");
-  const size = { width: surface.clientWidth, height: surface.clientHeight };
+  const size = { width: gameSurface.clientWidth, height: gameSurface.clientHeight };
   const centre = { x: size.width / 2, y: size.height / 2 };
-  const sequences = ringLevels(size).map((level, index) => ({
-    label: `Ring ${index + 1} of 3 (${level.id.toFixed(1)} bits)`,
-    targets: ringSequence({ amplitude: level.amplitude, width: level.width, centre }),
-  }));
-  gameRunner.start(sequences, {
+  const run = {
     game: game.id,
     title: game.title,
     startedAt: new Date().toISOString(),
     settings: settingsSnapshot(game),
     notes: simulator ? ["Played against the simulator."] : [],
-  });
-  surface.scrollIntoView({ block: "center" });
+  };
+  /* Fixed seeds: every run plays the same layout, so runs compare. */
+  if (game.runner === "ring") {
+    const sequences = ringLevels(size).map((level, index) => ({
+      label: `Ring ${index + 1} of 3 (${level.id.toFixed(1)} bits)`,
+      targets: ringSequence({ amplitude: level.amplitude, width: level.width, centre }),
+    }));
+    gameRunner.start(sequences, run);
+  } else if (game.runner === "flicks") {
+    const trials = flickTrials(size, { random: seededRandom(7) });
+    const sequences = trials.map((trial, index) => ({
+      label: `Flick ${index + 1} of ${trials.length}`,
+      targets: [trial.home, { ...trial.target, group: trial.band }],
+    }));
+    gameRunner.start(sequences, run, (recorded) => {
+      const result = analyseFlicks(recorded);
+      return { ...result, notes: [...run.notes, ...result.notes] };
+    });
+  } else {
+    const random = seededRandom(3);
+    const cues = [...cueDirections(8), ...cueDirections(8)]
+      .map((cue) => ({ cue, order: random() }))
+      .sort((a, b) => a.order - b.order)
+      .map(({ cue }) => cue);
+    const current = currentOrientation(game);
+    compassRunner.start(
+      { home: { ...centre, width: 28 }, radius: Math.min(size.width, size.height) * 0.3, cues },
+      run,
+      (trials) => {
+        const result = analyseCompass(trials, current);
+        return { ...result, notes: [...run.notes, ...result.notes] };
+      },
+    );
+  }
+  gameSurface.scrollIntoView({ block: "center" });
 }
 
 function renderGameResults(game) {
@@ -1355,12 +1407,12 @@ function renderComparison(game) {
   if (!a || !b) return;
   const rows = [
     ["Throughput (bit/s)", (run) => run.throughput, 2],
-    ["Hit rate (%)", (run) => run.summary.hitRate * 100, 0],
-    ["Median time (ms)", (run) => run.summary.movementTime, 0],
-    ["Median endpoint (px, + past)", (run) => run.summary.signedError, 1],
-    ["Re-entries per target", (run) => run.summary.reEntries, 2],
-    ["Median overshoot (%)", (run) => run.summary.overshoot * 100, 1],
-    ["Re-rolls per target", (run) => run.summary.rerolls, 2],
+    ["Hit rate (%)", (run) => run.summary?.hitRate * 100, 0],
+    ["Median time (ms)", (run) => run.summary?.movementTime, 0],
+    ["Median endpoint (px, + past)", (run) => run.summary?.signedError, 1],
+    ["Re-entries per target", (run) => run.summary?.reEntries, 2],
+    ["Median overshoot (%)", (run) => run.summary?.overshoot * 100, 1],
+    ["Re-rolls per target", (run) => run.summary?.rerolls, 2],
   ];
   const cell = (value, digits) => (Number.isFinite(value) ? value.toFixed(digits) : "n/a");
   const settingKey = (setting) => `${setting.target} / ${setting.key ?? setting.label}`;
