@@ -19,7 +19,7 @@ firmware reports and what is missing, next to the stage-decision stream.
 
 ### How games are scored
 
-The tuner plays five cursor games itself, and first setup runs them in
+The tuner plays six cursor games itself, and first setup runs them in
 this order:
 
 - **Compass start** checks `swap-xy`, `invert-x` and `invert-y`. Click the
@@ -53,6 +53,15 @@ this order:
   pointer ran on past each reversal. A long lag on the fast phases points
   at `speed-rise` or the report intervals, run-on past reversals at
   `speed-fall`, and bursty slow tracking at the slow end of the curve.
+- **Still hands** has you click 12 targets as they appear, alternating
+  either side of the centre, then rest with hands off the ball and keys
+  for 8 s. It reports how far the pointer slipped while each button was
+  down, how long after the button came up the pointer first moved 3 px,
+  and how far it drifted during the rest. Slip and the wait to move again
+  are shown together because `suppress-after-keypress` trades one for the
+  other; drift at rest points at the motion gate. Real keyboards report
+  their clicks as key presses, so play it with the keyboard's own mouse
+  button for a fair reading.
 
 These games record the
 whole pointer path, including every coalesced pointer event, and score it

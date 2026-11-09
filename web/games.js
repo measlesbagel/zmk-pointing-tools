@@ -87,6 +87,18 @@ export const GAMES = Object.freeze([
       ["cursor-coalescer", "usb-report-interval"], ["cursor-coalescer", "ble-report-interval"]],
   },
   {
+    id: "still-hands",
+    title: "Still hands",
+    drives: "cursor",
+    stage: "keypress-guard",
+    runner: "still",
+    activity: "click-drag",
+    summary: "Click targets as they appear, then rest with hands off. Slip while clicking and the wait before you can move again are shown together, since one setting trades them.",
+    main: [["keypress-guard", "suppress-after-keypress"]],
+    related: [["motion-gate", "activation-distance"], ["motion-gate", "coherence"],
+      ["motion-gate", "qualification-timeout"], ["motion-gate", "idle-timeout"]],
+  },
+  {
     id: "click-drag",
     title: "Click and drag",
     drives: "cursor",

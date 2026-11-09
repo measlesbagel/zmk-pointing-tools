@@ -460,3 +460,113 @@ export class PursuitRunner {
     this.onFinish?.(result);
   }
 }
+
+/* Still hands: click each target as it appears, then rest with hands off
+ * the ball. Records the pointer while each button is down, after it comes
+ * up, and through the rest. */
+export class StillRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  /* targets: [{x, y, width}] to click in order; rest in ms. */
+  start({ targets, home, rest = 8000 }, run, analyse) {
+    this.stop();
+    Object.assign(this, { targets, home, restMs: rest, run, analyse });
+    this.index = 0;
+    this.clicks = [];
+    this.current = undefined;
+    this.restSamples = undefined;
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running");
+    this.surface.addEventListener("pointermove", (event) => this.move(event), { signal });
+    this.surface.addEventListener("pointerdown", (event) => this.down(event), { signal });
+    this.surface.addEventListener("pointerup", (event) => this.up(event), { signal });
+    this.render();
+  }
+
+  stop() {
+    clearTimeout(this.restTimer);
+    clearInterval(this.countdown);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running");
+    this.surface.replaceChildren();
+  }
+
+  point(event) {
+    const rect = this.surface.getBoundingClientRect();
+    return { t: event.timeStamp, x: event.clientX - rect.left - this.surface.clientLeft, y: event.clientY - rect.top - this.surface.clientTop };
+  }
+
+  move(event) {
+    const events = event.getCoalescedEvents?.() ?? [];
+    for (const item of events.length ? events : [event]) {
+      const point = this.point(item);
+      if (this.restSamples) this.restSamples.push(point);
+      else if (this.current?.up) this.current.after.push(point);
+      else if (this.current) this.current.held.push(point);
+    }
+  }
+
+  down(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const point = this.point(event);
+    if (this.index < this.targets.length) {
+      const target = this.targets[this.index];
+      if (Math.hypot(point.x - target.x, point.y - target.y) > target.width / 2) return;
+      /* The previous click's after-samples end at this press. */
+      if (this.current) this.clicks.push(this.current);
+      this.current = { down: point, held: [], after: [] };
+      return;
+    }
+    if (this.restSamples || Math.hypot(point.x - this.home.x, point.y - this.home.y) > this.home.width / 2) return;
+    if (this.current) this.clicks.push(this.current);
+    this.current = undefined;
+    this.beginRest(point);
+  }
+
+  up(event) {
+    if (event.button !== 0 || !this.current || this.current.up) return;
+    this.current.up = this.point(event);
+    this.index += 1;
+    this.render();
+  }
+
+  beginRest(point) {
+    this.restSamples = [point];
+    const ends = point.t + this.restMs;
+    this.surface.replaceChildren();
+    const tick = () => this.onProgress?.(`Hands off the ball and the keys: ${Math.max(0, Math.ceil((ends - performance.now()) / 1000))} s.`);
+    tick();
+    this.countdown = setInterval(tick, 250);
+    this.restTimer = setTimeout(() => {
+      clearInterval(this.countdown);
+      const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.clicks, this.restSamples) };
+      this.stop();
+      this.onFinish?.(result);
+    }, this.restMs);
+  }
+
+  render() {
+    const dot = ({ x, y, width }, className) => {
+      const node = document.createElement("div");
+      node.className = className;
+      node.style.left = `${x - width / 2}px`;
+      node.style.top = `${y - width / 2}px`;
+      node.style.width = node.style.height = `${width}px`;
+      return node;
+    };
+    if (this.index < this.targets.length) {
+      this.surface.replaceChildren(dot(this.targets[this.index], "game-target"));
+      this.onProgress?.(`Click ${this.index + 1} of ${this.targets.length}: click each target as soon as it appears, with your usual button.`);
+      return;
+    }
+    this.surface.replaceChildren(dot(this.home, "game-target start"));
+    this.onProgress?.("Last part: click the centre, then take your hands off the ball and keys for a few seconds.");
+  }
+}
