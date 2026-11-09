@@ -63,6 +63,19 @@ this order:
   their clicks as key presses, so play it with the keyboard's own mouse
   button for a fair reading.
 
+The scroll games:
+
+- **Scroll to the band** moves a ruled page under a fixed band with the
+  wheel. Each of 12 trials asks you to bring a line into the band and
+  hold it for 400 ms, at 300, 900 and 2400 px each way. The first six show
+  where the line is; the last six hide it until it scrolls into view,
+  because a known target follows Fitts' law and an unknown one doesn't
+  (Hinckley et al., 2002). It reports scroll throughput, time, overshoot
+  past the band, reversals, settle time after first reaching the band, and
+  the spacing of wheel events, for each block and each distance. It flags
+  short scrolls going past the band, long ones not arriving, and wheel
+  events 50 ms or more apart.
+
 These games record the
 whole pointer path, including every coalesced pointer event, and score it
 with published pointing measures in `web/measure.js`:

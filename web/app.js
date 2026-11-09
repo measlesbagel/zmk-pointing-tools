@@ -43,7 +43,8 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { CompassRunner, PixelRunner, PursuitRunner, StillRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { CompassRunner, PixelRunner, PursuitRunner, ScrollBandRunner, StillRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { BAND_HOLD_MS, SCROLL_TIMEOUT_MS, analyseScrollBand, formatScrollBand, scrollTrials } from "./scroll-band.js";
 import { analyseStillHands, formatStillHands } from "./still-hands.js";
 import { PURSUIT_PHASES, analysePursuit, formatPursuit, measurePursuitPhase, pursuitPosition } from "./pursuit.js";
 import { HOLD_MS, PIXEL_TIMEOUT_MS, analysePixel, formatPixel, onTarget, pixelTrials } from "./pixel.js";
@@ -1305,6 +1306,7 @@ const compassRunner = new CompassRunner(gameSurface, runnerEvents);
 const pixelRunner = new PixelRunner(gameSurface, runnerEvents);
 const pursuitRunner = new PursuitRunner(gameSurface, runnerEvents);
 const stillRunner = new StillRunner(gameSurface, runnerEvents);
+const scrollBandRunner = new ScrollBandRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
@@ -1312,6 +1314,7 @@ function stopGames() {
   pixelRunner.stop();
   pursuitRunner.stop();
   stillRunner.stop();
+  scrollBandRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1352,7 +1355,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still", "scroll-band"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1380,6 +1383,11 @@ function playGame(game) {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
+  } else if (game.runner === "scroll-band") {
+    scrollBandRunner.start(scrollTrials({ random: seededRandom(9) }), run, (trials) => {
+      const result = analyseScrollBand(trials);
+      return { ...result, notes: [...run.notes, ...formatScrollBand(result.scrollBand), ...result.notes] };
+    }, { hold: BAND_HOLD_MS, timeout: SCROLL_TIMEOUT_MS });
   } else if (game.runner === "still") {
     /* Targets alternate either side of the centre, so every click is
      * followed by a real move to the next one. */

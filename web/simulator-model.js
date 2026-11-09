@@ -58,7 +58,7 @@ function toggle(id, key, label, description) {
   return { ...parameter(id, key, key, 0, 1, 0, label, "", description), type: TUNING.BOOLEAN };
 }
 
-/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard and coalescer as fully discovered
+/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard, scroll and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -118,6 +118,19 @@ export function buildSimulatorTuningTargets() {
       parameters: [
         parameter(0, "suppress-after-keypress", "suppress-after-keypress-ms", 0, 2000, 1, "Guard window", "ms",
           "How long motion is held back after any key press."),
+      ],
+    },
+    {
+      id: 17,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "scroll",
+      stableId: "scroll",
+      devicetreePath: "/zpt_test_scroll",
+      parameters: [
+        parameter(0, "steps-per-meter", "steps-per-meter", 1, 100000, 1500, "Scroll speed", "steps/m",
+          "Wheel steps per metre of ball travel along the engaged axis."),
+        parameter(1, "report-interval", "report-interval-ms", 1, 1000, 16, "Report interval", "ms",
+          "How often accumulated scroll is sent."),
       ],
     },
     {
