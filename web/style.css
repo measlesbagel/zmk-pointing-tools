@@ -223,3 +223,13 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .rail-segment { position: absolute; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .rail-goal { position: absolute; border: 2px solid var(--warning); }
 .rail-dot { position: absolute; left: calc(50% - 6px); top: calc(50% - 6px); width: 12px; height: 12px; border-radius: 50%; background: var(--warning); pointer-events: none; }
+.game-surface.typing { display: grid; place-items: center; cursor: default; }
+.game-surface.stray { outline: 2px solid var(--warning); }
+.caret-grid { display: grid; font: 16px/1.6 ui-monospace, monospace; color: var(--muted); white-space: pre; }
+.caret-grid span { text-align: center; }
+.caret-grid .caret-target { background: color-mix(in srgb, var(--warning) 45%, transparent); color: #fff; }
+.caret-grid .caret-at { box-shadow: inset 2px 0 0 var(--accent), inset 0 -2px 0 var(--accent); color: #fff; }
+.type-passage { max-width: 60ch; padding: 16px; font: 18px/1.7 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; }
+.type-passage .typed { color: var(--accent); }
+.type-passage .wrong { color: var(--warning); text-decoration: underline; }
+.type-passage .next { box-shadow: inset 0 -2px 0 #fff; color: #fff; }

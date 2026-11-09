@@ -58,7 +58,7 @@ function toggle(id, key, label, description) {
   return { ...parameter(id, key, key, 0, 1, 0, label, "", description), type: TUNING.BOOLEAN };
 }
 
-/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard, scroll, scroll axis intent and coalescer as fully discovered
+/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard, scroll, scroll axis intent, text navigation and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -150,6 +150,21 @@ export function buildSimulatorTuningTargets() {
           "How far back motion counts toward choosing an axis."),
         parameter(4, "idle-timeout", "idle-timeout-ms", 0, 5000, 300, "Idle timeout", "ms",
           "Pause after which the axis choice resets; 0 never resets."),
+      ],
+    },
+    {
+      id: 19,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "text-nav",
+      stableId: "text-nav",
+      devicetreePath: "/zpt_test_text_nav",
+      parameters: [
+        parameter(0, "horizontal-threshold", "horizontal-threshold-micrometers", 1, 50000, 2500, "Horizontal step", "µm",
+          "Ball travel per left or right key tap."),
+        parameter(1, "vertical-threshold", "vertical-threshold-micrometers", 1, 50000, 4000, "Vertical step", "µm",
+          "Ball travel per up or down key tap."),
+        parameter(2, "idle-timeout", "idle-timeout-ms", 1, 5000, 300, "Idle timeout", "ms",
+          "Pause after which partial travel toward the next tap is dropped."),
       ],
     },
     {
