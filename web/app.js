@@ -43,7 +43,8 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { CompassRunner, PixelRunner, PursuitRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { CompassRunner, PixelRunner, PursuitRunner, StillRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { analyseStillHands, formatStillHands } from "./still-hands.js";
 import { PURSUIT_PHASES, analysePursuit, formatPursuit, measurePursuitPhase, pursuitPosition } from "./pursuit.js";
 import { HOLD_MS, PIXEL_TIMEOUT_MS, analysePixel, formatPixel, onTarget, pixelTrials } from "./pixel.js";
 import { analyseCompass, cueDirections } from "./compass.js";
@@ -1303,12 +1304,14 @@ const gameRunner = new TargetGameRunner(gameSurface, runnerEvents);
 const compassRunner = new CompassRunner(gameSurface, runnerEvents);
 const pixelRunner = new PixelRunner(gameSurface, runnerEvents);
 const pursuitRunner = new PursuitRunner(gameSurface, runnerEvents);
+const stillRunner = new StillRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
   compassRunner.stop();
   pixelRunner.stop();
   pursuitRunner.stop();
+  stillRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1349,7 +1352,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass", "pixel", "pursuit"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1376,6 +1379,19 @@ function playGame(game) {
     gameRunner.start(flickSequences(size, flickTrials(size, { random: seededRandom(7) })), run, (recorded) => {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
+    });
+  } else if (game.runner === "still") {
+    /* Targets alternate either side of the centre, so every click is
+     * followed by a real move to the next one. */
+    const reach = Math.min(size.width, size.height) * 0.25;
+    const targets = Array.from({ length: 12 }, (_, i) => ({
+      x: centre.x + (i % 2 ? reach : -reach),
+      y: centre.y + ((i % 4) < 2 ? -reach / 2 : reach / 2),
+      width: 28,
+    }));
+    stillRunner.start({ targets, home: { ...centre, width: 28 } }, run, (clicks, rest) => {
+      const result = analyseStillHands(clicks, rest);
+      return { ...result, notes: [...run.notes, ...formatStillHands(result.stillHands), ...result.notes] };
     });
   } else if (game.runner === "pursuit") {
     const sweep = { centre, amplitude: Math.min(size.width, size.height) * 0.35 };

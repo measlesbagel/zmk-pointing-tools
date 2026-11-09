@@ -58,7 +58,7 @@ function toggle(id, key, label, description) {
   return { ...parameter(id, key, key, 0, 1, 0, label, "", description), type: TUNING.BOOLEAN };
 }
 
-/* The smoke keymap's cursor acceleration, transfer, orientation and coalescer as fully discovered
+/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -107,6 +107,17 @@ export function buildSimulatorTuningTargets() {
         toggle(0, "swap-xy", "Swap X and Y", "Exchange the sensor axes before any inversion, for a sensor mounted a quarter turn."),
         toggle(1, "invert-x", "Invert X", "Flip horizontal motion after any swap."),
         toggle(2, "invert-y", "Invert Y", "Flip vertical motion after any swap."),
+      ],
+    },
+    {
+      id: 16,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "keypress-guard",
+      stableId: "keypress-guard",
+      devicetreePath: "/zpt_test_keypress_guard",
+      parameters: [
+        parameter(0, "suppress-after-keypress", "suppress-after-keypress-ms", 0, 2000, 1, "Guard window", "ms",
+          "How long motion is held back after any key press."),
       ],
     },
     {
