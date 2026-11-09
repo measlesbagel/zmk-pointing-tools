@@ -47,10 +47,10 @@ test("simulator status enumerates the stage targets at the off level", () => {
   }
 });
 
-test("simulator offers the cursor acceleration, transfer, orientation, keypress guard, scroll, axis intent and coalescer for tuning", () => {
+test("simulator offers the cursor acceleration, transfer, orientation, keypress guard, scroll, axis intent, text navigation and coalescer for tuning", () => {
   const targets = buildSimulatorTuningTargets();
   assert.deepEqual(targets.map(({ stableId }) => stableId),
-    ["cursor-acceleration", "cursor-transfer", "orientation", "keypress-guard", "scroll", "scroll-axis-intent", "cursor-coalescer"]);
+    ["cursor-acceleration", "cursor-transfer", "orientation", "keypress-guard", "scroll", "scroll-axis-intent", "text-nav", "cursor-coalescer"]);
   for (const target of targets) {
     assert.equal(target.kind, TARGET_KIND.PIPELINE_STAGE);
     assert.ok(!SIMULATED_STAGES.some(({ id }) => id === target.id));

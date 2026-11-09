@@ -44,8 +44,12 @@ import {
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
 import {
-  CompassRunner, PixelRunner, PursuitRunner, RailRunner, ScrollBandRunner, StillRunner, TargetGameRunner, analyseFlicks,
+  CaretRunner, CompassRunner, PixelRunner, PursuitRunner, RailRunner, ScrollBandRunner, StillRunner, TargetGameRunner, TypeRunner, analyseFlicks,
 } from "./game-runner.js";
+import {
+  CARET_COLUMNS, CARET_HOLD_MS, CARET_LINES, CARET_TIMEOUT_MS, analyseCaret, caretTrials, formatCaret, stepCaret,
+} from "./caret.js";
+import { TYPE_PASSAGE, TYPE_TIMEOUT_MS, analyseTypeThrough, formatTypeThrough } from "./type-through.js";
 import { RAIL_COURSES, RAIL_TIMEOUT_MS, RAIL_WIDTH, analyseRail, finished as railFinished, formatRail } from "./rail.js";
 import { BAND_HOLD_MS, SCROLL_TIMEOUT_MS, analyseScrollBand, formatScrollBand, scrollTrials } from "./scroll-band.js";
 import { analyseStillHands, formatStillHands } from "./still-hands.js";
@@ -1311,6 +1315,8 @@ const pursuitRunner = new PursuitRunner(gameSurface, runnerEvents);
 const stillRunner = new StillRunner(gameSurface, runnerEvents);
 const scrollBandRunner = new ScrollBandRunner(gameSurface, runnerEvents);
 const railRunner = new RailRunner(gameSurface, runnerEvents);
+const caretRunner = new CaretRunner(gameSurface, runnerEvents);
+const typeRunner = new TypeRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
@@ -1320,6 +1326,8 @@ function stopGames() {
   stillRunner.stop();
   scrollBandRunner.stop();
   railRunner.stop();
+  caretRunner.stop();
+  typeRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1360,7 +1368,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still", "scroll-band", "rail"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still", "scroll-band", "rail", "caret", "type"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1388,6 +1396,16 @@ function playGame(game) {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
+  } else if (game.runner === "caret") {
+    caretRunner.start(caretTrials({ random: seededRandom(11) }), run, (trials) => {
+      const result = analyseCaret(trials);
+      return { ...result, notes: [...run.notes, ...formatCaret(result.caret), ...result.notes] };
+    }, { hold: CARET_HOLD_MS, timeout: CARET_TIMEOUT_MS, columns: CARET_COLUMNS, lines: CARET_LINES, step: stepCaret });
+  } else if (game.runner === "type") {
+    typeRunner.start(TYPE_PASSAGE, run, (record) => {
+      const result = analyseTypeThrough(record);
+      return { ...result, notes: [...run.notes, ...formatTypeThrough(result.typeThrough), ...result.notes] };
+    }, { timeout: TYPE_TIMEOUT_MS });
   } else if (game.runner === "rail") {
     railRunner.start(RAIL_COURSES, run, (runs) => {
       const result = analyseRail(runs);

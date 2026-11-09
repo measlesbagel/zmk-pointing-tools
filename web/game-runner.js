@@ -774,3 +774,205 @@ export class RailRunner {
     this.page.style.transform = `translate(${cx - this.position.x}px, ${cy - this.position.y}px)`;
   }
 }
+
+/* Caret hunt: arrow keys from the trackball's text movement step a caret
+ * over a grid of characters. A trial starts at its first step and ends once
+ * the caret has rested on the highlighted character for `hold` ms. */
+export class CaretRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  /* step(caret, key) returns the caret after a key, or the same caret for
+   * a key that isn't a step. */
+  start(trials, run, analyse, { hold = 400, timeout = 15000, columns, lines, step }) {
+    this.stop();
+    Object.assign(this, { plan: trials, run, analyse, hold, timeout, columns, lines, step });
+    this.index = 0;
+    this.recorded = [];
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running", "typing");
+    document.addEventListener("keydown", (event) => this.key(event), { signal });
+    this.grid = document.createElement("div");
+    this.grid.className = "caret-grid";
+    this.grid.style.gridTemplateColumns = `repeat(${columns}, 1ch)`;
+    const filler = "the ball moves the caret one step for each threshold crossed ";
+    this.cells = Array.from({ length: columns * lines }, (_, i) => {
+      const cell = document.createElement("span");
+      cell.textContent = filler[i % filler.length];
+      return cell;
+    });
+    this.grid.append(...this.cells);
+    this.surface.replaceChildren(this.grid);
+    this.begin();
+  }
+
+  stop() {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running", "typing");
+    this.surface.replaceChildren();
+  }
+
+  begin() {
+    const trial = this.plan[this.index];
+    this.trial = { ...trial, events: [], shownAt: performance.now() };
+    this.caret = trial.start;
+    this.timeoutTimer = setTimeout(() => this.end(undefined), this.timeout);
+    this.onProgress?.(`Move ${this.index + 1} of ${this.plan.length} (${trial.block}): roll the caret onto the highlighted character and stop there.`);
+    this.render();
+  }
+
+  key(event) {
+    if (!this.trial || event.ctrlKey || event.metaKey || event.altKey) return;
+    const next = this.step(this.caret, event.key);
+    if (next === this.caret) return;
+    event.preventDefault();
+    this.caret = next;
+    this.trial.events.push({ t: event.timeStamp, key: event.key, ...next });
+    clearTimeout(this.holdTimer);
+    const { target } = this.trial;
+    if (next.column === target.column && next.line === target.line) {
+      const heldAt = event.timeStamp;
+      this.holdTimer = setTimeout(() => this.end(heldAt), this.hold);
+    }
+    this.render();
+  }
+
+  end(heldAt) {
+    clearTimeout(this.holdTimer);
+    clearTimeout(this.timeoutTimer);
+    const { block, start, target, events, shownAt } = this.trial;
+    this.recorded.push({ block, start, target, events, startedAt: events[0]?.t ?? shownAt, heldAt });
+    this.trial = undefined;
+    this.index += 1;
+    if (this.index >= this.plan.length) {
+      const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.recorded) };
+      this.stop();
+      this.onFinish?.(result);
+      return;
+    }
+    this.begin();
+  }
+
+  render() {
+    const at = ({ column, line }) => this.cells[line * this.columns + column];
+    for (const cell of this.cells) cell.className = "";
+    at(this.trial.target).classList.add("caret-target");
+    at(this.caret).classList.add("caret-at");
+  }
+}
+
+/* Type-through: the passage is typed here rather than into a text box, so
+ * arrow keys, wheel events and pointer motion can be counted without
+ * moving anything. It ends when the passage has been typed to its end. */
+export class TypeRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  start(passage, run, analyse, { timeout = 180000 } = {}) {
+    this.stop();
+    Object.assign(this, { passage, run, analyse });
+    this.typed = [];
+    this.events = [];
+    this.pointer = undefined;
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running", "typing");
+    document.addEventListener("keydown", (event) => this.key(event), { signal });
+    document.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      this.events.push({ t: event.timeStamp, kind: "wheel" });
+      this.flash();
+    }, { signal, passive: false });
+    document.addEventListener("pointermove", (event) => this.move(event), { signal });
+    this.text = document.createElement("div");
+    this.text.className = "type-passage";
+    this.chars = [...passage].map((char) => {
+      const node = document.createElement("span");
+      node.textContent = char;
+      return node;
+    });
+    this.text.append(...this.chars);
+    this.surface.replaceChildren(this.text);
+    this.timeoutTimer = setTimeout(() => this.end(undefined), timeout);
+    this.onProgress?.("Rest your hands where they sit while typing, near the ball, and type the passage. Mistakes are fine; there's no need to fix them.");
+    this.render();
+  }
+
+  stop() {
+    clearTimeout(this.timeoutTimer);
+    clearTimeout(this.flashTimer);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running", "typing", "stray");
+    this.surface.replaceChildren();
+  }
+
+  key(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key.startsWith("Arrow")) {
+      event.preventDefault();
+      this.events.push({ t: event.timeStamp, kind: "step" });
+      this.flash();
+      return;
+    }
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      if (this.typed.length) this.typed.pop();
+      this.events.push({ t: event.timeStamp, kind: "backspace" });
+    } else if (event.key.length === 1) {
+      event.preventDefault();
+      const correct = event.key === this.passage[this.typed.length];
+      this.typed.push(correct);
+      this.events.push({ t: event.timeStamp, kind: "char", correct });
+    } else return;
+    this.render();
+    if (this.typed.length >= this.passage.length) this.end(event.timeStamp);
+  }
+
+  move(event) {
+    const items = event.getCoalescedEvents?.() ?? [];
+    for (const item of items.length ? items : [event]) {
+      const point = { x: item.clientX, y: item.clientY };
+      if (this.pointer) {
+        const distance = Math.hypot(point.x - this.pointer.x, point.y - this.pointer.y);
+        if (distance) this.events.push({ t: item.timeStamp, kind: "pointer", distance });
+      }
+      this.pointer = point;
+    }
+  }
+
+  /* A brief outline so a stray step or scroll is noticed as it happens. */
+  flash() {
+    this.surface.classList.add("stray");
+    clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => this.surface.classList.remove("stray"), 200);
+  }
+
+  end(endedAt) {
+    clearTimeout(this.timeoutTimer);
+    const result = {
+      ...this.run,
+      finishedAt: new Date().toISOString(),
+      ...this.analyse({ passage: this.passage, events: this.events, endedAt }),
+    };
+    this.stop();
+    this.onFinish?.(result);
+  }
+
+  render() {
+    this.chars.forEach((node, index) => {
+      node.className = index < this.typed.length ? (this.typed[index] ? "typed" : "typed wrong")
+        : index === this.typed.length ? "next" : "";
+    });
+  }
+}

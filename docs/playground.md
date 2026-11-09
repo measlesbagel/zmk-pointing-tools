@@ -88,6 +88,30 @@ The scroll games:
   scroll needs the ball's own counts, which the page can't see, so it
   isn't measured here.
 
+The text games:
+
+- **Caret hunt** steps a caret over a 48 by 12 grid of characters with
+  the arrow keys the trackball's text movement sends. Each of 16 moves asks
+  you to bring the caret onto a highlighted character and stop there for
+  400 ms: six along a line (3, 8 and 20 characters each way), six up and
+  down (1, 3 and 6 lines), then four that need both. It reports, for each
+  block, the steps taken against the fewest needed, overshoot past the
+  target in characters and lines, reversals, the share of steps on the
+  wrong axis in the straight blocks, runaway steps (steps less than 150 ms
+  apart that kept coming after the caret first reached the target), and
+  time per step. It flags overshoot and slow steps against
+  `horizontal-threshold` and `vertical-threshold`, wrong-axis steps against
+  the text pipeline's axis intent, and runaway steps against the thresholds
+  and `idle-timeout`.
+- **Type-through** has you type a passage with your hands resting near the
+  ball. Typing needs no arrow keys, scrolling or pointer motion, so any of
+  them are counted: while typing (up to a second after a key) and while
+  resting in pauses between bursts. Motion before the first key is ignored.
+  It flags caret steps, scrolling or pointer travel during typing against
+  `suppress-after-keypress` and the text thresholds, and output during
+  pauses against the motion gate. Both games' flag thresholds are starting
+  points.
+
 These games record the
 whole pointer path, including every coalesced pointer event, and score it
 with published pointing measures in `web/measure.js`:
