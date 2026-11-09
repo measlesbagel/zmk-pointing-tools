@@ -39,11 +39,13 @@ export const GAMES = Object.freeze([
   },
   {
     id: "cursor-speed",
-    title: "Base cursor speed",
+    title: "Throughput ring",
     drives: "cursor",
     stage: "cursor-transfer",
+    /* Played by the tuner's own runner rather than a playground activity. */
+    runner: "ring",
     activity: "cursor-targets",
-    summary: "Reach targets across the screen. Find the speed where a comfortable roll crosses it.",
+    summary: "Click targets around a ring as quickly and accurately as is comfortable. Throughput combines speed and accuracy, so a setting that only makes you sloppier doesn't win.",
     main: [["cursor-transfer", "scale-multiplier"], ["cursor-transfer", "scale-divisor"]],
     related: [["cursor-acceleration", "curve-speed-*"], ["cursor-acceleration", "curve-sensitivity-*"]],
   },

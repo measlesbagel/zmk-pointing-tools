@@ -17,8 +17,39 @@ stages on the device when the firmware can save (see
 base speed, then each capability. **Diagnostics** lists what the connected
 firmware reports and what is missing, next to the stage-decision stream.
 
-The games are built on the playground activities below, which stay available
-under **Free play**.
+### How games are scored
+
+Games the tuner plays itself (so far the **Throughput ring**) record the
+whole pointer path, including every coalesced pointer event, and score it
+with published pointing measures in `web/measure.js`:
+
+- **Throughput** (bit/s), per ISO 9241-9: effective width
+  We = 4.133 × the standard deviation of where clicks landed along the
+  movement, IDe = log2(A / We + 1), averaged over sequences. It folds speed
+  and accuracy together, so a setting that only makes you faster and
+  sloppier doesn't win.
+- **Endpoint error**, signed: positive means clicks landed past the target
+  (too fast), negative short of it (too slow).
+- **Re-entries**: how often the cursor left the target and came back.
+  MacKenzie, Kauppinen & Silfverberg (2001) found this exposes trackball
+  problems throughput alone hides.
+- **Overshoot**: how far the path went past the target's far edge, as a
+  share of the distance (Casiez et al., 2008).
+- **Submovements** and **re-rolls**: velocity peaks per movement, and pauses
+  of 30 ms or more inside one (a thumb lifting to roll again; the threshold
+  still needs calibrating on real hardware).
+
+Results are split by direction and by ring difficulty, kept in this browser,
+and copyable as plain labelled text with the settings each run used. Ticking
+two runs shows them side by side with the settings that differed. One run
+each is only a rough guide; a blind, counterbalanced comparison is tracked in
+#145.
+
+Turn off the computer's own pointer acceleration while playing, so the
+measures reflect only the keyboard's curve.
+
+The other games still use the playground activities below, which stay
+available under **Free play**.
 
 Available activities cover:
 

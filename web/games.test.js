@@ -40,7 +40,7 @@ test("links a setting back to every game that shows it", () => {
   assert.deepEqual(gamesForSetting(games, 9, 0), []);
 });
 
-test("every game plays an existing playground activity", () => {
+test("every game has a runner or an existing playground activity", () => {
   const activities = new Set(ACTIVITIES.map(({ id }) => id));
   for (const game of GAMES) assert.ok(activities.has(game.activity), game.id);
 });
