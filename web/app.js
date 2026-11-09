@@ -43,7 +43,8 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { CompassRunner, PixelRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { CompassRunner, PixelRunner, PursuitRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import { PURSUIT_PHASES, analysePursuit, formatPursuit, measurePursuitPhase, pursuitPosition } from "./pursuit.js";
 import { HOLD_MS, PIXEL_TIMEOUT_MS, analysePixel, formatPixel, onTarget, pixelTrials } from "./pixel.js";
 import { analyseCompass, cueDirections } from "./compass.js";
 import { compareConditions, describeComparison, describePreference, hiddenLabels, planBlocks } from "./comparison.js";
@@ -1301,11 +1302,13 @@ const runnerEvents = {
 const gameRunner = new TargetGameRunner(gameSurface, runnerEvents);
 const compassRunner = new CompassRunner(gameSurface, runnerEvents);
 const pixelRunner = new PixelRunner(gameSurface, runnerEvents);
+const pursuitRunner = new PursuitRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
   compassRunner.stop();
   pixelRunner.stop();
+  pursuitRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1346,7 +1349,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass", "pixel"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel", "pursuit"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1374,6 +1377,12 @@ function playGame(game) {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
+  } else if (game.runner === "pursuit") {
+    const sweep = { centre, amplitude: Math.min(size.width, size.height) * 0.35 };
+    pursuitRunner.start(PURSUIT_PHASES, run, (recorded) => {
+      const result = analysePursuit(recorded.map(({ phase, samples }) => measurePursuitPhase(phase, samples, sweep)));
+      return { ...result, notes: [...run.notes, ...formatPursuit(result.pursuit), ...result.notes] };
+    }, { position: (phase, elapsed) => pursuitPosition(phase, elapsed, sweep) });
   } else if (game.runner === "pixel") {
     pixelRunner.start(pixelTrials(size, { random: seededRandom(5) }), run, (trials) => {
       const result = analysePixel(trials);

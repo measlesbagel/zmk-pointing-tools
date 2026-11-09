@@ -19,7 +19,7 @@ firmware reports and what is missing, next to the stage-decision stream.
 
 ### How games are scored
 
-The tuner plays four cursor games itself, and first setup runs them in
+The tuner plays five cursor games itself, and first setup runs them in
 this order:
 
 - **Compass start** checks `swap-xy`, `invert-x` and `invert-y`. Click the
@@ -44,6 +44,15 @@ this order:
   against the slow end of the curve, the gain and the motion gate.
   Targets are snapped to whole screen pixels, so a 1 px target is exactly
   the pixel the pointer reports.
+- **Pursuit** sweeps a target back and forth at a steady speed with sharp
+  reversals: two slow phases with a small target, then two fast phases
+  with a bigger one, side to side and up and down, 6 s each. The first
+  second of each phase isn't scored. It reports time on target separately
+  from RMS error, the lag that best lines the pointer's path up with the
+  target's, the pointer's speed relative to the target's, and how far the
+  pointer ran on past each reversal. A long lag on the fast phases points
+  at `speed-rise` or the report intervals, run-on past reversals at
+  `speed-fall`, and bursty slow tracking at the slow end of the curve.
 
 These games record the
 whole pointer path, including every coalesced pointer event, and score it
