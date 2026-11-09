@@ -67,6 +67,17 @@
         </div>
         <div data-game-settings class="parameters"></div>
         <p class="muted" data-game-blind-hint hidden>To compare blind, type the values to try in the settings above without previewing them, then press Blind compare. The current values are the other side. You play both under hidden names, X and Y, in a balanced order with a warm-up, say which felt better, and then see which was which.</p>
+        <details data-game-sweep-wrap hidden>
+          <summary>Sweep one setting</summary>
+          <p class="muted">Plays one setting at 3 to 5 evenly spaced values, each twice, blind and in a balanced order, then plots the measures against the value. It doesn't pick a value for you.</p>
+          <div class="sweep-form">
+            <label>Setting <select data-sweep-setting></select></label>
+            <label>From <input type="number" data-sweep-from step="1"></label>
+            <label>To <input type="number" data-sweep-to step="1"></label>
+            <label>Values <input type="number" data-sweep-count min="3" max="5" step="1" value="4"></label>
+            <button type="button" data-game-sweep>Start sweep</button>
+          </div>
+        </details>
         <details data-game-related-wrap>
           <summary>More settings that affect this game</summary>
           <div data-game-related class="parameters"></div>

@@ -144,3 +144,16 @@ contains:
 Exports are intended for comparisons and future analysis, not as firmware
 configuration. Use the tuning panel's **Copy config** action to transfer chosen
 values into Git-tracked devicetree configuration.
+
+### Sweeping one setting
+
+Under **Sweep one setting**, pick one of the game's settings, a range and
+3 to 5 values. The tuner spaces the values evenly and plays each one
+twice, in a shuffled order and then that order reversed, with an unscored
+warm-up and an unscored adaptation block before every change. The values
+play under hidden letters (P, Q, R, …) with the settings hidden. At the
+end it plots throughput, time on hits, overshoot and re-rolls against the
+value, and keeps the same numbers as text in history. It never picks a
+value: higher gain tends to level throughput off while overshoot keeps
+rising (Casiez et al., 2008), so the trade-off is yours. The value in
+effect before the sweep is restored at the end, or if it is abandoned.
