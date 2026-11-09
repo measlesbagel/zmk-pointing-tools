@@ -219,3 +219,7 @@ select { border: 1px solid var(--line); background: var(--panel); color: var(--t
 .scroll-band { position: absolute; left: 0; right: 0; border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; }
 .scroll-target { position: absolute; left: 10%; right: 10%; height: 0; border-top: 3px solid var(--warning); pointer-events: none; }
 .scroll-hint { position: absolute; right: 12px; color: var(--warning); font-size: 13px; pointer-events: none; }
+.rail-page { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+.rail-segment { position: absolute; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.rail-goal { position: absolute; border: 2px solid var(--warning); }
+.rail-dot { position: absolute; left: calc(50% - 6px); top: calc(50% - 6px); width: 12px; height: 12px; border-radius: 50%; background: var(--warning); pointer-events: none; }

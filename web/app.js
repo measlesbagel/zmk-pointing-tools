@@ -43,7 +43,10 @@ import {
 } from "./profile.js";
 import { ResponseRequestQueue } from "./request-queue.js";
 import { applicableGames, gamesForSetting } from "./games.js";
-import { CompassRunner, PixelRunner, PursuitRunner, ScrollBandRunner, StillRunner, TargetGameRunner, analyseFlicks } from "./game-runner.js";
+import {
+  CompassRunner, PixelRunner, PursuitRunner, RailRunner, ScrollBandRunner, StillRunner, TargetGameRunner, analyseFlicks,
+} from "./game-runner.js";
+import { RAIL_COURSES, RAIL_TIMEOUT_MS, RAIL_WIDTH, analyseRail, finished as railFinished, formatRail } from "./rail.js";
 import { BAND_HOLD_MS, SCROLL_TIMEOUT_MS, analyseScrollBand, formatScrollBand, scrollTrials } from "./scroll-band.js";
 import { analyseStillHands, formatStillHands } from "./still-hands.js";
 import { PURSUIT_PHASES, analysePursuit, formatPursuit, measurePursuitPhase, pursuitPosition } from "./pursuit.js";
@@ -1307,6 +1310,7 @@ const pixelRunner = new PixelRunner(gameSurface, runnerEvents);
 const pursuitRunner = new PursuitRunner(gameSurface, runnerEvents);
 const stillRunner = new StillRunner(gameSurface, runnerEvents);
 const scrollBandRunner = new ScrollBandRunner(gameSurface, runnerEvents);
+const railRunner = new RailRunner(gameSurface, runnerEvents);
 
 function stopGames() {
   gameRunner.stop();
@@ -1315,6 +1319,7 @@ function stopGames() {
   pursuitRunner.stop();
   stillRunner.stop();
   scrollBandRunner.stop();
+  railRunner.stop();
   if (blindSession) {
     const { restore } = blindSession;
     blindSession = undefined;
@@ -1355,7 +1360,7 @@ function currentOrientation(game) {
 }
 
 function playGame(game) {
-  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still", "scroll-band"].includes(game.runner)) {
+  if (!["ring", "flicks", "compass", "pixel", "pursuit", "still", "scroll-band", "rail"].includes(game.runner)) {
     playground.openActivity(game.activity);
     return;
   }
@@ -1383,6 +1388,11 @@ function playGame(game) {
       const result = analyseFlicks(recorded);
       return { ...result, notes: [...run.notes, ...result.notes] };
     });
+  } else if (game.runner === "rail") {
+    railRunner.start(RAIL_COURSES, run, (runs) => {
+      const result = analyseRail(runs);
+      return { ...result, notes: [...run.notes, ...formatRail(result.rail), ...result.notes] };
+    }, { width: RAIL_WIDTH, timeout: RAIL_TIMEOUT_MS, finished: railFinished });
   } else if (game.runner === "scroll-band") {
     scrollBandRunner.start(scrollTrials({ random: seededRandom(9) }), run, (trials) => {
       const result = analyseScrollBand(trials);

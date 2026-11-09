@@ -58,7 +58,7 @@ function toggle(id, key, label, description) {
   return { ...parameter(id, key, key, 0, 1, 0, label, "", description), type: TUNING.BOOLEAN };
 }
 
-/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard, scroll and coalescer as fully discovered
+/* The smoke keymap's cursor acceleration, transfer, orientation, keypress guard, scroll, scroll axis intent and coalescer as fully discovered
  * tuning targets, mirroring the firmware parameter tables, so the curve
  * editor can be tried without a keyboard. */
 export function buildSimulatorTuningTargets() {
@@ -131,6 +131,25 @@ export function buildSimulatorTuningTargets() {
           "Wheel steps per metre of ball travel along the engaged axis."),
         parameter(1, "report-interval", "report-interval-ms", 1, 1000, 16, "Report interval", "ms",
           "How often accumulated scroll is sent."),
+      ],
+    },
+    {
+      id: 18,
+      kind: TARGET_KIND.PIPELINE_STAGE,
+      label: "scroll-axis-intent",
+      stableId: "scroll-axis-intent",
+      devicetreePath: "/zpt_test_scroll_axis_intent",
+      parameters: [
+        parameter(0, "engage-ratio", "engage-ratio-percent", 100, 1000, 200, "Engage ratio", "%",
+          "How much the major axis must dominate before motion locks to it."),
+        parameter(1, "release-ratio", "release-ratio-percent", 100, 1000, 150, "Release ratio", "%",
+          "Dominance below which a locked axis is released."),
+        parameter(2, "activation-distance", "activation-distance-micrometers", 1, 20000, 300, "Activation distance", "µm",
+          "Ball travel needed before an axis is chosen."),
+        parameter(3, "window", "window-ms", 1, 2000, 100, "Window", "ms",
+          "How far back motion counts toward choosing an axis."),
+        parameter(4, "idle-timeout", "idle-timeout-ms", 0, 5000, 300, "Idle timeout", "ms",
+          "Pause after which the axis choice resets; 0 never resets."),
       ],
     },
     {

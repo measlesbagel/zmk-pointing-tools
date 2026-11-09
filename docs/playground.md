@@ -75,6 +75,18 @@ The scroll games:
   the spacing of wheel events, for each block and each distance. It flags
   short scrolls going past the band, long ones not arriving, and wheel
   events 50 ms or more apart.
+- **Rail and corner** moves a page under a fixed dot with both wheel
+  axes. Six courses: straight tracks down, right, up and left, and two L
+  corners that need an axis switch. Each ends when the dot reaches the far
+  end. It reports, for straight tracks, how much motion leaked onto the
+  other axis, the share of wheel events that moved only on the wrong axis,
+  and how often the dot left the track; for corners, how long after
+  reaching the corner the second axis took over; and an effective-width
+  steering index (track length over 4.133 SD of the sideways position,
+  per second) for each axis. No published research covers axis lock, so
+  its flag thresholds are starting points. Distance lost at the start of a
+  scroll needs the ball's own counts, which the page can't see, so it
+  isn't measured here.
 
 These games record the
 whole pointer path, including every coalesced pointer event, and score it

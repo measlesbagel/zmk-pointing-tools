@@ -677,3 +677,100 @@ export class ScrollBandRunner {
     this.hint.style.bottom = remaining > 0 ? "8px" : "";
   }
 }
+
+/* Rail and corner: the wheel moves a page with a corridor drawn on it
+ * under a fixed dot. A course starts at its first wheel event and ends
+ * when the dot reaches the far end. */
+export class RailRunner {
+  constructor(surface, { onProgress, onFinish }) {
+    this.surface = surface;
+    this.onProgress = onProgress;
+    this.onFinish = onFinish;
+  }
+
+  /* courses from rail.js; finished(course, point) says when one is done. */
+  start(courses, run, analyse, { width, timeout = 20000, finished }) {
+    this.stop();
+    Object.assign(this, { courses, run, analyse, width, timeout, finished });
+    this.index = 0;
+    this.recorded = [];
+    this.listeners = new AbortController();
+    const { signal } = this.listeners;
+    this.surface.classList.add("running", "scrolling");
+    this.surface.addEventListener("wheel", (event) => this.wheel(event), { signal, passive: false });
+    this.begin();
+  }
+
+  stop() {
+    clearTimeout(this.timeoutTimer);
+    this.listeners?.abort();
+    this.listeners = undefined;
+    this.surface.classList.remove("running", "scrolling");
+    this.surface.replaceChildren();
+  }
+
+  begin() {
+    const course = this.courses[this.index];
+    this.position = { x: 0, y: 0 };
+    this.events = [];
+    this.page = document.createElement("div");
+    this.page.className = "rail-page";
+    let at = { x: 0, y: 0 };
+    const half = this.width / 2;
+    for (const leg of course.legs) {
+      const end = { x: at.x + leg.dx * leg.length, y: at.y + leg.dy * leg.length };
+      const segment = document.createElement("div");
+      segment.className = "rail-segment";
+      const left = Math.min(at.x, end.x) - half;
+      const top = Math.min(at.y, end.y) - half;
+      segment.style.left = `${left}px`;
+      segment.style.top = `${top}px`;
+      segment.style.width = `${Math.abs(end.x - at.x) + this.width}px`;
+      segment.style.height = `${Math.abs(end.y - at.y) + this.width}px`;
+      this.page.append(segment);
+      at = end;
+    }
+    const goal = document.createElement("div");
+    goal.className = "rail-goal";
+    goal.style.left = `${at.x - half}px`;
+    goal.style.top = `${at.y - half}px`;
+    goal.style.width = goal.style.height = `${this.width}px`;
+    this.page.append(goal);
+    const dot = document.createElement("div");
+    dot.className = "rail-dot";
+    this.surface.replaceChildren(this.page, dot);
+    this.timeoutTimer = setTimeout(() => this.end(undefined), this.timeout);
+    this.onProgress?.(`Rail ${this.index + 1} of ${this.courses.length} (${course.name}): scroll the dot along the track to the end, staying inside it.`);
+    this.render();
+  }
+
+  wheel(event) {
+    event.preventDefault();
+    const scale = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? this.surface.clientHeight : 1;
+    const dx = event.deltaX * scale;
+    const dy = event.deltaY * scale;
+    this.position = { x: this.position.x + dx, y: this.position.y + dy };
+    this.events.push({ t: event.timeStamp, dx, dy, ...this.position });
+    this.render();
+    if (this.finished(this.courses[this.index], this.position)) this.end(event.timeStamp);
+  }
+
+  end(endedAt) {
+    clearTimeout(this.timeoutTimer);
+    this.recorded.push({ course: this.courses[this.index], events: this.events, endedAt });
+    this.index += 1;
+    if (this.index >= this.courses.length) {
+      const result = { ...this.run, finishedAt: new Date().toISOString(), ...this.analyse(this.recorded) };
+      this.stop();
+      this.onFinish?.(result);
+      return;
+    }
+    this.begin();
+  }
+
+  render() {
+    const cx = this.surface.clientWidth / 2;
+    const cy = this.surface.clientHeight / 2;
+    this.page.style.transform = `translate(${cx - this.position.x}px, ${cy - this.position.y}px)`;
+  }
+}
